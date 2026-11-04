@@ -8,12 +8,14 @@
  */
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
+const crypto = require('crypto');
 const { Readable } = require('stream');
 const WebSocket = require('ws');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const CFG = {
   relayUrl: process.env.RELAY_URL || '',
   token: process.env.AGENT_TOKEN || '',
@@ -21,6 +23,11 @@ const CFG = {
   apiKey: process.env.JELLYFIN_API_KEY || '',
   jellyfinUser: process.env.JELLYFIN_USER || '',
   maxConcurrent: toInt(process.env.MAX_CONCURRENT, 24),
+  dataDir: process.env.DATA_DIR || path.join(__dirname, 'data'),
+  adminPort: toInt(process.env.ADMIN_PORT, 8098),
+  // Ohne ADMIN_TOKEN ist die Admin-UI nur lokal erreichbar (127.0.0.1).
+  adminBind: process.env.ADMIN_BIND || (process.env.ADMIN_TOKEN ? '0.0.0.0' : '127.0.0.1'),
+  adminToken: process.env.ADMIN_TOKEN || '',
 };
 if (!CFG.relayUrl) fatal('RELAY_URL fehlt, z. B. wss://example.com/agent');
 if (!/^wss?:\/\//.test(CFG.relayUrl)) fatal('RELAY_URL muss mit wss:// (oder ws:// zum Testen) beginnen');
@@ -86,6 +93,111 @@ function stripKeys(p) {
   return p.slice(0, i) + (s ? '?' + s : '');
 }
 
+/* ---------- Bibliotheks-Ausschlüsse ---------- */
+const excludeFile = path.join(CFG.dataDir, 'exclusions.json');
+const excluded = loadExcluded();
+function loadExcluded() {
+  try { return new Set(JSON.parse(fs.readFileSync(excludeFile, 'utf8'))); } catch { return new Set(); }
+}
+function saveExcluded() {
+  fs.mkdirSync(CFG.dataDir, { recursive: true });
+  const tmp = excludeFile + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify([...excluded], null, 2));
+  fs.renameSync(tmp, excludeFile);
+}
+
+const LIB_TTL = 10 * 60 * 1000;
+const libCache = new Map(); // itemId -> { lib, ts }
+let viewsCache = { ts: 0, ids: new Set(), items: [] };
+
+function cachePut(id, lib) {
+  if (libCache.size > 5000) libCache.clear();
+  libCache.set(id, { lib, ts: Date.now() });
+}
+
+async function getViews(force) {
+  if (!force && Date.now() - viewsCache.ts < LIB_TTL) return viewsCache;
+  const data = await jfJson('/Users/' + jellyfin.userId + '/Views');
+  const items = Array.isArray(data.Items) ? data.Items : [];
+  viewsCache = { ts: Date.now(), ids: new Set(items.map((i) => i.Id)), items };
+  return viewsCache;
+}
+
+/* Ermittelt die Bibliothek (CollectionFolder) eines Items; wandert Parent-Kette hoch. */
+async function libraryOf(dto, depth = 0) {
+  if (!dto || depth > 8) return null;
+  if (dto.Type === 'CollectionFolder') return dto.Id;
+  if (dto.LibraryId && viewsCache.ids.has(dto.LibraryId)) return dto.LibraryId;
+  let cur = dto.ParentId;
+  for (; cur && depth <= 8; depth++) {
+    if (viewsCache.ids.has(cur)) return cur;
+    const hit = libCache.get(cur);
+    if (hit && Date.now() - hit.ts < LIB_TTL) { if (hit.lib) return hit.lib; break; }
+    let parent;
+    try {
+      parent = await jfJson('/Users/' + jellyfin.userId + '/Items/' + cur + '?Fields=ParentId,LibraryId,Type');
+    } catch { return null; }
+    const lib = await libraryOf(parent, depth + 1);
+    cachePut(cur, lib);
+    if (lib) return lib;
+    cur = parent.ParentId;
+  }
+  return null;
+}
+
+async function itemExcluded(itemId) {
+  try {
+    await getViews(false);
+    const it = await jfJson('/Users/' + jellyfin.userId + '/Items/' + itemId + '?Fields=ParentId,LibraryId,Type');
+    const lib = await libraryOf(it);
+    return !!(lib && excluded.has(lib));
+  } catch { return false; }
+}
+
+function filterMode(method, pathname) {
+  if (method !== 'GET' && method !== 'HEAD') return null;
+  const U = '(?:' + ID + ')';
+  if (new RegExp('^/Users/' + U + '/Views$', 'i').test(pathname)) return 'views';
+  if (new RegExp('^/Users/' + U + '/Items$', 'i').test(pathname)) return 'list';
+  if (new RegExp('^/Shows/' + U + '/Episodes$', 'i').test(pathname)) return 'list';
+  return null;
+}
+
+function singleItemId(method, pathname) {
+  if (method !== 'GET' && method !== 'HEAD') return null;
+  let m;
+  if ((m = pathname.match(new RegExp('^/Users/(?:' + ID + ')/Items/(' + ID + ')$', 'i')))) return m[1];
+  if ((m = pathname.match(new RegExp('^/Videos/(' + ID + ')/', 'i')))) return m[1];
+  if ((m = pathname.match(new RegExp('^/Items/(' + ID + ')/Images/', 'i')))) return m[1];
+  return null;
+}
+
+/* Listen-Antworten: JSON komplett puffern, filtern und neu ausliefern. */
+async function filterJson(id, res, mode) {
+  streams.delete(id);
+  let data = null;
+  try { data = JSON.parse(await res.text()); } catch { /* unten */ }
+  if (!data || !Array.isArray(data.Items)) {
+    return send({ t: 'err', id, status: 502, message: 'Unerwartete Jellyfin-Antwort' });
+  }
+  try { await getViews(false); } catch { /* egal */ }
+  const kept = [];
+  for (const it of data.Items) {
+    if (mode === 'views') {
+      if (!excluded.has(it.Id)) kept.push(it);
+    } else {
+      const lib = (it.LibraryId && viewsCache.ids.has(it.LibraryId)) ? it.LibraryId : await libraryOf(it);
+      if (!(lib && excluded.has(lib))) kept.push(it);
+    }
+  }
+  data.Items = kept;
+  if (typeof data.TotalRecordCount === 'number') data.TotalRecordCount = kept.length;
+  const buf = Buffer.from(JSON.stringify(data));
+  send({ t: 'res', id, status: res.status, headers: { 'content-type': 'application/json', 'content-length': String(buf.length) } });
+  if (buf.length && ws && ws.readyState === WebSocket.OPEN) ws.send(frame(id, buf));
+  send({ t: 'end', id });
+}
+
 /* ---------- Verbindung zum Relay ---------- */
 let ws = null;
 let retry = 0;
@@ -145,6 +257,7 @@ async function announce(sock) {
   while (sock.readyState === WebSocket.OPEN) {
     try {
       jellyfin = await probeJellyfin();
+      await getViews(true).catch(() => {});
       sock.send(JSON.stringify({ t: 'hello', version: VERSION, userId: jellyfin.userId, userName: jellyfin.userName, serverName: jellyfin.serverName, jfVersion: jellyfin.version }));
       console.log(`[agent] ✔ Jellyfin "${jellyfin.serverName}" (${jellyfin.version}) bereit, lese als "${jellyfin.userName}"`);
       return;
@@ -188,6 +301,14 @@ async function handleRequest(id, m) {
   }
   if (streams.size >= CFG.maxConcurrent) return send({ t: 'err', id, status: 503, message: 'Heimserver ausgelastet' });
 
+  // Ausgeschlossene Bibliotheken: Einzelzugriff direkt verweigern
+  if (excluded.size && jellyfin) {
+    const sid = singleItemId(method, p.split('?')[0]);
+    if (sid && await itemExcluded(sid)) {
+      return send({ t: 'err', id, status: 404, message: 'Diese Bibliothek ist nicht Teil der Watchparty' });
+    }
+  }
+
   const st = { ac: new AbortController(), body: null, relayPaused: false, wsPaused: false };
   streams.set(id, st);
   const headers = { Authorization: jfAuth(), 'Accept-Encoding': 'identity' };
@@ -204,6 +325,14 @@ async function handleRequest(id, m) {
     return;
   }
   if (!streams.has(id)) { try { res.body && res.body.cancel(); } catch { /* egal */ } return; }
+
+  // Listen-Antworten filtern (nur wenn überhaupt etwas ausgeschlossen ist)
+  if (excluded.size && res.ok && jellyfin) {
+    const mode = filterMode(method, p.split('?')[0]);
+    if (mode && (res.headers.get('content-type') || '').includes('json')) {
+      return filterJson(id, res, mode);
+    }
+  }
 
   const out = {};
   for (const k of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag']) {
@@ -235,6 +364,109 @@ setInterval(() => {
   }
 }, 25);
 
+/* ---------- Lokale Admin-UI: Bibliotheken ein-/ausschlie\dfen (nur LAN) ---------- */
+function timingSafeEq(a, b) {
+  const ba = Buffer.from(String(a)), bb = Buffer.from(String(b));
+  return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
+}
+function adminAuthed(req, url) {
+  if (!CFG.adminToken) return true; // ohne Token nur auf 127.0.0.1 gebunden
+  const h = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  return timingSafeEq(h, CFG.adminToken) || timingSafeEq(url.searchParams.get('token') || '', CFG.adminToken);
+}
+
+function startAdmin() {
+  const srv = http.createServer(async (req, res) => {
+    let url;
+    try { url = new URL(req.url, 'http://admin'); } catch { res.writeHead(400); return res.end(); }
+    if (!adminAuthed(req, url)) {
+      res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' });
+      return res.end('Token fehlt/falsch — ?token=… oder Authorization: Bearer …');
+    }
+    if (req.method === 'GET' && url.pathname === '/') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(ADMIN_HTML);
+    }
+    if (req.method === 'GET' && url.pathname === '/api/libraries') {
+      if (!jellyfin) { res.writeHead(503, { 'content-type': 'application/json' }); return res.end('{"error":"Warte auf Jellyfin-Verbindung"}'); }
+      try {
+        const v = await getViews(true);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({
+          server: jellyfin.serverName,
+          libraries: v.items.map((i) => ({ id: i.Id, name: i.Name, type: i.CollectionType || 'unknown', excluded: excluded.has(i.Id) })),
+        }));
+      } catch (e) {
+        res.writeHead(502, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: e.message }));
+      }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/toggle') {
+      let raw = '';
+      req.on('data', (c) => { raw += c; if (raw.length > 10000) req.destroy(); });
+      req.on('end', () => {
+        let body;
+        try { body = JSON.parse(raw); } catch { res.writeHead(400); return res.end('bad json'); }
+        const id = String(body.id || '').toLowerCase();
+        if (!/^[a-f0-9]{32}$|^[a-f0-9-]{36}$/.test(id)) { res.writeHead(400); return res.end('bad id'); }
+        if (body.excluded) excluded.add(id); else excluded.delete(id);
+        saveExcluded();
+        libCache.clear();
+        viewsCache = { ts: 0, ids: new Set(), items: [] };
+        console.log('[agent] Ausschluss ' + (body.excluded ? 'aktiviert' : 'aufgehoben') + ': ' + id);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, excluded: [...excluded] }));
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  srv.listen(CFG.adminPort, CFG.adminBind, () => {
+    const shown = CFG.adminBind === '0.0.0.0' ? '<LAN-IP>' : CFG.adminBind;
+    console.log('[agent] Admin-UI: http://' + shown + ':' + CFG.adminPort + (CFG.adminToken ? ' (Token-geschuetzt)' : ' (nur lokal — ADMIN_TOKEN setzen fuer LAN-Zugriff)'));
+  });
+  srv.on('error', (e) => console.error('[agent] ✖ Admin-UI startet nicht: ' + e.message));
+}
+
+const ADMIN_HTML = `<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Watchparty-Agent – Bibliotheken</title>
+<style>
+:root{color-scheme:dark}body{font:15px/1.5 system-ui;background:#15151b;color:#e8e8ee;margin:0;padding:24px;max-width:640px}
+h1{font-size:19px;margin:0 0 4px}.sub{color:#9a9aa8;margin-bottom:18px;font-size:13px}
+.card{background:#1d1d25;border:1px solid #2c2c38;border-radius:10px;padding:12px 14px;margin-bottom:10px;display:flex;align-items:center;gap:12px}
+.card .name{flex:1;font-weight:600}.card .type{color:#9a9aa8;font-size:12px}
+.switch{position:relative;width:44px;height:24px;flex:none}.switch input{opacity:0;position:absolute}
+.slider{position:absolute;inset:0;background:#3a3a46;border-radius:12px;transition:.15s;cursor:pointer}
+.slider:before{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#e8e8ee;transition:.15s}
+input:checked+.slider{background:#c0392b}input:checked+.slider:before{transform:translateX(20px)}
+.excluded .name{color:#9a9aa8;text-decoration:line-through}
+#login{display:flex;gap:8px;margin-bottom:16px}input[type=password]{background:#1d1d25;border:1px solid #2c2c38;color:#e8e8ee;border-radius:8px;padding:8px 10px;width:220px}
+button{background:#5b5bd6;color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer}
+.err{color:#e06c75}.ok{color:#7ec699}
+</style></head><body>
+<h1>Watchparty-Agent</h1><div class="sub">Bibliotheken, die hier auf <b>aus</b> stehen, sind fuer alle Watchparty-Zuschauer unsichtbar und nicht abspielbar. Wirkt sofort, ohne Neustart.</div>
+<div id="login"><input id="tok" type="password" placeholder="Admin-Token"><button onclick="login()">Los</button></div>
+<div id="out"></div>
+<script>
+let T=localStorage.getItem('wp_tok')||'';if(T)document.getElementById('tok').value=T;
+async function api(p,opt){const r=await fetch(p+(p.includes('?')?'&':'?')+'token='+encodeURIComponent(T),opt);
+ if(r.status===401)throw new Error('Token falsch');if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}
+function login(){T=document.getElementById('tok').value;localStorage.setItem('wp_tok',T);load();}
+async function load(){const o=document.getElementById('out');
+ try{const d=await api('/api/libraries');
+  let h='';if(d.server)h+='<p class="ok">Verbunden mit Jellyfin: '+d.server+'</p>';
+  h+=(d.libraries||[]).map(l=>'<div class="card '+(l.excluded?'excluded':'')+'">'+
+   '<label class="switch"><input type="checkbox" '+(l.excluded?'checked':'')+' data-id="'+l.id+'" onchange="toggle(this.dataset.id,this.checked)"><span class="slider"></span></label>'+
+   '<span class="name">'+esc(l.name)+'</span><span class="type">'+esc(l.type)+'</span></div>').join('');
+  o.innerHTML=h||'<p class="err">Keine Bibliotheken gefunden.</p>';
+ }catch(e){o.innerHTML='<p class="err">'+e.message+'</p>';}}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function toggle(id,on){try{await api('/api/toggle',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,excluded:on})});load();}catch(e){alert(e.message);}}
+if(T)load();
+</script></body></html>`;
+
 /* ---------- Helpers ---------- */
 function toInt(v, d) { const n = parseInt(v, 10); return Number.isFinite(n) ? n : d; }
 function loadEnvFile(file) {
@@ -250,4 +482,5 @@ function loadEnvFile(file) {
 }
 function fatal(msg) { console.error(`\n✖ ${msg}\n  Siehe .env.example\n`); process.exit(1); }
 
+startAdmin();
 connect();

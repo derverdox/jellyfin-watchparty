@@ -3,7 +3,14 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - agent-data:/app/data     # Bibliothek-Ausschlüsse (exclusions.json)
+    ports:
+      - "8098:8098"              # Admin-UI im LAN (nur mit gesetztem ADMIN_TOKEN)
     # Läuft Jellyfin auch in Docker auf diesem Rechner:
     #   JELLYFIN_URL=http://host.docker.internal:8096
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+volumes:
+  agent-data:
