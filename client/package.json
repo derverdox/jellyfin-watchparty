@@ -1,0 +1,59 @@
+{
+  "name": "watchparty-client",
+  "productName": "Watchparty",
+  "version": "1.0.0",
+  "description": "Desktop-Client für die Jellyfin Watchparty: synchron schauen in mpv, mit RIFE-Zwischenbildern und RTX Video Super Resolution.",
+  "main": "src/main/main.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder --win --x64"
+  },
+  "dependencies": {
+    "7zip-bin": "^5.2.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "de.watchparty.client",
+    "productName": "Watchparty",
+    "files": [
+      "src/**/*",
+      "vpy/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "vpy/**/*",
+      "node_modules/7zip-bin/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "Watchparty-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "Watchparty-Setup-${version}.${ext}"
+    }
+  }
+}
