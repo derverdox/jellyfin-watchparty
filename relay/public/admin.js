@@ -653,7 +653,7 @@ function renderGroups() {
   const box = $('#groups');
   box.innerHTML = '';
   for (const g of A.groups) {
-    const on = A.perms.filter((p) => g.perms[p.key]).length;
+    const on = A.perms.filter((p) => (g.perms[p.key] ?? p.key === 'wish')).length;
     const acc = g.access.mode === 'all' ? 'alle Inhalte' : g.access.mode === 'only' ? `nur ${g.access.ids.length} ausgewählte` : `alles außer ${g.access.ids.length}`;
     box.append(el('button', { class: `group-item${A.groupSel === g.id ? ' sel' : ''}`, onclick: () => editGroup(g.id) },
       el('span', { class: 'sw', style: `background:${g.color}` }),
@@ -708,7 +708,7 @@ function editGroup(id, keepDraft) {
     el('div', { class: 'form-grid' }, el('label', { class: 'span2' }, 'Name', name), el('label', {}, 'Farbe', col), el('label', { class: 'span2' }, 'Beschreibung', desc), el('label', {}, 'Höchste Qualität', quality)),
     el('div', { style: 'display:grid;gap:10px' }, el('span', { class: 'section-title' }, 'Rechte'),
       el('div', { class: 'perm-grid' }, A.perms.map((p) => el('label', { class: 'perm' }, el('strong', {}, p.label), el('p', {}, p.desc),
-        el('span', { class: 'switch' }, el('input', { type: 'checkbox', checked: !!dft.perms[p.key], onchange: (e) => { dft.perms[p.key] = e.target.checked; } }), el('span')))))),
+        el('span', { class: 'switch' }, el('input', { type: 'checkbox', checked: !!(dft.perms[p.key] ?? p.key === 'wish'), onchange: (e) => { dft.perms[p.key] = e.target.checked; } }), el('span')))))),
     el('div', { style: 'display:grid;gap:10px' }, el('span', { class: 'section-title' }, 'Inhalte'), modes, picked, treeWrap),
     el('div', { class: 'edit-foot' },
       g.builtin || g.id === A.defaultGroup ? el('span', { class: 'tiny muted' }, g.builtin ? 'Eingebaute Gruppe, kann nicht gelöscht werden.' : 'Standardgruppe für neue Konten.') : el('button', { class: 'btn danger small', onclick: async () => {

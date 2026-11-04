@@ -64,6 +64,11 @@
         <button class="btn small" id="btn-invite-user">✉ Freund einladen (Konto-Link)</button>
         <div class="invite-out" id="invite-out" hidden></div>
       </div>
+      <div class="wish-news" id="wish-news" hidden></div>
+      <div class="lobby-extras">
+        <button class="btn small" id="btn-board">📌 Schwarzes Brett</button>
+        <button class="btn small" id="btn-profile">📊 Mein Jahr</button>
+      </div>
       <div class="row-links">
         <button class="link" id="btn-pw">Passwort ändern</button>
         <button class="link" id="btn-logout">Abmelden</button>
@@ -123,6 +128,8 @@
           <button class="btn primary big" id="btn-unblock">▶ Klick zum Mitschauen</button>
         </div>
         <div class="overlay soft" id="overlay-loading" hidden><div class="spinner"></div></div>
+        <div class="player-cards" id="player-cards"></div>
+        <button class="btn skip-btn" id="btn-skip" hidden>Intro überspringen ⏭</button>
 
         <div class="controls" id="controls">
           <div class="seek">
@@ -162,6 +169,7 @@
         <div class="tabs">
           <button class="tab active" data-tab="chat">Chat</button>
           <button class="tab" data-tab="people">Leute <span class="pill" id="member-count">0</span></button>
+          <button class="tab" data-tab="queue">Liste <span class="pill" id="queue-count">0</span></button>
         </div>
         <div class="tab-body" id="tab-chat">
           <ol class="chat" id="chat"></ol>
@@ -169,6 +177,9 @@
             <input id="chat-input" maxlength="500" autocomplete="off" placeholder="Nachricht…">
             <button class="btn primary small" type="submit">Senden</button>
           </form>
+        </div>
+        <div class="tab-body" id="tab-queue" hidden>
+          <div class="queue" id="queue"></div>
         </div>
         <div class="tab-body" id="tab-people" hidden>
           <ul class="people" id="people"></ul>
@@ -195,6 +206,8 @@
           <button data-v="browse" class="on">Bibliothek</button>
           <button data-v="watchlist">★ Merkliste</button>
           <button data-v="history">Zuletzt</button>
+          <button data-v="top">★ Top</button>
+          <button data-v="wishes">📌 Wünsche</button>
         </div>
         <input id="lib-search" type="search" placeholder="Filme, Serien, Folgen suchen … (auch mit Jahr)" autocomplete="off">
         <button class="icon" id="lib-close" aria-label="Schließen">✕</button>
@@ -207,14 +220,17 @@
           <option value="year">Neueste zuerst</option>
           <option value="rating">Beste Bewertung</option>
         </select>
+        <button class="btn small" id="btn-random" type="button">🎲 Zufall</button>
       </div>
       <div class="lib-body" id="lib-body"></div>
     </div>
   </div>
 
+  <div class="modal xmodal" id="xmodal" hidden><div class="xbox" id="xbox"></div></div>
   <div class="toast" id="toast" hidden></div>
 
   <script src="/vendor/hls.min.js"></script>
   <script src="/app.js"></script>
+  <script src="/extras.js"></script>
 </body>
 </html>

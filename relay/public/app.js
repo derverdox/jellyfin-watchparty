@@ -170,6 +170,7 @@ async function route() {
   motd.hidden = !S.me.motd;
   motd.textContent = S.me.motd || '';
   showView('view-lobby');
+  if (window.WP && WP.lobby) WP.lobby();
 }
 
 function renderAgentStatus(online, server) {
@@ -360,6 +361,7 @@ function onPong(msg) {
 }
 
 function onMessage(msg) {
+  if (window.WP && WP.onMessage) WP.onMessage(msg); // Zusatzfunktionen (extras.js)
   switch (msg.t) {
     case 'welcome':
       S.you = msg.you;
@@ -1013,8 +1015,7 @@ $('#chk-all-control').addEventListener('change', (e) => send({ t: 'settings', al
 for (const tab of $$('.tab')) {
   tab.addEventListener('click', () => {
     for (const t of $$('.tab')) t.classList.toggle('active', t === tab);
-    $('#tab-chat').hidden = tab.dataset.tab !== 'chat';
-    $('#tab-people').hidden = tab.dataset.tab !== 'people';
+    for (const b of $$('#side .tab-body')) b.hidden = b.id !== `tab-${tab.dataset.tab}`;
   });
 }
 
@@ -1083,6 +1084,7 @@ async function loadWatchIds() {
 
 for (const b of $$('#lib-tabs button')) {
   b.addEventListener('click', () => {
+    if (b.dataset.v === 'wishes') { if (window.WP) WP.openBoard(); return; }
     S.lib.view = b.dataset.v;
     S.lib.search = '';
     $('#lib-search').value = '';
@@ -1122,6 +1124,7 @@ function renderCrumbs() {
   $('#lib-sort').hidden = !sortable;
   if (S.lib.search) { nav.append(el('button', {}, `Suche: „${S.lib.search}“`)); return; }
   if (S.lib.view === 'watchlist') { nav.append(el('button', {}, 'Deine Merkliste')); return; }
+  if (S.lib.view === 'top') { nav.append(el('button', {}, 'Bei uns am besten bewertet')); return; }
   if (S.lib.view === 'history') { nav.append(el('button', {}, 'Zuletzt geschaut')); return; }
   S.lib.stack.forEach((c, i) => {
     if (i) nav.append(el('span', { class: 'sep' }, '›'));
@@ -1156,6 +1159,15 @@ async function renderLib(append = false) {
       if (r.movies.length) body.append(section('Filme', r.movies, r.movies.length));
       if (r.series.length) body.append(section('Serien & Sammlungen', r.series, r.series.length));
       if (r.episodes.length) body.append(section('Folgen', r.episodes, r.episodes.length));
+      return;
+    }
+    /* --- Bei uns am besten bewertet --- */
+    if (S.lib.view === 'top') {
+      const r = await api('/api/top-rated');
+      if (token !== libToken) return;
+      body.innerHTML = '';
+      if (!r.items.length) { body.append(el('div', { class: 'lib-empty' }, 'Noch nichts bewertet. Auf jeder Detailseite kannst du 1–10 Sterne vergeben.')); return; }
+      body.append(section('', r.items.map((x) => ({ ...x, ourRating: x.ours }))));
       return;
     }
     /* --- Merkliste --- */
@@ -1252,7 +1264,7 @@ function tile(it) {
   const poster = el('div', { class: 'poster', style: it.hasImage ? `background-image:url('/img/${it.id}?w=${wide ? 480 : 320}')` : '' },
     it.hasImage ? '' : (it.isFolder ? '📁' : '🎬'),
     it.played ? el('span', { class: 'badge' }, '✓ gesehen') : '',
-    it.rating ? el('span', { class: 'rating' }, `★ ${String(it.rating).replace('.', ',')}`) : '',
+    it.ourRating && it.ourRating.avg ? el('span', { class: 'rating ours' }, `★ ${String(it.ourRating.avg).replace('.', ',')} · ${it.ourRating.count}`) : it.rating ? el('span', { class: 'rating' }, `★ ${String(it.rating).replace('.', ',')}`) : '',
     it.progress != null ? el('div', { class: 'prog' }, el('div', { style: `width:${Math.min(100, it.progress)}%` })) : '',
     it.playable ? el('span', { class: 'play' }, canLoad() ? '▶ Abspielen' : perm('suggest') ? '💡 Vorschlagen' : '') : '');
   return el('div', { class: 'tile', title: it.overview || it.name, role: 'button', tabindex: 0,
@@ -1262,6 +1274,7 @@ function tile(it) {
 }
 
 function openTile(it) {
+  if (window.WP && WP.openDetail && (it.playable || it.type === 'Series')) { WP.openDetail(it); return; }
   if (it.playable) {
     if (canLoad()) { send({ t: 'load', itemId: it.id }); toast(`„${it.name}“ wird geladen…`); }
     else if (perm('suggest')) { send({ t: 'suggest', itemId: it.id }); toast('Vorschlag im Chat gepostet'); }
