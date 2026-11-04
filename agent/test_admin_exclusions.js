@@ -113,6 +113,10 @@ function adminApi(method, p, body, token = ADMIN_TOKEN) {
     http.get({ host: '127.0.0.1', port: 18098, path: '/api/libraries' }, (res) => { res.resume(); resolve(res.statusCode); });
   });
   check('Admin-API ohne Token → 401', a === 401, String(a));
+  const page = await new Promise((resolve) => {
+    http.get({ host: '127.0.0.1', port: 18098, path: '/' }, (res) => { let d = ''; res.on('data', (c) => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d })); });
+  });
+  check('Admin-UI-Seite ohne Token erreichbar (Login-Form)', page.status === 200 && page.body.includes('Admin-Token'), String(page.status));
   a = await adminApi('GET', '/api/libraries');
   check('Admin-API listet Bibliotheken', a.status === 200 && a.json.libraries.length === 2, JSON.stringify(a));
 

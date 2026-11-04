@@ -379,13 +379,15 @@ function startAdmin() {
   const srv = http.createServer(async (req, res) => {
     let url;
     try { url = new URL(req.url, 'http://admin'); } catch { res.writeHead(400); return res.end(); }
+    if (req.method === 'GET' && url.pathname === '/') {
+      // Die Seite selbst ist öffentlich (nur LAN!), das Token holt sich die Seite
+      // über das Login-Feld; alle Daten-Endpunkte unten sind token-geschützt.
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(ADMIN_HTML);
+    }
     if (!adminAuthed(req, url)) {
       res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' });
       return res.end('Token fehlt/falsch — ?token=… oder Authorization: Bearer …');
-    }
-    if (req.method === 'GET' && url.pathname === '/') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-      return res.end(ADMIN_HTML);
     }
     if (req.method === 'GET' && url.pathname === '/api/libraries') {
       if (!jellyfin) { res.writeHead(503, { 'content-type': 'application/json' }); return res.end('{"error":"Warte auf Jellyfin-Verbindung"}'); }
