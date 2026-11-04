@@ -1,0 +1,10 @@
+{
+  "name": "watchparty-relay",
+  "version": "2.0.0",
+  "description": "Öffentlicher Watchparty-Server (Frontend, Konten, Sync, Cache)",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "license": "MIT",
+  "dependencies": { "hls.js": "^1.5.20", "ws": "^8.18.0" }
+}

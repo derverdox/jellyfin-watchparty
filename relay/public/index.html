@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c0c10">
+  <title>Watchparty</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Login -->
+  <section id="view-login" class="view center" hidden>
+    <form id="login-form" class="card auth">
+      <div class="brand big"><span class="logo">▶</span> Watchparty</div>
+      <p class="muted" id="login-hint">Zusammen schauen, egal wo ihr seid.</p>
+      <label>Benutzername
+        <input name="username" maxlength="24" autocomplete="username" autocapitalize="off" required>
+      </label>
+      <label>Passwort
+        <input name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button class="btn primary" type="submit">Weiter</button>
+      <p class="error" id="login-error" hidden></p>
+    </form>
+  </section>
+
+  <!-- Registrierung per Einladung -->
+  <section id="view-register" class="view center" hidden>
+    <form id="register-form" class="card auth">
+      <div class="brand big"><span class="logo">▶</span> Watchparty</div>
+      <p class="muted">Du wurdest eingeladen! Leg dir ein Konto an.</p>
+      <label>Benutzername
+        <input name="username" maxlength="24" autocomplete="username" autocapitalize="off" required pattern="[A-Za-z0-9_.\-äöüÄÖÜß]{2,24}" title="2–24 Zeichen: Buchstaben, Zahlen, . _ -">
+      </label>
+      <label>Passwort <span class="tiny">(mind. 8 Zeichen)</span>
+        <input name="password" type="password" autocomplete="new-password" minlength="8" required>
+      </label>
+      <label>Passwort wiederholen
+        <input name="password2" type="password" autocomplete="new-password" minlength="8" required>
+      </label>
+      <button class="btn primary" type="submit">Konto erstellen</button>
+      <p class="error" id="register-error" hidden></p>
+    </form>
+  </section>
+
+  <!-- Lobby -->
+  <section id="view-lobby" class="view center" hidden>
+    <div class="card auth">
+      <div class="brand big"><span class="logo">▶</span> Watchparty</div>
+      <p class="muted">Hi <strong id="lobby-name"></strong>! Mach einen Raum auf und schick deinem Kumpel den Link.</p>
+      <button class="btn primary" id="btn-create">Neuen Raum erstellen</button>
+      <div class="divider"><span>oder</span></div>
+      <form id="join-form" class="row">
+        <input name="code" maxlength="12" placeholder="Raum-Code" autocomplete="off" required style="text-transform:uppercase">
+        <button class="btn" type="submit">Beitreten</button>
+      </form>
+      <p class="error" id="lobby-error" hidden></p>
+      <div class="agent-status" id="lobby-agent"></div>
+      <div class="admin-box" id="admin-box" hidden>
+        <button class="btn small" id="btn-invite-user">✉ Freund einladen (Konto-Link)</button>
+        <div class="invite-out" id="invite-out" hidden></div>
+      </div>
+      <div class="row-links">
+        <button class="link" id="btn-pw">Passwort ändern</button>
+        <button class="link" id="btn-logout">Abmelden</button>
+      </div>
+      <form id="pw-form" class="pw-form" hidden>
+        <input name="old" type="password" placeholder="Altes Passwort" autocomplete="current-password" required>
+        <input name="password" type="password" placeholder="Neues Passwort (mind. 8)" minlength="8" autocomplete="new-password" required>
+        <button class="btn small" type="submit">Speichern</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- Direktlink: Beitritt bestätigen (nötig, damit der Browser Ton abspielen darf) -->
+  <section id="view-join" class="view center" hidden>
+    <div class="card auth">
+      <div class="brand big"><span class="logo">▶</span> Watchparty</div>
+      <p class="muted">Raum <strong id="join-code"></strong> beitreten als <strong id="join-name"></strong></p>
+      <button class="btn primary" id="btn-join">Beitreten</button>
+      <button class="link" id="btn-join-rename">Mit anderem Konto anmelden</button>
+      <p class="error" id="join-error" hidden></p>
+    </div>
+  </section>
+
+  <!-- Raum -->
+  <section id="view-room" class="view room" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="logo">▶</span> <span class="hide-sm">Watchparty</span></div>
+      <div class="now" id="now-playing"><span class="muted">Noch nichts ausgewählt</span></div>
+      <div class="actions">
+        <button class="btn small" id="btn-library">🎞 <span class="hide-sm">Bibliothek</span></button>
+        <button class="btn small" id="btn-invite" title="Einladungslink kopieren">🔗 <span class="hide-sm">Einladen</span> <code id="room-code"></code></button>
+      </div>
+    </header>
+
+    <main class="stage">
+      <div class="player" id="player">
+        <video id="video" playsinline preload="auto"></video>
+        <div class="reactions-layer" id="reactions-layer"></div>
+        <div class="toasts-layer" id="toasts-layer"></div>
+
+        <div class="overlay" id="overlay-empty">
+          <div class="overlay-box">
+            <div class="big-icon">🍿</div>
+            <h2>Was schauen wir?</h2>
+            <p class="muted">Such einen Film oder eine Folge aus – alle im Raum sehen es sofort.</p>
+            <button class="btn primary" id="btn-library-empty">Bibliothek öffnen</button>
+          </div>
+        </div>
+        <div class="overlay" id="overlay-blocked" hidden>
+          <button class="btn primary big" id="btn-unblock">▶ Klick zum Mitschauen</button>
+        </div>
+        <div class="overlay soft" id="overlay-loading" hidden><div class="spinner"></div></div>
+
+        <div class="controls" id="controls">
+          <div class="seek">
+            <div class="seek-track"><div class="seek-buffer" id="seek-buffer"></div><div class="seek-fill" id="seek-fill"></div></div>
+            <input type="range" id="seek" min="0" max="1000" step="1" value="0" aria-label="Position">
+            <div class="seek-tip" id="seek-tip" hidden></div>
+          </div>
+          <div class="bar">
+            <button class="icon" id="btn-play" aria-label="Play/Pause">▶</button>
+            <button class="icon" id="btn-back" aria-label="10 Sekunden zurück">↺</button>
+            <button class="icon" id="btn-fwd" aria-label="10 Sekunden vor">↻</button>
+            <div class="time"><span id="t-cur">0:00</span> / <span id="t-dur">0:00</span></div>
+            <span class="lock" id="lock-hint" hidden title="Nur der Host kann steuern">🔒 Host steuert</span>
+            <div class="grow"></div>
+            <div class="react-bar" id="react-bar"></div>
+            <button class="btn small" id="btn-next" hidden>Nächste Folge ⏭</button>
+            <div class="volume">
+              <button class="icon" id="btn-mute" aria-label="Ton">🔊</button>
+              <input type="range" id="volume" min="0" max="1" step="0.05" value="1" aria-label="Lautstärke">
+            </div>
+            <div class="menu-wrap">
+              <button class="icon" id="btn-settings" aria-label="Einstellungen">⚙</button>
+              <div class="menu" id="settings-menu" hidden>
+                <label>Qualität <select id="sel-quality"></select></label>
+                <label>Tonspur <select id="sel-audio"></select></label>
+                <label>Untertitel <select id="sel-subs"></select></label>
+                <p class="tiny muted">Gilt nur für dich – jeder kann eigene Sprache & Qualität wählen.</p>
+              </div>
+            </div>
+            <button class="icon" id="btn-chat-toggle" aria-label="Chat ein/aus" title="Chat ein/aus">💬</button>
+            <button class="icon" id="btn-fs" aria-label="Vollbild">⛶</button>
+          </div>
+        </div>
+      </div>
+
+      <aside class="side" id="side">
+        <div class="tabs">
+          <button class="tab active" data-tab="chat">Chat</button>
+          <button class="tab" data-tab="people">Leute <span class="pill" id="member-count">0</span></button>
+        </div>
+        <div class="tab-body" id="tab-chat">
+          <ol class="chat" id="chat"></ol>
+          <form class="chat-form" id="chat-form">
+            <input id="chat-input" maxlength="500" autocomplete="off" placeholder="Nachricht…">
+            <button class="btn primary small" type="submit">Senden</button>
+          </form>
+        </div>
+        <div class="tab-body" id="tab-people" hidden>
+          <ul class="people" id="people"></ul>
+          <div class="host-panel" id="host-panel" hidden>
+            <label class="switch"><input type="checkbox" id="chk-all-control"> <span>Alle dürfen steuern</span></label>
+          </div>
+          <div class="me-panel">
+            <button class="link" id="btn-rename">Namen ändern</button> ·
+            <button class="link" id="btn-leave">Raum verlassen</button>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <div class="banner" id="conn-banner" hidden>Verbindung verloren – verbinde neu…</div>
+    <div class="banner warn" id="agent-banner" hidden>Der Heimserver ist offline – Videos laden gerade nicht. Chat geht weiter.</div>
+  </section>
+
+  <!-- Bibliothek -->
+  <div class="modal" id="library" hidden>
+    <div class="modal-box">
+      <div class="lib-head">
+        <nav class="crumbs" id="crumbs"></nav>
+        <input id="lib-search" type="search" placeholder="Suchen…" autocomplete="off">
+        <button class="icon" id="lib-close" aria-label="Schließen">✕</button>
+      </div>
+      <div class="lib-body" id="lib-body"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="/vendor/hls.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+services:
+  agent:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    # Läuft Jellyfin auch in Docker auf diesem Rechner:
+    #   JELLYFIN_URL=http://host.docker.internal:8096
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
