@@ -15,13 +15,14 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: ffmpeg installieren
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        uses: AnimMouse/setup-ffmpeg@v1
       - name: Abhängigkeiten
         run: |
           npm install --prefix relay --omit=dev
@@ -31,8 +32,8 @@ jobs:
         run: npm test --prefix client
 
   windows:
-    needs: test
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
