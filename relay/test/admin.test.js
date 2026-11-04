@@ -129,7 +129,8 @@ test('Konten, Gruppen, Rechte und Telemetrie', { timeout: 120000 }, async (t) =>
   assert.strictEqual((await kid.get(`/api/item/${I.M_KIDS}`)).status, 200);
 
   const nkItems = (await nk.get(`/api/items?parentId=${I.LIB_M}`)).data.items.map((x) => x.name);
-  assert.deepStrictEqual(nkItems, ['Neuer Film'], 'Ordner „Klassiker“ ausgeblendet');
+  assert.ok(nkItems.includes('Neuer Film') && !nkItems.includes('Klassiker'), `Ordner „Klassiker“ ausgeblendet: ${nkItems}`);
+  assert.deepStrictEqual((await nk.get('/api/search?q=metropolis')).data.movies, [], 'neue Suche filtert auch');
   assert.deepStrictEqual((await nk.get('/api/items?search=metro')).data.items, [], 'auch nicht über die Suche');
   assert.strictEqual((await nk.get(`/api/item/${I.M_METRO}`)).status, 403);
   assert.strictEqual((await nk.get(`/api/item/${I.EP1}`)).status, 200, 'Serien-Folge erlaubt');

@@ -15,13 +15,14 @@ const I = {
   LIB_M: id('lib-filme'), LIB_S: id('lib-serien'), LIB_K: id('lib-kinder'), ROOT: id('root'),
   F_KLASSIK: id('klassiker'), M_METRO: id('metropolis'), M_NEU: id('neu'),
   SERIES: id('serie'), SEASON: id('staffel'), EP1: id('folge1'), M_KIDS: id('trick'),
+  M_RUECK: id('rueckkehr'), M_4K: id('vierk'),
 };
 const MS = id('mediasource');
 
-function movie(Id, Name, ParentId) {
-  return { Id, Name, Type: 'Movie', ParentId, ProductionYear: 2026, RunTimeTicks: 60 * 1e7, ImageTags: { Primary: 'x' },
-    MediaSources: [{ Id: MS, Container: 'mp4', DefaultAudioStreamIndex: 1, MediaStreams: [
-      { Index: 0, Type: 'Video', Codec: 'h264', Width: 1920, Height: 1080 },
+function movie(Id, Name, ParentId, { year = 2026, height = 1080, bitrate = 8000000, hdr = false } = {}) {
+  return { Id, Name, Type: 'Movie', ParentId, ProductionYear: year, RunTimeTicks: 60 * 1e7, ImageTags: { Primary: 'x' },
+    MediaSources: [{ Id: MS, Container: 'mp4', Bitrate: bitrate, DefaultAudioStreamIndex: 1, MediaStreams: [
+      { Index: 0, Type: 'Video', Codec: 'h264', Width: Math.round(height * 16 / 9), Height: height, VideoRange: hdr ? 'HDR' : 'SDR' },
       { Index: 1, Type: 'Audio', Codec: 'aac', Language: 'deu', IsDefault: true }] }] };
 }
 const ITEMS = {
@@ -36,6 +37,8 @@ const ITEMS = {
   [I.SEASON]: { Id: I.SEASON, Name: 'Staffel 1', Type: 'Season', IsFolder: true, ParentId: I.SERIES, SeriesId: I.SERIES, IndexNumber: 1 },
   [I.EP1]: { ...movie(I.EP1, 'Folge 1', I.SEASON), Type: 'Episode', SeriesId: I.SERIES, SeasonId: I.SEASON, SeriesName: 'Testserie', IndexNumber: 1, ParentIndexNumber: 1 },
   [I.M_KIDS]: movie(I.M_KIDS, 'Trickfilm', I.LIB_K),
+  [I.M_RUECK]: movie(I.M_RUECK, 'Die Rückkehr der Ritter', I.LIB_M, { year: 1999, height: 2160, bitrate: 60000000, hdr: true }),
+  [I.M_4K]: movie(I.M_4K, 'Ritter der Nacht', I.LIB_M, { year: 2012, height: 720, bitrate: 4000000 }),
 };
 const VIDEO = crypto.randomBytes(3 * 1024 * 1024);
 
@@ -58,10 +61,12 @@ function start(port = 0) {
     if (p === `/Users/${USER}/Items`) {
       let list;
       if (q.get('SearchTerm')) list = Object.values(ITEMS).filter((x) => !x.IsFolder || x.Type === 'Series').filter((x) => x.Name.toLowerCase().includes(q.get('SearchTerm').toLowerCase()));
+      else if (q.get('Years')) list = Object.values(ITEMS).filter((x) => x.Type === 'Movie' || x.Type === 'Series');
       else if (q.get('Recursive') === 'true') {
         const types = (q.get('IncludeItemTypes') || '').split(',');
         list = descendants(q.get('ParentId')).filter((x) => !types[0] || types.includes(x.Type));
       } else list = Object.values(ITEMS).filter((x) => x.ParentId === q.get('ParentId'));
+      if (q.get('Years')) list = list.filter((x) => q.get('Years').split(',').includes(String(x.ProductionYear)));
       return json({ Items: list, TotalRecordCount: list.length });
     }
     if ((m = p.match(new RegExp(`^/Users/${USER}/Items/([a-f0-9]{32})$`)))) {

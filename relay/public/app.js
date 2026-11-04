@@ -6,16 +6,17 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const video = $('#video');
 const player = $('#player');
 
-const QUALITIES = [
-  { id: 'auto', label: 'Automatisch' },
-  { id: 'direct', label: 'Original (direkt)' },
-  { id: '40000000', label: '40 Mbit/s' },
-  { id: '20000000', label: '20 Mbit/s (1080p)' },
-  { id: '10000000', label: '10 Mbit/s' },
-  { id: '6000000', label: '6 Mbit/s (720p)' },
-  { id: '3000000', label: '3 Mbit/s' },
-  { id: '1500000', label: '1,5 Mbit/s (mobil)' },
-];
+/** Qualitäten kommen pro Datei vom Server (nie mehr als das Original hergibt). */
+function qualityList(info) {
+  const list = (info && info.qualities) || [];
+  // Original nur anbieten, wenn der Browser die Datei direkt abspielen kann
+  return list.filter((q) => q.id !== 'direct' || info.directPlayable);
+}
+/** Beste Transcode-Stufe (für „Automatisch“ und als Ausweg) */
+function bestTranscode(info) {
+  const t = qualityList(info).find((q) => q.id !== 'direct');
+  return t ? t.id : '10000000';
+}
 
 const S = {
   me: null,             // { name, id }
@@ -464,7 +465,14 @@ function chooseTracks() {
   const info = S.info;
   // Qualität
   const q = S.prefs.quality;
-  S.sel.quality = q === 'direct' && !info.directPlayable ? '20000000' : q;
+  const avail = qualityList(info);
+  if (q === 'auto' || avail.some((x) => x.id === q)) S.sel.quality = q;
+  else if (q === 'direct') S.sel.quality = bestTranscode(info);
+  else {
+    // gespeicherte Stufe gibt es bei dieser Datei nicht → nächstkleinere nehmen
+    const lower = avail.filter((x) => x.id !== 'direct' && Number(x.id) <= Number(q));
+    S.sel.quality = lower.length ? lower[0].id : 'auto';
+  }
   // Tonspur: bevorzugte Sprache, sonst Standard
   const al = S.prefs.audioLang;
   const a = (al && info.audio.find((x) => x.lang === al)) || info.audio.find((x) => x.index === info.defaultAudioIndex) || info.audio[0];
@@ -485,10 +493,8 @@ function fillSettings() {
   const info = S.info;
   const qs = $('#sel-quality');
   qs.innerHTML = '';
-  for (const q of QUALITIES) {
-    if (q.id === 'direct' && !info.directPlayable) continue;
-    qs.append(el('option', { value: q.id, selected: q.id === S.sel.quality }, q.label));
-  }
+  qs.append(el('option', { value: 'auto', selected: S.sel.quality === 'auto' }, `Automatisch${info.resolution ? ` (bis ${info.resolution})` : ''}`));
+  for (const q of qualityList(info)) qs.append(el('option', { value: q.id, selected: q.id === S.sel.quality }, q.label));
   const as = $('#sel-audio');
   as.innerHTML = '';
   for (const a of info.audio) as.append(el('option', { value: a.index, selected: a.index === S.sel.audio }, a.label));
@@ -523,7 +529,7 @@ function buildSource() {
       url = `/stream/${info.id}/direct?ms=${info.mediaSourceId}`;
     } else {
       S.playSession = randHex(16);
-      const q = new URLSearchParams({ ms: info.mediaSourceId, ps: S.playSession, br: S.sel.quality === 'direct' ? '40000000' : S.sel.quality === 'auto' ? '10000000' : S.sel.quality });
+      const q = new URLSearchParams({ ms: info.mediaSourceId, ps: S.playSession, br: S.sel.quality === 'direct' || S.sel.quality === 'auto' ? bestTranscode(info) : S.sel.quality });
       if (S.sel.audio != null) q.set('audio', S.sel.audio);
       if (burn) q.set('sub', sub.index);
       url = `/stream/${info.id}/master.m3u8?${q}`;
@@ -675,7 +681,7 @@ video.addEventListener('error', () => {
   $('#overlay-loading').hidden = true;
   if (S.loadedKey.includes('|direct|')) {
     toast('Direktwiedergabe klappt hier nicht – wechsle auf Transcoding.');
-    S.sel.quality = '20000000';
+    S.sel.quality = bestTranscode(S.info);
     fillSettings();
     buildSource();
   } else toast('Video konnte nicht abgespielt werden.');

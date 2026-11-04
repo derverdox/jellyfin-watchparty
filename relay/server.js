@@ -17,6 +17,8 @@ const { UserStore, SessionStore } = require('./lib/users');
 const { GroupStore, allowedByChain, allowedRoots, norm } = require('./lib/access');
 const { Telemetry, TICK_MS } = require('./lib/telemetry');
 const { handleAdmin } = require('./lib/admin');
+const { Guard } = require('./lib/guard');
+const { LibraryStore, variants, parseQuery, score } = require('./lib/library');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -47,6 +49,12 @@ const tunnel = new Tunnel();
 const cache = new DiskCache(CONFIG.cacheDir, CONFIG.cacheBytes);
 const groups = new GroupStore(CONFIG.dataDir);
 const telemetry = new Telemetry(CONFIG.dataDir);
+const library = new LibraryStore(CONFIG.dataDir);
+const guard = new Guard(CONFIG.dataDir, (ip, b) => {
+  telemetry.audit({ type: 'ip-ban', ip, reason: b.reason, by: b.by === 'auto' ? undefined : b.by });
+  telemetry.event('security', `IP ${ip} gesperrt: ${b.reason}`, { level: 'warn' });
+  console.warn(`[guard] IP ${ip} gesperrt (${b.reason})`);
+});
 // Bytes vom Heimserver mitzählen
 {
   const onData = tunnel.onData.bind(tunnel);
@@ -113,10 +121,12 @@ function mapItem(it) {
     playable: PLAYABLE_TYPES.has(it.Type),
     played: !!(it.UserData && it.UserData.Played),
     overview: it.Overview ? it.Overview.slice(0, 400) : '',
+    originalTitle: it.OriginalTitle && it.OriginalTitle !== it.Name ? it.OriginalTitle : null,
+    rating: it.CommunityRating ? Math.round(it.CommunityRating * 10) / 10 : null,
   };
 }
 
-const ITEM_FIELDS = 'PrimaryImageAspectRatio,ProductionYear,Overview';
+const ITEM_FIELDS = 'PrimaryImageAspectRatio,ProductionYear,Overview,OriginalTitle';
 
 function getItemDetails(id) {
   return jsonCache.get(`item|${id}`, async () => {
@@ -168,6 +178,10 @@ function getItemDetails(id) {
       directPlayable,
       width: video ? video.Width : null,
       height: video ? video.Height : null,
+      bitrate: ms.Bitrate || (video && video.BitRate) || null,
+      hdr: !!(video && video.VideoRange && video.VideoRange !== 'SDR'),
+      videoCodec: video ? (video.Codec || '').toLowerCase() : null,
+      container: ms.Container || null,
       nextEpisodeId,
     };
   });
@@ -177,13 +191,14 @@ function getItemDetails(id) {
 /* Sessions & login                                                    */
 /* ------------------------------------------------------------------ */
 
-const loginAttempts = new Map(); // ip|name -> { count, reset }
 
 function clientIp(req) {
   if (CONFIG.trustProxy && req.headers['x-forwarded-for']) {
-    return String(req.headers['x-forwarded-for']).split(',')[0].trim();
+    // Der LETZTE Eintrag stammt vom eigenen Proxy (Caddy); alles davor kann der Client selbst gesetzt haben.
+    const parts = String(req.headers['x-forwarded-for']).split(',').map((x) => x.trim()).filter(Boolean);
+    if (parts.length) return parts[parts.length - 1].replace(/^::ffff:/, '');
   }
-  return req.socket.remoteAddress || '?';
+  return String(req.socket.remoteAddress || '?').replace(/^::ffff:/, '');
 }
 
 function parseCookies(req) {
@@ -267,14 +282,6 @@ function sessionCookie(req, sid, maxAge = SESSION_TTL / 1000) {
 
 function cleanName(name) {
   return String(name || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 24);
-}
-
-function throttle(key, max, windowMs) {
-  const now = Date.now();
-  const a = loginAttempts.get(key) || { count: 0, reset: now + windowMs };
-  if (now > a.reset) { a.count = 0; a.reset = now + windowMs; }
-  loginAttempts.set(key, a);
-  return a;
 }
 
 function me(s) {
@@ -428,7 +435,6 @@ setInterval(() => {
       room.broadcast({ t: 'members', members: room.members() });
     }
   }
-  for (const [k, a] of loginAttempts) if (now > a.reset) loginAttempts.delete(k);
 }, 2000).unref();
 
 
@@ -479,8 +485,28 @@ const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'SAMEORIGIN',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'",
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
 };
+
+/** Eigener Host (für den Origin-Check). */
+function ownHosts(req) {
+  const fwd = CONFIG.trustProxy && req.headers['x-forwarded-host'];
+  return [req.headers.host, fwd].filter(Boolean).map((h) => String(h).split(',')[0].trim().toLowerCase());
+}
+
+/** Schutz gegen Cross-Site-Anfragen (CSRF) bei allem, was etwas ändert. */
+function sameOrigin(req) {
+  const origin = req.headers.origin;
+  if (origin) {
+    try { return ownHosts(req).includes(new URL(origin).host.toLowerCase()); } catch { return false; }
+  }
+  const site = req.headers['sec-fetch-site'];
+  if (site) return site === 'same-origin' || site === 'none';
+  return true; // keine Browser-Herkunft (z. B. Desktop-Client, curl)
+}
 
 function stripKeys(text) {
   return text.replace(/([?&])(api_key|ApiKey)=[^&\s"]*&?/gi, '$1').replace(/[?&](\r?\n)/g, '$1');
@@ -585,10 +611,67 @@ async function serveDirect(req, res, itemId, ms) {
 
 const BITRATES = new Set([1500000, 3000000, 6000000, 10000000, 20000000, 40000000]);
 
+/** Transcode-Stufen: Bitrate → Auflösung und Name. */
+const TIERS = [
+  { br: 40000000, height: 2160, name: '4K' },
+  { br: 20000000, height: 1080, name: 'Full HD' },
+  { br: 10000000, height: 1080, name: 'Full HD', note: 'sparsam' },
+  { br: 6000000, height: 720, name: 'HD' },
+  { br: 3000000, height: 480, name: 'SD' },
+  { br: 1500000, height: 360, name: 'Mobil' },
+];
+const TIER_HEIGHT = Object.fromEntries(TIERS.map((t) => [t.br, t.height]));
+
+function resName(h) {
+  if (!h) return '';
+  if (h >= 1900) return '4K';
+  if (h >= 1300) return 'QHD';
+  if (h >= 1000) return 'Full HD';
+  if (h >= 700) return 'HD';
+  return 'SD';
+}
+function mbitLabel(br) { return `${(br / 1e6).toFixed(br < 10e6 ? 1 : 0).replace('.', ',').replace(',0', '')} Mbit/s`; }
+
+/**
+ * Wählbare Qualitäten für eine Datei: nie mehr als das Original hergibt
+ * (Bitrate und Auflösung) und nie mehr als die Gruppe darf.
+ */
+function qualityOptions(d, acc) {
+  const out = [];
+  const srcH = d.height || 0;
+  const srcBr = d.bitrate || 0;
+  if (acc.perms.direct) {
+    out.push({ id: 'direct', label: `Original · ${[resName(srcH), d.hdr ? 'HDR' : ''].filter(Boolean).join(' ')}${srcBr ? ` · ${mbitLabel(srcBr)}` : ''}`, height: srcH, br: srcBr || null, original: true });
+  }
+  for (const t of TIERS) {
+    if (t.br > acc.maxBitrate) continue;
+    if (srcH && t.height > srcH * 1.05) continue;       // nicht hochskalieren
+    if (srcBr && t.br >= srcBr * 0.95) continue;         // nicht mehr als das Original
+    out.push({ id: String(t.br), label: `${t.name}${t.note ? ` (${t.note})` : ''} · ${mbitLabel(t.br)}`, height: t.height, br: t.br });
+  }
+  // Ganz ohne Stufe (z. B. sehr kleine Datei, keine Originalqualität erlaubt): kleinste erlaubte nehmen
+  if (!out.length) {
+    const t = [...TIERS].reverse().find((x) => x.br <= acc.maxBitrate) || TIERS[TIERS.length - 1];
+    out.push({ id: String(t.br), label: `${t.name} · ${mbitLabel(t.br)}`, height: t.height, br: t.br });
+  }
+  return out;
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
+  if (isSecure(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  const ip = clientIp(req);
+  if (p.startsWith('/api/') || p.startsWith('/stream/') || p.startsWith('/img/') || p.startsWith('/subs/')) {
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) throw new HttpError(403, 'Anfrage von fremder Seite abgelehnt');
+    const ban = guard.banned(ip);
+    if (ban) {
+      const s = getSession(req);
+      if (!(s && s.admin)) throw new HttpError(403, `Deine IP ist gesperrt${ban.until ? ` bis ${new Date(ban.until).toLocaleString('de-DE')}` : ''}.`);
+    }
+    if (!guard.limit(`req|${ip}`, 1200, 60000)) throw new HttpError(429, 'Zu viele Anfragen – kurz durchatmen.');
+  }
 
   // --- statische Dateien ---
   if (req.method === 'GET' && (p === '/' || /^\/(r|invite)\/[A-Za-z0-9_-]{4,40}\/?$/.test(p))) {
@@ -610,16 +693,17 @@ async function handle(req, res) {
 
   // --- Login / Registrierung ---
   if (p === '/api/login' && req.method === 'POST') {
-    const ip = clientIp(req);
     const body = await readJson(req);
-    const username = String(body.username || '').trim();
-    const a = throttle(`ip|${ip}`, 10, 15 * 60 * 1000);
-    const b = throttle(`u|${username.toLowerCase()}`, 10, 15 * 60 * 1000);
-    if (a.count >= 10 || b.count >= 10) throw new HttpError(429, 'Zu viele Versuche – warte ein paar Minuten.');
-    const user = await users.verify(username, body.password || '');
-    if (!user) { a.count++; b.count++; telemetry.login(username.slice(0, 40), false, ip); throw new HttpError(401, 'Benutzername oder Passwort falsch'); }
-    loginAttempts.delete(`ip|${ip}`);
-    loginAttempts.delete(`u|${username.toLowerCase()}`);
+    const username = String(body.username || '').trim().slice(0, 40);
+    const chk = guard.checkLogin(ip, username);
+    if (!chk.ok) {
+      const sec = chk.wait ? Math.ceil(chk.wait / 1000) : null;
+      throw new HttpError(429, chk.reason === 'ban' ? 'Zu viele Fehlversuche – deine IP ist vorübergehend gesperrt.'
+        : `Zu viele Versuche – bitte ${sec > 90 ? `${Math.ceil(sec / 60)} Minuten` : `${sec} Sekunden`} warten.`);
+    }
+    const user = await users.verify(username, String(body.password || '').slice(0, 200));
+    if (!user) { guard.fail(ip, username); telemetry.login(username, false, ip); throw new HttpError(401, 'Benutzername oder Passwort falsch'); }
+    guard.success(ip, username);
     if (!users.usable(user)) {
       telemetry.audit({ type: 'login-blocked', user: user.username, ip });
       throw new HttpError(403, user.disabled ? 'Dieses Konto ist gesperrt.' : 'Dieses Konto ist abgelaufen.');
@@ -629,16 +713,14 @@ async function handle(req, res) {
     telemetry.login(user.username, true, ip);
     const s = sessions.create(user, { ua: req.headers['user-agent'], ip });
     s.admin = !!user.admin;
-    return sendJson(res, 200, me(s), { 'Set-Cookie': sessionCookie(req, s.id) });
+    return sendJson(res, 200, me(s), { 'Set-Cookie': sessionCookie(req, s.token) });
   }
 
   let m;
   if ((m = p.match(/^\/api\/invite\/([A-Za-z0-9_-]{8,40})$/))) {
+    if (!guard.limit(`inv|${ip}`, 20, 15 * 60 * 1000)) { guard.fail(ip, '(einladung)'); throw new HttpError(429, 'Zu viele Versuche'); }
     if (req.method === 'GET') return sendJson(res, 200, { valid: users.checkInvite(m[1]) });
     if (req.method === 'POST') {
-      const a = throttle(`reg|${clientIp(req)}`, 10, 15 * 60 * 1000);
-      if (a.count >= 10) throw new HttpError(429, 'Zu viele Versuche');
-      a.count++;
       const body = await readJson(req);
       let user;
       if (!groups.settings.invitesEnabled) throw new HttpError(403, 'Registrierung ist gerade abgeschaltet');
@@ -648,7 +730,7 @@ async function handle(req, res) {
       telemetry.event('register', `${user.username} hat sich per Einladung registriert`, { user: user.username });
       const s = sessions.create(user, { ua: req.headers['user-agent'], ip: clientIp(req) });
       console.log(`[users] "${user.username}" hat sich per Einladung registriert`);
-      return sendJson(res, 200, me(s), { 'Set-Cookie': sessionCookie(req, s.id) });
+      return sendJson(res, 200, me(s), { 'Set-Cookie': sessionCookie(req, s.token) });
     }
   }
 
@@ -709,6 +791,7 @@ async function handle(req, res) {
     return handleAdmin(adminCtx, req, res, url, session);
   }
   if ((m = p.match(/^\/api\/rooms\/([A-Za-z0-9]{4,12})$/)) && req.method === 'GET') {
+    if (!guard.limit(`room|${session.username.toLowerCase()}`, 30, 60000)) throw new HttpError(429, 'Zu viele Versuche');
     const room = rooms.get(m[1].toUpperCase());
     if (!room) throw new HttpError(404, 'Raum nicht gefunden');
     return sendJson(res, 200, { code: room.code, members: room.clients.size });
@@ -759,6 +842,9 @@ async function handle(req, res) {
       q.set('ParentId', parentId);
       const sort = url.searchParams.get('sort');
       if (sort === 'index') q.set('SortBy', 'ParentIndexNumber,IndexNumber,SortName');
+      else if (sort === 'added') { q.set('SortBy', 'DateCreated,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
+      else if (sort === 'year') { q.set('SortBy', 'ProductionYear,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
+      else if (sort === 'rating') { q.set('SortBy', 'CommunityRating,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
       else q.set('SortBy', 'SortName');
       const ct = url.searchParams.get('collectionType');
       if (ct === 'movies') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Movie'); }
@@ -771,12 +857,74 @@ async function handle(req, res) {
     return sendJson(res, 200, { items: kept.map(mapItem), total: Math.max(0, (data.TotalRecordCount || 0) - (all.length - kept.length)) });
   }
 
+  // --- Suche: gruppiert, nach Relevanz, tolerant bei Umlauten/ß, mit Jahr ---
+  if (p === '/api/search') {
+    const raw = String(url.searchParams.get('q') || '').trim().slice(0, 100);
+    if (raw.length < 2) return sendJson(res, 200, { movies: [], series: [], episodes: [], query: raw });
+    const { text, year } = parseQuery(raw);
+    const onlyYear = year && text === String(year);
+    const base = { Recursive: 'true', IncludeItemTypes: 'Movie,Series,Episode,BoxSet,Video', Limit: '60', Fields: ITEM_FIELDS, EnableImageTypes: 'Primary', ImageTypeLimit: '1' };
+    const queries = onlyYear
+      ? [new URLSearchParams({ ...base, IncludeItemTypes: 'Movie,Series', Years: String(year), SortBy: 'CommunityRating,SortName', SortOrder: 'Descending,Ascending' })]
+      : variants(text).map((v) => new URLSearchParams({ ...base, SearchTerm: v, ...(year ? { Years: String(year) } : {}) }));
+    const results = await Promise.all(queries.map((q) => jsonCache.get(`search|${q}`, () => jf(`/Users/${uid()}/Items?${q}`)).catch(() => ({ Items: [] }))));
+    const byId = new Map();
+    for (const r of results) for (const it of r.Items || []) if (!byId.has(it.Id)) byId.set(it.Id, it);
+    const allowed = await filterAllowed(session, [...byId.values()]);
+    const scored = allowed.map((it) => { const mi = mapItem(it); return { ...mi, score: onlyYear ? 50 : score(mi, text, year) }; })
+      .filter((x) => x.score > 0).sort((a, b) => b.score - a.score || (b.year || 0) - (a.year || 0));
+    const pick = (types, n) => scored.filter((x) => types.includes(x.type)).slice(0, n);
+    return sendJson(res, 200, {
+      query: raw, year,
+      movies: pick(['Movie', 'Video'], 30), series: pick(['Series', 'BoxSet'], 24), episodes: pick(['Episode'], 30),
+    });
+  }
+
+  // --- Merkliste & Verlauf ---
+  if (p === '/api/watchlist' && req.method === 'GET') {
+    const out = [];
+    for (const e of library.list(session.username).slice(0, 200)) {
+      try {
+        const it = await jsonCache.get(`li|${e.id}`, () => jf(`/Users/${uid()}/Items/${e.id}?Fields=${ITEM_FIELDS}`));
+        if (await canAccess(session, e.id)) out.push({ ...mapItem(it), added: e.added });
+      } catch { /* gelöscht oder offline */ }
+    }
+    return sendJson(res, 200, { items: out });
+  }
+  if (p === '/api/watchlist' && req.method === 'POST') {
+    const body = await readJson(req);
+    const id = String(body.itemId || '');
+    if (!ID_RE.test(id)) throw new HttpError(400, 'Ungültige ID');
+    await assertAccess(session, id);
+    const on = body.on !== undefined ? !!body.on : !library.has(session.username, id);
+    if (on) library.add(session.username, id); else library.remove(session.username, id);
+    return sendJson(res, 200, { on });
+  }
+  if (p === '/api/history' && req.method === 'GET') {
+    const out = [];
+    for (const h of library.history(session.username).slice(0, 30)) {
+      if (!(await canAccess(session, h.id).catch(() => false))) continue;
+      const done = h.runtime ? h.pos / h.runtime : 0;
+      out.push({ ...h, progress: Math.round(done * 1000) / 10, finished: done > 0.92 });
+    }
+    return sendJson(res, 200, { items: out });
+  }
+  if ((m = p.match(/^\/api\/history(?:\/([a-f0-9-]+))?$/i)) && req.method === 'DELETE') {
+    library.clearHistory(session.username, m[1] || null);
+    return sendJson(res, 200, { ok: true });
+  }
+
   if ((m = p.match(/^\/api\/item\/([a-f0-9-]+)$/i))) {
     if (!ID_RE.test(m[1])) throw new HttpError(400, 'Ungültige ID');
     await assertAccess(session, m[1]);
     const d = await getItemDetails(m[1]);
     const a = accessOf(session);
-    return sendJson(res, 200, { ...d, directPlayable: d.directPlayable && a.perms.direct, maxBitrate: a.maxBitrate, allowDirect: a.perms.direct });
+    return sendJson(res, 200, {
+      ...d, directPlayable: d.directPlayable && a.perms.direct, maxBitrate: a.maxBitrate, allowDirect: a.perms.direct,
+      qualities: qualityOptions(d, a), resolution: [resName(d.height), d.hdr ? 'HDR' : ''].filter(Boolean).join(' '),
+      inWatchlist: library.has(session.username, d.id),
+      resume: (library.history(session.username).find((h) => h.id === d.id) || {}).pos || 0,
+    });
   }
 
   // --- Bilder ---
@@ -807,6 +955,7 @@ async function handle(req, res) {
       const ms = sp.get('ms');
       if (!ID_RE.test(ms || '')) throw new HttpError(400, 'Parameter fehlen');
       const br = Math.min(BITRATES.has(toInt(sp.get('br'), 0)) ? toInt(sp.get('br'), 0) : 10000000, acc.maxBitrate);
+      const maxH = TIER_HEIGHT[br] || 1080;
       const audio = /^\d{1,3}$/.test(sp.get('audio') || '') ? sp.get('audio') : '';
       const subIdx = /^\d{1,3}$/.test(sp.get('sub') || '') ? sp.get('sub') : '';
       // Alle Zuschauer mit gleichen Einstellungen teilen sich EINEN Transcode
@@ -818,6 +967,7 @@ async function handle(req, res) {
         VideoCodec: 'h264',
         AudioCodec: 'aac,mp3',
         MaxStreamingBitrate: String(br),
+        MaxHeight: String(maxH),
         VideoBitrate: String(Math.max(br - 320000, 500000)),
         AudioBitrate: '192000',
         TranscodingMaxAudioChannels: '2',
@@ -902,6 +1052,11 @@ server.on('upgrade', (req, socket, head) => {
 
   const session = getSession(req);
   if (!session) return reject(401, 'Unauthorized');
+  if (guard.banned(clientIp(req)) && !session.admin) return reject(403, 'Forbidden');
+  let open = 0;
+  for (const r of rooms.values()) for (const c of r.clients.values()) if (c.session.id === session.id) open++;
+  if (open >= 8) return reject(429, 'Too Many Connections');
+  if (!guard.limit(`ws|${session.id}`, 30, 60000)) return reject(429, 'Too Many Requests');
   const code = String(url.searchParams.get('room') || '').toUpperCase();
   const room = rooms.get(code);
   if (!room) return reject(404, 'Room Not Found');
@@ -921,6 +1076,7 @@ function onConnection(ws, session, room, req) {
     joinedAt: Date.now(),
     status: { pos: 0, state: 'idle' },
     chatTimes: [],
+    statusTimes: [],
     ctrlTimes: [],
     alive: true,
   };
@@ -966,6 +1122,7 @@ function onConnection(ws, session, room, req) {
           break;
 
         case 'status': {
+          if (!rateOk(client.statusTimes, 20, 10000)) break;
           const pos = Number(msg.pos);
           client.status = {
             pos: Number.isFinite(pos) ? Math.max(0, pos) : 0,
@@ -1144,12 +1301,21 @@ function publicRoom(room) {
   return { code: room.code, host: room.hostSid.slice(0, 12), allowAllControl: room.allowAllControl };
 }
 
-setInterval(() => telemetry.tick(rooms, cache.stats()), TICK_MS).unref();
-process.on('SIGTERM', () => { telemetry.dirty = true; telemetry.save(); process.exit(0); });
-process.on('SIGINT', () => { telemetry.dirty = true; telemetry.save(); process.exit(0); });
+setInterval(() => {
+  telemetry.tick(rooms, cache.stats());
+  // Fortschritt für „Zuletzt geschaut“
+  for (const room of rooms.values()) {
+    if (!room.item || !room.playing) continue;
+    const pos = room.positionAt();
+    for (const c of room.clients.values()) if (c.status && c.status.state === 'playing') library.progress(c.session.username, room.item, pos);
+  }
+}, TICK_MS).unref();
+function shutdown() { telemetry.dirty = true; telemetry.save(); library.flush(true); sessions.flush(true); process.exit(0); }
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 const adminCtx = {
-  users, sessions, groups, telemetry, rooms, tunnel, cache, jf, uid, readJson, sendJson, HttpError,
+  users, sessions, groups, telemetry, rooms, tunnel, cache, jf, uid, readJson, sendJson, HttpError, guard,
   disconnectUser, closeRoom, bumpAccess, mapItem, getItemDetails, publicRoom, fmtTime, ID_RE, ITEM_FIELDS, clientIp,
 };
 

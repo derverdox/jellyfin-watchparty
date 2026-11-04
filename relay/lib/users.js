@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { checkPassword } = require('./guard');
 
 const SCRYPT = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const NAME_RE = /^[A-Za-z0-9_.\-äöüÄÖÜß]{2,24}$/;
@@ -86,7 +87,8 @@ class UserStore {
 
   async create(username, password, { admin = false, groups, createdBy, note, expires } = {}) {
     if (!this.validName(username)) throw new Error('Benutzername: 2–24 Zeichen, Buchstaben/Zahlen/._-');
-    if (String(password || '').length < 8) throw new Error('Passwort muss mindestens 8 Zeichen haben');
+    const bad = checkPassword(password, username);
+    if (bad) throw new Error(bad);
     if (this.find(username)) throw new Error('Benutzername ist schon vergeben');
     const salt = crypto.randomBytes(16);
     const hash = await scrypt(password, salt);
@@ -133,7 +135,8 @@ class UserStore {
   async setPassword(username, password) {
     const u = this.find(username);
     if (!u) throw new Error('Benutzer nicht gefunden');
-    if (String(password || '').length < 8) throw new Error('Passwort muss mindestens 8 Zeichen haben');
+    const bad = checkPassword(password, u.username);
+    if (bad) throw new Error(bad);
     const salt = crypto.randomBytes(16);
     u.salt = salt.toString('hex');
     u.hash = (await scrypt(password, salt)).toString('hex');
@@ -228,22 +231,44 @@ class UserStore {
   }
 }
 
+/** Sitzungs-Token werden nur als SHA-256 gespeichert – ein geleakter Datenordner verrät keine gültigen Cookies. */
+function tokenHash(token) { return crypto.createHash('sha256').update(String(token)).digest('hex'); }
+
 class SessionStore {
   constructor(dir, ttlMs) {
     this.ttl = ttlMs;
     this.db = new JsonFile(path.join(dir, 'sessions.json'), {});
     this.dirty = false;
+    this.migrate();
     setInterval(() => this.flush(), 30000).unref();
   }
   get map() { return this.db.data; }
-  create(user, meta = {}) {
-    const id = crypto.randomBytes(24).toString('hex');
-    this.map[id] = { id, username: user.username, name: user.username, created: Date.now(), lastSeen: Date.now(), ua: String(meta.ua || '').slice(0, 200), ip: meta.ip || null };
-    this.flush(true);
-    return this.map[id];
+  /** Alte Sitzungen (Klartext-Schlüssel) auf Hashes umstellen, ohne dass jemand rausfliegt. */
+  migrate() {
+    let changed = false;
+    for (const [k, s] of Object.entries(this.map)) {
+      if (s.hashed) continue;
+      const h = tokenHash(k);
+      delete this.map[k];
+      this.map[h] = { ...s, id: h, hashed: true };
+      changed = true;
+    }
+    if (changed) this.flush(true);
   }
-  get(id) {
-    const s = id && Object.prototype.hasOwnProperty.call(this.map, id) ? this.map[id] : null;
+  /** Neue Sitzung. Das Cookie-Token steht nur in session.token (wird nicht gespeichert). */
+  create(user, meta = {}) {
+    const token = crypto.randomBytes(24).toString('hex');
+    const id = tokenHash(token);
+    this.map[id] = { id, hashed: true, username: user.username, name: user.username, created: Date.now(), lastSeen: Date.now(), ua: String(meta.ua || '').slice(0, 200), ip: meta.ip || null };
+    this.flush(true);
+    const s = this.map[id];
+    Object.defineProperty(s, 'token', { value: token, enumerable: false, configurable: true });
+    return s;
+  }
+  get(token) {
+    if (!token || typeof token !== 'string' || token.length > 100) return null;
+    const id = tokenHash(token);
+    const s = Object.prototype.hasOwnProperty.call(this.map, id) ? this.map[id] : null;
     if (!s) return null;
     if (Date.now() - s.lastSeen > this.ttl) { this.delete(id); return null; }
     if (Date.now() - s.lastSeen > 60000) { s.lastSeen = Date.now(); this.dirty = true; }

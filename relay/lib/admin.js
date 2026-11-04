@@ -314,6 +314,32 @@ async function handleAdmin(ctx, req, res, url, me) {
     return ok();
   }
 
+  /* ---------------- Sicherheit ---------------- */
+
+  if (p === '/security' && method === 'GET') {
+    const o = ctx.guard.overview();
+    const failed = telemetry.readAudit(1000).filter((e) => e.type === 'login-failed' && Date.now() - e.t < 7 * 86400000);
+    return ok({ ...o, failed7d: failed.length, me: ctx.clientIp(req) });
+  }
+  if (p === '/security/ban' && method === 'POST') {
+    const ip = String(body.ip || '').trim();
+    if (!/^[0-9a-f:.]{3,45}$/i.test(ip)) throw new HttpError(400, 'Ungültige IP-Adresse');
+    if (ip === ctx.clientIp(req)) throw new HttpError(400, 'Das ist deine eigene IP');
+    ctx.guard.ban(ip, Number(body.hours) || 0, body.reason || 'manuell', me.username);
+    for (const room of rooms.values()) {
+      for (const c of [...room.clients.values()]) {
+        if (c.ip !== ip || (users.find(c.session.username) || {}).admin) continue;
+        try { c.ws.send(JSON.stringify({ t: 'kicked', text: 'Deine IP wurde gesperrt.' })); c.kicked = true; c.ws.close(4001, 'banned'); } catch { /* egal */ }
+      }
+    }
+    return ok();
+  }
+  if (p === '/security/unban' && method === 'POST') {
+    ctx.guard.unban(String(body.ip || ''));
+    audit('ip-unban', { ip: String(body.ip || '') });
+    return ok();
+  }
+
   /* ---------------- Einstellungen ---------------- */
 
   if (p === '/settings' && method === 'GET') return ok({ settings: groups.settings, groups: groups.list().map((g) => ({ id: g.id, name: g.name })) });
