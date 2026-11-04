@@ -44,11 +44,21 @@ class UserStore {
     fs.mkdirSync(dir, { recursive: true });
     this.db = new JsonFile(path.join(dir, 'users.json'), { users: [], invites: [] });
     this.dummySalt = crypto.randomBytes(16);
+    this.ensureOwner();
   }
 
   get data() { return this.db.load(); }
 
-  list() { return this.data.users.map((u) => ({ username: u.username, admin: !!u.admin, created: u.created })); }
+  /** Öffentliche Sicht auf ein Konto (ohne Hash/Salt). */
+  view(u) {
+    return {
+      username: u.username, admin: !!u.admin, owner: !!u.owner, created: u.created,
+      groups: Array.isArray(u.groups) ? u.groups : [], disabled: !!u.disabled, expires: u.expires || null,
+      note: u.note || '', lastLogin: u.lastLogin || null, createdBy: u.createdBy || null, pwChanged: u.pwChanged || null,
+    };
+  }
+
+  list() { return this.data.users.map((u) => this.view(u)); }
   count() { return this.data.users.length; }
   find(username) {
     const n = String(username || '').toLowerCase();
@@ -57,16 +67,67 @@ class UserStore {
 
   validName(name) { return NAME_RE.test(String(name || '')); }
 
-  async create(username, password, { admin = false } = {}) {
+  /** Der älteste Admin ist der Haupt-Admin: nicht löschbar, nicht sperrbar, nicht herabstufbar. */
+  ensureOwner() {
+    const d = this.data;
+    if (!d.users.length || d.users.some((u) => u.owner)) return;
+    const first = [...d.users].filter((u) => u.admin).sort((a, b) => (a.created || 0) - (b.created || 0))[0];
+    if (first) { first.owner = true; this.db.save(); }
+  }
+
+  /** Konto gerade nutzbar? (nicht gesperrt, nicht abgelaufen) */
+  usable(u) {
+    if (!u) return false;
+    if (u.owner) return true;
+    if (u.disabled) return false;
+    if (u.expires && Date.now() > u.expires) return false;
+    return true;
+  }
+
+  async create(username, password, { admin = false, groups, createdBy, note, expires } = {}) {
     if (!this.validName(username)) throw new Error('Benutzername: 2–24 Zeichen, Buchstaben/Zahlen/._-');
     if (String(password || '').length < 8) throw new Error('Passwort muss mindestens 8 Zeichen haben');
     if (this.find(username)) throw new Error('Benutzername ist schon vergeben');
     const salt = crypto.randomBytes(16);
     const hash = await scrypt(password, salt);
     const d = this.data;
-    d.users.push({ username, admin: !!admin, salt: salt.toString('hex'), hash: hash.toString('hex'), created: Date.now() });
+    const owner = admin && !d.users.some((u) => u.owner);
+    d.users.push({
+      username, admin: !!admin, owner, salt: salt.toString('hex'), hash: hash.toString('hex'), created: Date.now(),
+      groups: Array.isArray(groups) ? groups : [], createdBy: createdBy || null, note: note || '', expires: expires || null,
+    });
     this.db.save();
     return this.find(username);
+  }
+
+  update(username, patch) {
+    const u = this.find(username);
+    if (!u) throw new Error('Benutzer nicht gefunden');
+    if ('groups' in patch) u.groups = [...new Set((patch.groups || []).map(String))];
+    if ('note' in patch) u.note = String(patch.note || '').slice(0, 500);
+    if ('disabled' in patch) {
+      if (u.owner && patch.disabled) throw new Error('Der Haupt-Admin kann nicht gesperrt werden');
+      u.disabled = !!patch.disabled;
+    }
+    if ('expires' in patch) {
+      if (u.owner && patch.expires) throw new Error('Der Haupt-Admin kann nicht ablaufen');
+      const e = patch.expires ? Number(patch.expires) : null;
+      if (e != null && !Number.isFinite(e)) throw new Error('Ungültiges Ablaufdatum');
+      u.expires = e;
+    }
+    if ('admin' in patch) {
+      if (u.owner && !patch.admin) throw new Error('Der Haupt-Admin bleibt Admin');
+      u.admin = !!patch.admin;
+    }
+    this.db.save();
+    return u;
+  }
+
+  touchLogin(username) {
+    const u = this.find(username);
+    if (!u) return;
+    u.lastLogin = Date.now();
+    this.db.save();
   }
 
   async setPassword(username, password) {
@@ -80,19 +141,24 @@ class UserStore {
     this.db.save();
   }
 
-  setAdmin(username, admin) {
+  setAdmin(username, admin) { this.update(username, { admin }); }
+
+  remove(username) {
     const u = this.find(username);
     if (!u) throw new Error('Benutzer nicht gefunden');
-    u.admin = !!admin;
+    if (u.owner) throw new Error('Der Haupt-Admin kann nicht gelöscht werden');
+    const d = this.data;
+    d.users = d.users.filter((x) => x !== u);
     this.db.save();
   }
 
-  remove(username) {
-    const d = this.data;
-    const before = d.users.length;
-    d.users = d.users.filter((u) => u.username.toLowerCase() !== String(username).toLowerCase());
-    if (d.users.length === before) throw new Error('Benutzer nicht gefunden');
-    this.db.save();
+  /** Gruppe aus allen Konten entfernen (beim Löschen der Gruppe). */
+  dropGroup(id) {
+    let changed = false;
+    for (const u of this.data.users) {
+      if (Array.isArray(u.groups) && u.groups.includes(id)) { u.groups = u.groups.filter((g) => g !== id); changed = true; }
+    }
+    if (changed) this.db.save();
   }
 
   async verify(username, password) {
@@ -104,26 +170,58 @@ class UserStore {
     return crypto.timingSafeEqual(hash, Buffer.from(u.hash, 'hex')) ? u : null;
   }
 
-  createInvite(by, hours = 72) {
+  /* ---------- Einladungen ---------- */
+
+  inviteUses(i) {
+    if (Array.isArray(i.usedBy)) return i.usedBy;
+    return i.usedBy ? [i.usedBy] : [];
+  }
+
+  inviteValid(i) {
+    return !!(i && !i.revoked && i.expires > Date.now() && this.inviteUses(i).length < (i.maxUses || 1));
+  }
+
+  createInvite(by, hoursOrOpts = 72) {
+    const opts = typeof hoursOrOpts === 'object' ? hoursOrOpts : { hours: hoursOrOpts };
+    const hours = Math.min(Math.max(Number(opts.hours) || 72, 1), 24 * 90);
     const d = this.data;
     const now = Date.now();
-    d.invites = (d.invites || []).filter((i) => !i.usedBy && i.expires > now);
+    // abgelaufene/verbrauchte nach 30 Tagen wegräumen
+    d.invites = (d.invites || []).filter((i) => this.inviteValid(i) || now - (i.expires || 0) < 30 * 86400000);
     const code = crypto.randomBytes(12).toString('base64url');
-    d.invites.push({ code, by, created: now, expires: now + hours * 3600 * 1000 });
+    d.invites.push({
+      code, by, created: now, expires: now + hours * 3600 * 1000,
+      maxUses: Math.min(Math.max(Number(opts.uses) || 1, 1), 100),
+      group: opts.group || null, note: String(opts.note || '').slice(0, 200), usedBy: [],
+    });
     this.db.save();
     return code;
   }
 
-  checkInvite(code) {
-    const i = (this.data.invites || []).find((x) => x.code === code);
-    return !!(i && !i.usedBy && i.expires > Date.now());
+  listInvites() {
+    return (this.data.invites || []).map((i) => ({
+      code: i.code, by: i.by, created: i.created, expires: i.expires, maxUses: i.maxUses || 1,
+      usedBy: this.inviteUses(i), group: i.group || null, note: i.note || '', revoked: !!i.revoked, valid: this.inviteValid(i),
+    })).sort((a, b) => b.created - a.created);
   }
 
-  async redeemInvite(code, username, password) {
+  revokeInvite(code) {
+    const i = (this.data.invites || []).find((x) => x.code === code);
+    if (!i) throw new Error('Einladung nicht gefunden');
+    i.revoked = true;
+    this.db.save();
+  }
+
+  checkInvite(code) {
+    return this.inviteValid((this.data.invites || []).find((x) => x.code === code));
+  }
+
+  async redeemInvite(code, username, password, defaultGroups = []) {
     if (!this.checkInvite(code)) throw new Error('Einladung ungültig oder abgelaufen');
-    const u = await this.create(username, password);
+    const inv = this.data.invites.find((x) => x.code === code);
+    const u = await this.create(username, password, { groups: inv.group ? [inv.group] : defaultGroups, createdBy: `Einladung von ${inv.by}` });
     const i = this.data.invites.find((x) => x.code === code);
-    i.usedBy = u.username;
+    i.usedBy = [...this.inviteUses(i), u.username];
     i.usedAt = Date.now();
     this.db.save();
     return u;
@@ -138,9 +236,9 @@ class SessionStore {
     setInterval(() => this.flush(), 30000).unref();
   }
   get map() { return this.db.data; }
-  create(user) {
+  create(user, meta = {}) {
     const id = crypto.randomBytes(24).toString('hex');
-    this.map[id] = { id, username: user.username, name: user.username, created: Date.now(), lastSeen: Date.now() };
+    this.map[id] = { id, username: user.username, name: user.username, created: Date.now(), lastSeen: Date.now(), ua: String(meta.ua || '').slice(0, 200), ip: meta.ip || null };
     this.flush(true);
     return this.map[id];
   }
@@ -152,6 +250,10 @@ class SessionStore {
     return s;
   }
   delete(id) { delete this.map[id]; this.flush(true); }
+  forUser(username) {
+    const n = String(username).toLowerCase();
+    return Object.values(this.map).filter((s) => s.username.toLowerCase() === n);
+  }
   deleteForUser(username, exceptId) {
     for (const [id, s] of Object.entries(this.map)) {
       if (s.username.toLowerCase() === String(username).toLowerCase() && id !== exceptId) delete this.map[id];
@@ -167,4 +269,4 @@ class SessionStore {
   }
 }
 
-module.exports = { UserStore, SessionStore };
+module.exports = { UserStore, SessionStore, JsonFile };

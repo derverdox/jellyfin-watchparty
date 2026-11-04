@@ -79,6 +79,23 @@ Der Agent hat eine eigene **Admin-UI im LAN** (Standard-Port **8098**): `http://
 - **Pro Person einstellbar** (⚙): Qualität, Tonspur, Untertitel. „Automatisch“ nimmt die Originaldatei, wenn der Browser sie abspielen kann, sonst transkodiert Jellyfin. Wer dieselben Einstellungen hat, teilt sich **einen** Transcode.
 - **Tastatur:** `Leertaste` Play/Pause · `←/→` ±10 s · `F` Vollbild · `M` Ton · `C` Chat · `Enter` Chat schreiben
 
+## Verwaltung (`/admin`)
+
+Admins finden in der Lobby **„⚙ Verwaltung öffnen“**, oder direkt unter `https://example.com/admin`.
+
+- **Übersicht:** Zuschauer live, aktive Räume, Heimserver-Status, Traffic zu den Zuschauern und vom Heimnetz, wie viel Heim-Upload der Cache spart, Cache-Füllstand und Trefferquote, CPU, RAM und Event-Loop des Servers. Dazu Verläufe der letzten Stunde und Woche und ein Aktivitäts-Feed.
+- **Räume:** Was läuft wo, mit Position und Status jedes Mitglieds (Browser, Desktop-Client oder Handy, Abweichung). Ansage an einen Raum oder an alle, Leute entfernen, Steuerung freigeben, Raum schließen.
+- **Benutzer:** Konten anlegen (optional mit Zufallspasswort), Gruppen zuweisen, sperren, Ablaufdatum, Notiz, Passwort zurücksetzen, aktive Sitzungen einzeln beenden, löschen. Sperren und Löschen trennt sofort alle Verbindungen.
+- **Gruppen:** Rechte (Räume erstellen, steuern, Filme auswählen, vorschlagen, chatten, einladen, Originalqualität), höchste Bitrate und **Inhaltszugriff**: alles, *nur* bestimmte Bibliotheken/Ordner/Serien oder *alles außer* bestimmten. Gilt überall: Bibliothek, Suche, Bilder, Streams und direkte Links. Wer im Raum keinen Zugriff auf den laufenden Titel hat, sieht einen Hinweis, und der Host bekommt Bescheid.
+- **Einladungen:** mit Zielgruppe, Gültigkeit (1–30 Tage) und Anzahl Nutzungen. Offene Einladungen lassen sich widerrufen.
+- **Statistik:** Watchtime gesamt und pro Konto, meistgeschaute Titel, Tageswerte der letzten 30 Tage, Rekord an gleichzeitigen Zuschauern.
+- **Protokoll:** Anmeldungen, Fehlversuche und alle Admin-Aktionen (`data/audit.jsonl`).
+- **Einstellungen:** Standardgruppe für neue Konten, Einladungen an/aus, maximale Räume pro Konto, Begrüßungstext in der Lobby, **Wartungsmodus** (nur Admins kommen rein).
+
+**Haupt-Admin:** Das erste Admin-Konto (`ADMIN_USER`) ist der Haupt-Admin. Es kann nicht gelöscht, gesperrt oder herabgestuft werden. Nur der Haupt-Admin darf andere zu Admins machen und andere Admins bearbeiten.
+
+> Die Bibliotheks-Ausschlüsse im Agent (siehe oben) gelten zusätzlich und für alle, auch für Admins. Die Gruppen regeln dann, wer innerhalb des Rests was sieht.
+
 ### Konten per Kommandozeile (auf Hetzner)
 ```bash
 docker compose exec relay node server.js user list

@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0b0f">
+  <meta name="robots" content="noindex">
+  <title>Verwaltung · Watchparty</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+  <div class="gate" id="gate" hidden>
+    <div class="card gate-card">
+      <div class="brand"><span class="logo">▶</span> Watchparty</div>
+      <h2 id="gate-title">Nur für Admins</h2>
+      <p class="muted" id="gate-text">Melde dich auf der Watchparty mit einem Admin-Konto an und öffne dann die Verwaltung.</p>
+      <a class="btn primary" href="/">Zur Watchparty</a>
+    </div>
+  </div>
+
+  <div class="shell" id="shell" hidden>
+    <aside class="nav">
+      <a class="brand" href="/"><span class="logo">▶</span> Watchparty</a>
+      <span class="nav-sub">Verwaltung</span>
+      <nav id="nav">
+        <button data-view="overview" class="active"><span class="ico">◉</span>Übersicht</button>
+        <button data-view="rooms"><span class="ico">▣</span>Räume <span class="badge-n" id="nav-rooms"></span></button>
+        <button data-view="users"><span class="ico">☺</span>Benutzer</button>
+        <button data-view="groups"><span class="ico">◈</span>Gruppen</button>
+        <button data-view="invites"><span class="ico">✉</span>Einladungen</button>
+        <button data-view="stats"><span class="ico">▤</span>Statistik</button>
+        <button data-view="audit"><span class="ico">☰</span>Protokoll</button>
+        <button data-view="settings"><span class="ico">⚙</span>Einstellungen</button>
+      </nav>
+      <div class="nav-foot">
+        <div class="me" id="me"></div>
+        <a class="link" href="/">← Zur Watchparty</a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="top">
+        <button class="icon menu-btn" id="btn-menu" title="Menü">☰</button>
+        <h1 id="view-title">Übersicht</h1>
+        <div class="spacer"></div>
+        <div class="live" id="live-dot"><span class="pulse"></span><span id="live-text">Live</span></div>
+        <div class="maint" id="maint-flag" hidden>🛠 Wartungsmodus aktiv</div>
+      </header>
+
+      <!-- Übersicht -->
+      <section class="view" id="v-overview">
+        <div class="stats-row" id="kpis"></div>
+        <div class="grid-2">
+          <div class="card chart-card">
+            <div class="card-head">
+              <h3>Letzte Stunde</h3>
+              <div class="seg" id="seg-hour">
+                <button data-k="viewers" class="on">Zuschauer</button>
+                <button data-k="traffic">Traffic</button>
+              </div>
+            </div>
+            <div class="chart" id="chart-hour"></div>
+          </div>
+          <div class="card chart-card">
+            <div class="card-head">
+              <h3>Letzte 7 Tage</h3>
+              <div class="seg" id="seg-week">
+                <button data-k="viewers" class="on">Zuschauer</button>
+                <button data-k="traffic">Traffic</button>
+              </div>
+            </div>
+            <div class="chart" id="chart-week"></div>
+          </div>
+        </div>
+        <div class="grid-3">
+          <div class="card" id="card-health"></div>
+          <div class="card" id="card-agent"></div>
+          <div class="card" id="card-cache"></div>
+        </div>
+        <div class="grid-2 wide-left">
+          <div class="card">
+            <div class="card-head"><h3>Live-Räume</h3><button class="link" data-goto="rooms">alle ansehen →</button></div>
+            <div id="ov-rooms"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>Aktivität</h3></div>
+            <div class="feed" id="feed"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Räume -->
+      <section class="view" id="v-rooms" hidden>
+        <div class="toolbar">
+          <form class="row grow" id="announce-all">
+            <input name="text" maxlength="300" placeholder="Ansage an alle Räume, z. B. „Server-Neustart in 5 Minuten“">
+            <button class="btn" type="submit">📣 An alle senden</button>
+          </form>
+        </div>
+        <div class="rooms" id="rooms"></div>
+      </section>
+
+      <!-- Benutzer -->
+      <section class="view" id="v-users" hidden>
+        <div class="toolbar">
+          <input type="search" id="user-search" placeholder="Suchen …" autocomplete="off">
+          <div class="seg" id="user-filter">
+            <button data-f="all" class="on">Alle</button>
+            <button data-f="online">Online</button>
+            <button data-f="admin">Admins</button>
+            <button data-f="disabled">Gesperrt</button>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn primary" id="btn-new-user">+ Neues Konto</button>
+        </div>
+        <div class="card table-card">
+          <table class="tbl" id="users-table">
+            <thead><tr><th>Konto</th><th>Gruppen</th><th>Status</th><th>Zuletzt aktiv</th><th class="num">Watchtime</th><th>Angelegt</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Gruppen -->
+      <section class="view" id="v-groups" hidden>
+        <div class="split">
+          <div class="group-list">
+            <div class="toolbar"><h3 class="grow">Gruppen</h3><button class="btn small primary" id="btn-new-group">+ Neue Gruppe</button></div>
+            <div id="groups"></div>
+            <p class="tiny muted help">Ein Konto kann in mehreren Gruppen sein, dann zählt jeweils die großzügigste Regel. Admins dürfen immer alles. Konten ohne Gruppe landen in der Standardgruppe.</p>
+          </div>
+          <div class="card group-edit" id="group-edit">
+            <div class="empty-state">Wähle links eine Gruppe aus.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Einladungen -->
+      <section class="view" id="v-invites" hidden>
+        <form class="card invite-form" id="invite-form">
+          <h3>Neue Einladung</h3>
+          <div class="form-grid">
+            <label>Gruppe <select name="group"></select></label>
+            <label>Gültig
+              <select name="hours">
+                <option value="24">1 Tag</option>
+                <option value="72" selected>3 Tage</option>
+                <option value="168">1 Woche</option>
+                <option value="720">30 Tage</option>
+              </select>
+            </label>
+            <label>Nutzungen <input name="uses" type="number" min="1" max="100" value="1"></label>
+            <label class="span2">Notiz <input name="note" maxlength="200" placeholder="z. B. „für die WG“"></label>
+          </div>
+          <div class="row"><button class="btn primary" type="submit">Link erstellen</button><div class="invite-result" id="invite-result"></div></div>
+        </form>
+        <div class="card table-card">
+          <table class="tbl" id="invites-table">
+            <thead><tr><th>Erstellt</th><th>Von</th><th>Gruppe</th><th>Genutzt</th><th>Läuft ab</th><th>Status</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Statistik -->
+      <section class="view" id="v-stats" hidden>
+        <div class="stats-row" id="stat-kpis"></div>
+        <div class="card chart-card">
+          <div class="card-head">
+            <h3>Letzte 30 Tage</h3>
+            <div class="seg" id="seg-days">
+              <button data-k="watchHours" class="on">Watchtime</button>
+              <button data-k="users">Aktive Konten</button>
+              <button data-k="peakViewers">Spitze gleichzeitig</button>
+              <button data-k="starts">Gestartete Titel</button>
+            </div>
+          </div>
+          <div class="chart tall" id="chart-days"></div>
+        </div>
+        <div class="grid-2">
+          <div class="card table-card"><div class="card-head pad"><h3>Meistgeschaut</h3></div><table class="tbl" id="top-items"><tbody></tbody></table></div>
+          <div class="card table-card"><div class="card-head pad"><h3>Fleißigste Zuschauer</h3></div><table class="tbl" id="top-users"><tbody></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- Protokoll -->
+      <section class="view" id="v-audit" hidden>
+        <div class="toolbar">
+          <input type="search" id="audit-search" placeholder="Filtern nach Name, Aktion, IP …" autocomplete="off">
+          <div class="seg" id="audit-filter">
+            <button data-f="" class="on">Alles</button>
+            <button data-f="login">Anmeldungen</button>
+            <button data-f="failed">Fehlversuche</button>
+            <button data-f="admin">Admin-Aktionen</button>
+          </div>
+        </div>
+        <div class="card table-card">
+          <table class="tbl" id="audit-table">
+            <thead><tr><th>Zeit</th><th>Ereignis</th><th>Wer</th><th>Details</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Einstellungen -->
+      <section class="view" id="v-settings" hidden>
+        <form class="card settings" id="settings-form">
+          <div class="set-row">
+            <div><strong>Standardgruppe</strong><p class="muted tiny">Für neue Konten und Einladungen ohne Gruppe.</p></div>
+            <select name="defaultGroup"></select>
+          </div>
+          <div class="set-row">
+            <div><strong>Einladungen</strong><p class="muted tiny">Neue Konten per Einladungslink erlauben.</p></div>
+            <label class="switch"><input type="checkbox" name="invitesEnabled"><span></span></label>
+          </div>
+          <div class="set-row">
+            <div><strong>Räume pro Konto</strong><p class="muted tiny">Wie viele offene Räume jemand gleichzeitig haben darf (0 = unbegrenzt). Gilt nicht für Admins.</p></div>
+            <input name="maxRoomsPerUser" type="number" min="0" max="50" class="narrow">
+          </div>
+          <div class="set-row">
+            <div><strong>Wartungsmodus</strong><p class="muted tiny">Nur Admins kommen rein. Alle anderen werden sofort getrennt und sehen einen Hinweis.</p></div>
+            <label class="switch danger"><input type="checkbox" name="maintenance"><span></span></label>
+          </div>
+          <div class="set-row column">
+            <div><strong>Begrüßungstext</strong><p class="muted tiny">Erscheint für alle in der Lobby. Leer lassen für keinen.</p></div>
+            <textarea name="motd" maxlength="500" rows="3" placeholder="z. B. „Freitag 20 Uhr: Filmabend!“"></textarea>
+          </div>
+          <div class="row end"><button class="btn primary" type="submit">Speichern</button></div>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <!-- Seitenpanel: Konto bearbeiten -->
+  <div class="drawer-bg" id="drawer-bg" hidden></div>
+  <aside class="drawer" id="drawer" hidden></aside>
+
+  <!-- Dialog -->
+  <div class="modal" id="modal" hidden><div class="card modal-card" id="modal-card"></div></div>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="/admin.js"></script>
+</body>
+</html>

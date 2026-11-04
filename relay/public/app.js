@@ -112,6 +112,9 @@ function canControl() {
   return !!(S.room && S.you && (S.room.allowAllControl || S.room.host === S.you.sid));
 }
 function isHost() { return !!(S.room && S.you && S.room.host === S.you.sid); }
+function perm(k) { return !!(S.me && (S.me.admin || (S.me.perms && S.me.perms[k]))); }
+/** Etwas für alle starten: steuern dürfen UND (Host oder Recht „Filme auswählen“). */
+function canLoad() { return canControl() && (isHost() || perm('load')); }
 
 /* ------------------------------------------------------------------ */
 /* Start / Routing                                                     */
@@ -153,7 +156,15 @@ async function route() {
   }
   $('#lobby-name').textContent = S.me.name;
   renderAgentStatus(S.me.agentOnline, S.me.server);
-  $('#admin-box').hidden = !S.me.admin;
+  $('#admin-box').hidden = !(S.me.admin || (perm('invite') && S.me.invitesEnabled));
+  $('#btn-admin').hidden = !S.me.admin;
+  $('#btn-create').hidden = !perm('createRoom');
+  $('#no-create').hidden = perm('createRoom');
+  $('#lobby-or').hidden = !perm('createRoom');
+  $('#lobby-hint').textContent = perm('createRoom') ? 'Mach einen Raum auf und schick deinem Kumpel den Link.' : 'Gib den Raum-Code ein, den du bekommen hast.';
+  const motd = $('#motd');
+  motd.hidden = !S.me.motd;
+  motd.textContent = S.me.motd || '';
   showView('view-lobby');
 }
 
@@ -379,10 +390,20 @@ function onMessage(msg) {
     case 'chat': addChat(msg.msg); break;
     case 'react': floatEmoji(msg.emoji, msg.from); break;
     case 'error': toast(msg.text); break;
+    case 'announce':
+      toast(`📣 ${msg.from}: ${msg.text}`);
+      break;
+    case 'noaccess':
+      teardownPlayer();
+      S.loadedId = msg.item.id; // nicht ständig neu versuchen
+      $('#overlay-empty').hidden = true;
+      $('#overlay-noaccess').hidden = false;
+      $('#noaccess-title').textContent = msg.item.title;
+      break;
     case 'kicked':
       S.leaving = true;
       teardownPlayer();
-      toast('Du wurdest aus dem Raum entfernt.');
+      toast(msg.text || 'Du wurdest aus dem Raum entfernt.');
       history.replaceState(null, '', '/');
       route();
       break;
@@ -408,11 +429,13 @@ function setPlayback(pb) {
   renderNowPlaying();
   if (!pb.item) {
     teardownPlayer();
+    $('#overlay-noaccess').hidden = true;
     $('#overlay-empty').hidden = false;
     return;
   }
   $('#overlay-empty').hidden = true;
   if (pb.item.id !== S.loadedId) {
+    $('#overlay-noaccess').hidden = true;
     loadItem(pb.item.id);
   } else {
     syncTick(true);
@@ -684,7 +707,7 @@ function updateControls() {
   }
   $('#seek-buffer').style.width = dur ? `${Math.min(100, (buf / dur) * 100)}%` : '0';
   const next = pb && pb.item && pb.item.nextEpisodeId;
-  $('#btn-next').hidden = !(next && canControl() && dur && cur > dur - 180);
+  $('#btn-next').hidden = !(next && canLoad() && dur && cur > dur - 180);
 }
 
 function renderControlState() {
@@ -870,6 +893,8 @@ function addChat(m, silent) {
   let li;
   if (m.kind === 'system') {
     li = el('li', { class: 'sys' }, m.text);
+  } else if (m.kind === 'announce') {
+    li = el('li', { class: 'announce' }, el('b', {}, `📣 ${m.from}`), el('span', {}, m.text));
   } else if (m.kind === 'suggest') {
     li = el('li', { class: 'suggest', 'data-item': m.itemId },
       el('div', {}, el('span', { class: 'who', style: `color:${colorFor(m.from)}` }, m.from), ' schlägt vor:'),
@@ -889,7 +914,11 @@ function addChat(m, silent) {
 }
 
 function renderChatActions() {
-  for (const b of $$('.play-suggest')) b.hidden = !canControl();
+  for (const b of $$('.play-suggest')) b.hidden = !canLoad();
+  const chatOk = perm('chat');
+  const f = $('#chat-form');
+  for (const x of $$('input, button', f)) x.disabled = !chatOk;
+  f.querySelector('input').placeholder = chatOk ? f.querySelector('input').dataset.ph || f.querySelector('input').placeholder : 'Chatten ist für dich nicht freigeschaltet';
 }
 
 function playerToast(m) {
@@ -1112,13 +1141,14 @@ function tile(it) {
   const poster = el('div', { class: 'poster', style: it.hasImage ? `background-image:url('/img/${it.id}?w=${wide ? 480 : 320}')` : '' },
     it.hasImage ? '' : (it.isFolder ? '📁' : '🎬'),
     it.played ? el('span', { class: 'badge' }, '✓ gesehen') : '',
-    it.playable ? el('span', { class: 'play' }, canControl() ? '▶ Abspielen' : '💡 Vorschlagen') : '');
+    it.playable ? el('span', { class: 'play' }, canLoad() ? '▶ Abspielen' : perm('suggest') ? '💡 Vorschlagen' : '') : '');
   return el('button', {
     class: 'tile', title: it.overview || it.name,
     onclick: () => {
       if (it.playable) {
-        if (canControl()) { send({ t: 'load', itemId: it.id }); toast(`„${it.name}“ wird geladen…`); }
-        else { send({ t: 'suggest', itemId: it.id }); toast('Vorschlag im Chat gepostet'); }
+        if (canLoad()) { send({ t: 'load', itemId: it.id }); toast(`„${it.name}“ wird geladen…`); }
+        else if (perm('suggest')) { send({ t: 'suggest', itemId: it.id }); toast('Vorschlag im Chat gepostet'); }
+        else toast('Du darfst hier nichts auswählen oder vorschlagen.');
         closeLibrary();
       } else if (it.isFolder) {
         libGo({ id: it.id, name: it.name, type: it.type, collectionType: it.collectionType });

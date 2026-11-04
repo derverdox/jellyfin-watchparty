@@ -240,3 +240,9 @@ body.chat-hidden .player .toasts-layer { display: grid; }
 .invite-out { font-size: 13px; background: var(--bg); border: 1px dashed var(--line); border-radius: 10px; padding: 10px; word-break: break-all; }
 .row-links { display: flex; justify-content: space-between; }
 .pw-form { display: grid; gap: 8px; }
+
+/* ---------- Rechte & Ansagen ---------- */
+.chat .announce { display: grid; gap: 2px; background: #f2b5441a; border: 1px solid #f2b54440; border-radius: 10px; padding: 8px 10px; }
+.chat .announce b { color: var(--accent); font-size: 12.5px; }
+.motd { background: #f2b5441a; border: 1px solid #f2b54440; border-radius: 12px; padding: 10px 12px; white-space: pre-wrap; }
+#chat-form input:disabled { opacity: .6; }

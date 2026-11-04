@@ -14,6 +14,9 @@ const { WebSocketServer } = require('ws');
 const { Tunnel, TunnelError } = require('./lib/tunnel');
 const { DiskCache, TtlCache } = require('./lib/cache');
 const { UserStore, SessionStore } = require('./lib/users');
+const { GroupStore, allowedByChain, allowedRoots, norm } = require('./lib/access');
+const { Telemetry, TICK_MS } = require('./lib/telemetry');
+const { handleAdmin } = require('./lib/admin');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -42,6 +45,13 @@ const SESSION_TTL = 30 * 24 * 3600 * 1000;
 const sessions = new SessionStore(CONFIG.dataDir, SESSION_TTL);
 const tunnel = new Tunnel();
 const cache = new DiskCache(CONFIG.cacheDir, CONFIG.cacheBytes);
+const groups = new GroupStore(CONFIG.dataDir);
+const telemetry = new Telemetry(CONFIG.dataDir);
+// Bytes vom Heimserver mitzählen
+{
+  const onData = tunnel.onData.bind(tunnel);
+  tunnel.onData = (buf) => { telemetry.in(buf.length); return onData(buf); };
+}
 const jsonCache = new TtlCache(60 * 1000);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const REACTIONS = ['😂', '😮', '❤️', '👍', '🔥', '😱', '👏', '💀'];
@@ -190,8 +200,60 @@ function getSession(req) {
   if (!s) return null;
   const u = users.find(s.username);
   if (!u) { sessions.delete(s.id); return null; } // Konto gelöscht
+  if (!users.usable(u)) return null;              // gesperrt oder abgelaufen
   s.admin = !!u.admin;
+  s.owner = !!u.owner;
+  if (groups.settings.maintenance && !s.admin) return null;
   return s;
+}
+
+/** Effektive Rechte eines Kontos (immer frisch, Änderungen im Admin wirken sofort). */
+function accessOf(session) {
+  return groups.resolve(users.find(session.username));
+}
+
+/* ---------- Inhaltszugriff ---------- */
+let accessVersion = 0;
+const ancestorCache = new TtlCache(10 * 60 * 1000, 20000);
+const decisionCache = new TtlCache(5 * 60 * 1000, 20000);
+function bumpAccess() { accessVersion++; decisionCache.clear(); }
+
+/** Kette [Element, Eltern, …, Bibliothek] über ParentId. */
+function ancestors(id) {
+  return ancestorCache.get(norm(id), async () => {
+    const it = await jf(`/Users/${uid()}/Items/${id}?Fields=ParentId`);
+    const chain = [norm(it.Id || id)];
+    if (it.SeriesId) chain.push(norm(it.SeriesId));
+    if (it.SeasonId) chain.push(norm(it.SeasonId));
+    if (it.ParentId && it.Type !== 'CollectionFolder' && it.Type !== 'AggregateFolder' && it.Type !== 'UserRootFolder') {
+      try { chain.push(...(await ancestors(it.ParentId))); } catch { /* Wurzel erreicht */ }
+    }
+    return [...new Set(chain)];
+  });
+}
+
+async function canAccess(session, itemId, resolved) {
+  const r = resolved || accessOf(session);
+  if (!r.rules) return true;
+  return decisionCache.get(`${accessVersion}|${session.username.toLowerCase()}|${norm(itemId)}`, async () => {
+    try { return allowedByChain(r, await ancestors(itemId)); } catch { return false; }
+  });
+}
+
+async function assertAccess(session, itemId) {
+  if (!(await canAccess(session, itemId))) throw new HttpError(403, 'Darauf hast du keinen Zugriff');
+}
+
+/** Liste filtern (parallel, aber gedeckelt). */
+async function filterAllowed(session, items) {
+  const r = accessOf(session);
+  if (!r.rules) return items;
+  const keep = new Array(items.length).fill(false);
+  let i = 0;
+  await Promise.all(Array.from({ length: 6 }, async () => {
+    while (i < items.length) { const k = i++; keep[k] = await canAccess(session, items[k].Id, r); }
+  }));
+  return items.filter((_, k) => keep[k]);
 }
 
 function isSecure(req) {
@@ -216,7 +278,33 @@ function throttle(key, max, windowMs) {
 }
 
 function me(s) {
-  return { name: s.name, username: s.username, admin: !!s.admin, agentOnline: tunnel.online, server: tunnel.online ? tunnel.info.serverName : null };
+  const a = accessOf(s);
+  const st = groups.settings;
+  return {
+    name: s.name, username: s.username, admin: !!s.admin, owner: !!s.owner, perms: a.perms, maxBitrate: a.maxBitrate,
+    restricted: !!a.rules, agentOnline: tunnel.online, server: tunnel.online ? tunnel.info.serverName : null,
+    motd: st.motd || '', invitesEnabled: !!st.invitesEnabled, maintenance: !!st.maintenance,
+  };
+}
+
+/** Alle Verbindungen eines Kontos (oder einer Sitzung) trennen. */
+function disconnectUser(username, text, sessionId) {
+  const n = String(username).toLowerCase();
+  for (const room of rooms.values()) {
+    for (const c of [...room.clients.values()]) {
+      if (c.session.username.toLowerCase() !== n || (sessionId && c.session.id !== sessionId)) continue;
+      try { c.ws.send(JSON.stringify({ t: 'kicked', text })); c.kicked = true; c.ws.close(4001, 'kicked'); } catch { /* egal */ }
+    }
+  }
+}
+
+function closeRoom(code, text) {
+  const room = rooms.get(code);
+  if (!room) throw new HttpError(404, 'Raum nicht gefunden');
+  for (const c of [...room.clients.values()]) {
+    try { c.ws.send(JSON.stringify({ t: 'kicked', text })); c.kicked = true; c.ws.close(4001, 'closed'); } catch { /* egal */ }
+  }
+  rooms.delete(code);
 }
 
 /* ------------------------------------------------------------------ */
@@ -235,9 +323,11 @@ function newRoomCode() {
 }
 
 class Room {
-  constructor(code, hostSid) {
+  constructor(code, hostSid, createdBy) {
     this.code = code;
     this.hostSid = hostSid;
+    this.createdBy = createdBy || null;
+    this.createdAt = Date.now();
     this.allowAllControl = true;
     this.clients = new Map(); // clientId -> client
     this.chat = [];
@@ -411,6 +501,7 @@ async function serveCached(res, key, upstreamPath, { maxAge = 0, playlist = fals
   } catch (e) { throw tunnelErr(e); }
   let buf = r.buf;
   if (playlist && r.meta.status === 200) buf = Buffer.from(stripKeys(buf.toString('utf8')));
+  telemetry.out(buf.length, !!r.hit);
   res.writeHead(r.meta.status, {
     'Content-Type': playlist ? 'application/vnd.apple.mpegurl' : r.meta.type,
     'Content-Length': buf.length,
@@ -481,6 +572,7 @@ async function serveDirect(req, res, itemId, ms) {
       const a = Math.max(start, base) - base;
       const b = Math.min(end, base + c.buf.length - 1) - base;
       if (b < a) break;
+      telemetry.out(b + 1 - a, !!c.hit);
       if (!res.write(c.buf.subarray(a, b + 1))) {
         await new Promise((r) => { res.once('drain', r); res.once('close', r); });
       }
@@ -502,6 +594,9 @@ async function handle(req, res) {
   if (req.method === 'GET' && (p === '/' || /^\/(r|invite)\/[A-Za-z0-9_-]{4,40}\/?$/.test(p))) {
     return serveFile(res, path.join(PUBLIC_DIR, 'index.html'));
   }
+  if (req.method === 'GET' && (p === '/admin' || p === '/admin/')) {
+    return serveFile(res, path.join(PUBLIC_DIR, 'admin.html'));
+  }
   if (req.method === 'GET' && p === '/vendor/hls.min.js') {
     const local = path.join(__dirname, 'node_modules', 'hls.js', 'dist', 'hls.min.js');
     if (fs.existsSync(local)) return serveFile(res, local, 'public, max-age=86400');
@@ -522,10 +617,17 @@ async function handle(req, res) {
     const b = throttle(`u|${username.toLowerCase()}`, 10, 15 * 60 * 1000);
     if (a.count >= 10 || b.count >= 10) throw new HttpError(429, 'Zu viele Versuche – warte ein paar Minuten.');
     const user = await users.verify(username, body.password || '');
-    if (!user) { a.count++; b.count++; throw new HttpError(401, 'Benutzername oder Passwort falsch'); }
+    if (!user) { a.count++; b.count++; telemetry.login(username.slice(0, 40), false, ip); throw new HttpError(401, 'Benutzername oder Passwort falsch'); }
     loginAttempts.delete(`ip|${ip}`);
     loginAttempts.delete(`u|${username.toLowerCase()}`);
-    const s = sessions.create(user);
+    if (!users.usable(user)) {
+      telemetry.audit({ type: 'login-blocked', user: user.username, ip });
+      throw new HttpError(403, user.disabled ? 'Dieses Konto ist gesperrt.' : 'Dieses Konto ist abgelaufen.');
+    }
+    if (groups.settings.maintenance && !user.admin) throw new HttpError(503, 'Gerade Wartungsarbeiten – bitte später nochmal versuchen.');
+    users.touchLogin(user.username);
+    telemetry.login(user.username, true, ip);
+    const s = sessions.create(user, { ua: req.headers['user-agent'], ip });
     s.admin = !!user.admin;
     return sendJson(res, 200, me(s), { 'Set-Cookie': sessionCookie(req, s.id) });
   }
@@ -539,9 +641,12 @@ async function handle(req, res) {
       a.count++;
       const body = await readJson(req);
       let user;
-      try { user = await users.redeemInvite(m[1], String(body.username || '').trim(), body.password || ''); }
+      if (!groups.settings.invitesEnabled) throw new HttpError(403, 'Registrierung ist gerade abgeschaltet');
+      try { user = await users.redeemInvite(m[1], String(body.username || '').trim(), body.password || '', [groups.settings.defaultGroup]); }
       catch (e) { throw new HttpError(400, e.message); }
-      const s = sessions.create(user);
+      telemetry.audit({ type: 'register', user: user.username, ip: clientIp(req), via: m[1].slice(0, 6) });
+      telemetry.event('register', `${user.username} hat sich per Einladung registriert`, { user: user.username });
+      const s = sessions.create(user, { ua: req.headers['user-agent'], ip: clientIp(req) });
       console.log(`[users] "${user.username}" hat sich per Einladung registriert`);
       return sendJson(res, 200, me(s), { 'Set-Cookie': sessionCookie(req, s.id) });
     }
@@ -579,15 +684,29 @@ async function handle(req, res) {
   }
 
   if (p === '/api/invites' && req.method === 'POST') {
-    if (!session.admin) throw new HttpError(403, 'Nur Admins können einladen');
-    const code = users.createInvite(session.username, 72);
+    if (!session.admin && !accessOf(session).perms.invite) throw new HttpError(403, 'Du darfst keine Einladungen erstellen');
+    if (!session.admin && !groups.settings.invitesEnabled) throw new HttpError(403, 'Einladungen sind gerade abgeschaltet');
+    const code = users.createInvite(session.username, { hours: 72 });
+    telemetry.audit({ type: 'invite-create', by: session.username, code: code.slice(0, 6) });
     return sendJson(res, 200, { code, path: `/invite/${code}`, hours: 72 });
   }
 
   if (p === '/api/rooms' && req.method === 'POST') {
+    if (!accessOf(session).perms.createRoom) throw new HttpError(403, 'Du darfst keine Räume erstellen. Lass dir einen Raum-Link schicken.');
+    const max = groups.settings.maxRoomsPerUser;
+    if (!session.admin && max) {
+      const mine = [...rooms.values()].filter((r) => r.createdBy && r.createdBy.toLowerCase() === session.username.toLowerCase()).length;
+      if (mine >= max) throw new HttpError(429, `Du hast schon ${mine} offene Räume (Maximum ${max}).`);
+    }
     const code = newRoomCode();
-    rooms.set(code, new Room(code, session.id));
+    rooms.set(code, new Room(code, session.id, session.username));
+    telemetry.roomCreated(code, session.name);
     return sendJson(res, 200, { code });
+  }
+
+  if (p.startsWith('/api/admin/')) {
+    if (!session.admin) throw new HttpError(403, 'Nur für Admins');
+    return handleAdmin(adminCtx, req, res, url, session);
   }
   if ((m = p.match(/^\/api\/rooms\/([A-Za-z0-9]{4,12})$/)) && req.method === 'GET') {
     const room = rooms.get(m[1].toUpperCase());
@@ -603,10 +722,22 @@ async function handle(req, res) {
   // --- Bibliothek ---
   if (p === '/api/libraries') {
     const data = await jsonCache.get('views', () => jf(`/Users/${uid()}/Views`));
-    const items = (data.Items || [])
-      .filter((v) => !['music', 'books', 'photos', 'livetv', 'playlists'].includes((v.CollectionType || '').toLowerCase()))
-      .map(mapItem);
-    return sendJson(res, 200, { items });
+    const r = accessOf(session);
+    let views = (data.Items || [])
+      .filter((v) => !['music', 'books', 'photos', 'livetv', 'playlists'].includes((v.CollectionType || '').toLowerCase()));
+    if (r.rules) {
+      views = views.filter((v) => allowedByChain(r, [v.Id]));
+      // „nur …“-Freigaben unterhalb einer Bibliothek direkt als Einstieg zeigen
+      const have = new Set(views.map((v) => norm(v.Id)));
+      for (const id of allowedRoots(r) || []) {
+        if (have.has(id)) continue;
+        try {
+          const it = await jsonCache.get(`root|${id}`, () => jf(`/Users/${uid()}/Items/${id}?Fields=${ITEM_FIELDS}`));
+          if (await canAccess(session, it.Id, r)) views.push(it);
+        } catch { /* gelöscht */ }
+      }
+    }
+    return sendJson(res, 200, { items: views.map(mapItem) });
   }
 
   if (p === '/api/items') {
@@ -633,18 +764,25 @@ async function handle(req, res) {
       if (ct === 'movies') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Movie'); }
       if (ct === 'tvshows') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Series'); }
     }
+    if (parentId && !search) await assertAccess(session, parentId);
     const data = await jsonCache.get(`items|${q}`, () => jf(`/Users/${uid()}/Items?${q}`));
-    return sendJson(res, 200, { items: (data.Items || []).map(mapItem), total: data.TotalRecordCount || 0 });
+    const all = data.Items || [];
+    const kept = await filterAllowed(session, all);
+    return sendJson(res, 200, { items: kept.map(mapItem), total: Math.max(0, (data.TotalRecordCount || 0) - (all.length - kept.length)) });
   }
 
   if ((m = p.match(/^\/api\/item\/([a-f0-9-]+)$/i))) {
     if (!ID_RE.test(m[1])) throw new HttpError(400, 'Ungültige ID');
-    return sendJson(res, 200, await getItemDetails(m[1]));
+    await assertAccess(session, m[1]);
+    const d = await getItemDetails(m[1]);
+    const a = accessOf(session);
+    return sendJson(res, 200, { ...d, directPlayable: d.directPlayable && a.perms.direct, maxBitrate: a.maxBitrate, allowDirect: a.perms.direct });
   }
 
   // --- Bilder ---
   if ((m = p.match(/^\/img\/([a-f0-9-]+)$/i))) {
     if (!ID_RE.test(m[1])) throw new HttpError(400, 'Ungültige ID');
+    await assertAccess(session, m[1]);
     const type = ['Primary', 'Backdrop', 'Thumb'].includes(url.searchParams.get('type')) ? url.searchParams.get('type') : 'Primary';
     const w = Math.min(Math.max(Math.round(toInt(url.searchParams.get('w'), 300) / 80) * 80, 80), 1920);
     return serveCached(res, `img|${m[1]}|${type}|${w}`, `/Items/${m[1]}/Images/${type}?maxWidth=${w}&quality=85`, { maxAge: 86400 });
@@ -653,6 +791,7 @@ async function handle(req, res) {
   // --- Untertitel als WebVTT ---
   if ((m = p.match(/^\/subs\/([a-f0-9-]+)\/([a-f0-9-]+)\/(\d{1,3})\.vtt$/i))) {
     if (!ID_RE.test(m[1]) || !ID_RE.test(m[2])) throw new HttpError(400, 'Ungültige ID');
+    await assertAccess(session, m[1]);
     return serveCached(res, `sub|${m[1]}|${m[2]}|${m[3]}`, `/Videos/${m[1]}/${m[2]}/Subtitles/${m[3]}/Stream.vtt`, { maxAge: 3600 });
   }
 
@@ -660,12 +799,14 @@ async function handle(req, res) {
   if ((m = p.match(/^\/stream\/([a-f0-9-]+)\/(.+)$/i))) {
     const [, itemId, sub] = m;
     if (!ID_RE.test(itemId)) throw new HttpError(400, 'Ungültige ID');
+    await assertAccess(session, itemId);
+    const acc = accessOf(session);
     const sp = url.searchParams;
 
     if (sub === 'master.m3u8') {
       const ms = sp.get('ms');
       if (!ID_RE.test(ms || '')) throw new HttpError(400, 'Parameter fehlen');
-      const br = BITRATES.has(toInt(sp.get('br'), 0)) ? toInt(sp.get('br'), 0) : 10000000;
+      const br = Math.min(BITRATES.has(toInt(sp.get('br'), 0)) ? toInt(sp.get('br'), 0) : 10000000, acc.maxBitrate);
       const audio = /^\d{1,3}$/.test(sp.get('audio') || '') ? sp.get('audio') : '';
       const subIdx = /^\d{1,3}$/.test(sp.get('sub') || '') ? sp.get('sub') : '';
       // Alle Zuschauer mit gleichen Einstellungen teilen sich EINEN Transcode
@@ -693,6 +834,7 @@ async function handle(req, res) {
     }
 
     if (sub === 'direct') {
+      if (!acc.perms.direct) throw new HttpError(403, 'Originalqualität ist für dich nicht freigeschaltet');
       const ms = sp.get('ms');
       if (!ID_RE.test(ms || '')) throw new HttpError(400, 'Parameter fehlen');
       return serveDirect(req, res, itemId, ms);
@@ -764,14 +906,18 @@ server.on('upgrade', (req, socket, head) => {
   const room = rooms.get(code);
   if (!room) return reject(404, 'Room Not Found');
 
-  wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, session, room));
+  wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, session, room, req));
 });
 
-function onConnection(ws, session, room) {
+function onConnection(ws, session, room, req) {
+  const ua = String((req && req.headers['user-agent']) || '');
   const client = {
     id: crypto.randomBytes(6).toString('hex'),
     ws,
     session,
+    kind: /watchparty-desktop/i.test(ua) ? 'desktop' : /Mobi|Android|iPhone|iPad/i.test(ua) ? 'mobile' : 'web',
+    ua: ua.slice(0, 200),
+    ip: req ? clientIp(req) : null,
     joinedAt: Date.now(),
     status: { pos: 0, state: 'idle' },
     chatTimes: [],
@@ -831,6 +977,7 @@ function onConnection(ws, session, room) {
         }
 
         case 'chat': {
+          if (!accessOf(session).perms.chat) { send({ t: 'error', text: 'Chatten ist für dich gerade nicht freigeschaltet.' }); break; }
           const text = String(msg.text || '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 500);
           if (!text) break;
           if (!rateOk(client.chatTimes, 6, 4000)) { send({ t: 'error', text: 'Langsam – du schreibst zu schnell.' }); break; }
@@ -840,13 +987,14 @@ function onConnection(ws, session, room) {
 
         case 'react': {
           if (!REACTIONS.includes(msg.emoji)) break;
+          if (!accessOf(session).perms.chat) break;
           if (!rateOk(client.chatTimes, 10, 4000)) break;
           room.broadcast({ t: 'react', emoji: msg.emoji, from: session.name });
           break;
         }
 
         case 'control': {
-          if (!room.canControl(session.id)) { send({ t: 'error', text: 'Nur der Host darf gerade steuern.' }); send({ t: 'playback', playback: room.playback() }); break; }
+          if (!mayControl(room, session)) { send({ t: 'error', text: 'Nur der Host darf gerade steuern.' }); send({ t: 'playback', playback: room.playback() }); break; }
           if (!room.item) break;
           if (!rateOk(client.ctrlTimes, 12, 3000)) break;
           let pos = Number(msg.position);
@@ -867,9 +1015,11 @@ function onConnection(ws, session, room) {
         }
 
         case 'load': {
-          if (!room.canControl(session.id)) { send({ t: 'error', text: 'Nur der Host darf etwas auswählen.' }); break; }
+          const isHost = session.id === room.hostSid;
+          if (!mayControl(room, session) || (!isHost && !accessOf(session).perms.load)) { send({ t: 'error', text: 'Du darfst gerade nichts auswählen – schlag es lieber vor.' }); break; }
           if (!ID_RE.test(String(msg.itemId || ''))) break;
           if (!rateOk(client.ctrlTimes, 12, 3000)) break;
+          if (!(await canAccess(session, msg.itemId))) { send({ t: 'error', text: 'Darauf hast du keinen Zugriff.' }); break; }
           const d = await getItemDetails(msg.itemId);
           if (!d.playable) { send({ t: 'error', text: 'Das kann man nicht abspielen.' }); break; }
           room.item = { id: d.id, title: d.title, subtitle: d.subtitle, type: d.type, runtime: d.runtime, nextEpisodeId: d.nextEpisodeId };
@@ -879,12 +1029,16 @@ function onConnection(ws, session, room) {
           room.seq++;
           room.broadcast({ t: 'playback', playback: room.playback(), by: session.name, action: 'load' });
           room.system(`${session.name} hat „${d.title}${d.subtitle && d.type === 'Episode' ? ' – ' + d.subtitle : ''}“ ausgewählt`);
+          telemetry.itemStarted(room.item, session.name);
+          notifyNoAccess(room, d);
           break;
         }
 
         case 'suggest': {
           if (!ID_RE.test(String(msg.itemId || ''))) break;
+          if (!accessOf(session).perms.suggest) { send({ t: 'error', text: 'Vorschläge sind für dich nicht freigeschaltet.' }); break; }
           if (!rateOk(client.chatTimes, 6, 4000)) break;
+          if (!(await canAccess(session, msg.itemId))) break;
           const d = await getItemDetails(msg.itemId);
           room.addChat({
             kind: 'suggest', from: session.name, sid: session.id.slice(0, 12),
@@ -969,9 +1123,35 @@ function onConnection(ws, session, room) {
   });
 }
 
+/** Steuern: Host immer, sonst nur wenn der Host es erlaubt UND die Gruppe es darf. */
+function mayControl(room, session) {
+  if (session.id === room.hostSid) return true;
+  return room.allowAllControl && accessOf(session).perms.control;
+}
+
+/** Wer im Raum den gewählten Film nicht sehen darf, bekommt Bescheid (der Host auch). */
+async function notifyNoAccess(room, item) {
+  const blocked = new Set();
+  for (const c of room.clients.values()) {
+    if (await canAccess(c.session, item.id)) continue;
+    blocked.add(c.session.name);
+    try { c.ws.send(JSON.stringify({ t: 'noaccess', item: { id: item.id, title: item.title } })); } catch { /* egal */ }
+  }
+  if (blocked.size) room.system(`Kein Zugriff auf diesen Titel: ${[...blocked].join(', ')}`);
+}
+
 function publicRoom(room) {
   return { code: room.code, host: room.hostSid.slice(0, 12), allowAllControl: room.allowAllControl };
 }
+
+setInterval(() => telemetry.tick(rooms, cache.stats()), TICK_MS).unref();
+process.on('SIGTERM', () => { telemetry.dirty = true; telemetry.save(); process.exit(0); });
+process.on('SIGINT', () => { telemetry.dirty = true; telemetry.save(); process.exit(0); });
+
+const adminCtx = {
+  users, sessions, groups, telemetry, rooms, tunnel, cache, jf, uid, readJson, sendJson, HttpError,
+  disconnectUser, closeRoom, bumpAccess, mapItem, getItemDetails, publicRoom, fmtTime, ID_RE, ITEM_FIELDS, clientIp,
+};
 
 // Tote Verbindungen erkennen
 setInterval(() => {

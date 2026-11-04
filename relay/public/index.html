@@ -48,16 +48,19 @@
   <section id="view-lobby" class="view center" hidden>
     <div class="card auth">
       <div class="brand big"><span class="logo">▶</span> Watchparty</div>
-      <p class="muted">Hi <strong id="lobby-name"></strong>! Mach einen Raum auf und schick deinem Kumpel den Link.</p>
+      <p class="muted">Hi <strong id="lobby-name"></strong>! <span id="lobby-hint">Mach einen Raum auf und schick deinem Kumpel den Link.</span></p>
       <button class="btn primary" id="btn-create">Neuen Raum erstellen</button>
-      <div class="divider"><span>oder</span></div>
+      <div class="divider" id="lobby-or"><span>oder</span></div>
       <form id="join-form" class="row">
         <input name="code" maxlength="12" placeholder="Raum-Code" autocomplete="off" required style="text-transform:uppercase">
         <button class="btn" type="submit">Beitreten</button>
       </form>
       <p class="error" id="lobby-error" hidden></p>
       <div class="agent-status" id="lobby-agent"></div>
+      <p class="motd" id="motd" hidden></p>
+      <p class="muted tiny" id="no-create" hidden>Du kannst selbst keine Räume erstellen. Lass dir einen Raum-Code oder Link schicken.</p>
       <div class="admin-box" id="admin-box" hidden>
+        <a class="btn small" id="btn-admin" href="/admin" hidden>⚙ Verwaltung öffnen</a>
         <button class="btn small" id="btn-invite-user">✉ Freund einladen (Konto-Link)</button>
         <div class="invite-out" id="invite-out" hidden></div>
       </div>
@@ -107,6 +110,13 @@
             <h2>Was schauen wir?</h2>
             <p class="muted">Such einen Film oder eine Folge aus – alle im Raum sehen es sofort.</p>
             <button class="btn primary" id="btn-library-empty">Bibliothek öffnen</button>
+          </div>
+        </div>
+        <div class="overlay" id="overlay-noaccess" hidden>
+          <div class="overlay-box">
+            <div class="big-icon">🔒</div>
+            <h2>Kein Zugriff</h2>
+            <p class="muted">„<span id="noaccess-title"></span>“ ist für dein Konto nicht freigegeben. Frag den Admin oder schlagt was anderes vor.</p>
           </div>
         </div>
         <div class="overlay" id="overlay-blocked" hidden>
