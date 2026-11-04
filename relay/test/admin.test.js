@@ -77,7 +77,7 @@ test('Konten, Gruppen, Rechte und Telemetrie', { timeout: 120000 }, async (t) =>
     JELLYFIN_API_KEY: 'k', DATA_DIR: path.join(tmp, 'agent'), ADMIN_PORT: '0',
   });
   const clients = [];
-  t.after(() => { for (const c of clients) try { c.ws && c.ws.close(); } catch { /* egal */ } for (const p of procs) p.kill(); jf.server.close(); fs.rmSync(tmp, { recursive: true, force: true }); });
+  t.after(async () => { for (const c of clients) try { c.ws && c.ws.close(); } catch { /* egal */ } await Promise.all(procs.map((p) => new Promise((r) => { if (p.exitCode !== null || p.signalCode) return r(); p.once('exit', r); p.kill(); }))); jf.server.close(); fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 
   const base = `http://127.0.0.1:${port}`;
   await until(async () => { try { return (await (await fetch(`${base}/healthz`)).json()).agent; } catch { return false; } }, 15000, 'online')
@@ -129,7 +129,8 @@ test('Konten, Gruppen, Rechte und Telemetrie', { timeout: 120000 }, async (t) =>
   assert.strictEqual((await kid.get(`/api/item/${I.M_KIDS}`)).status, 200);
 
   const nkItems = (await nk.get(`/api/items?parentId=${I.LIB_M}`)).data.items.map((x) => x.name);
-  assert.deepStrictEqual(nkItems, ['Neuer Film'], 'Ordner „Klassiker“ ausgeblendet');
+  assert.ok(nkItems.includes('Neuer Film') && !nkItems.includes('Klassiker'), `Ordner „Klassiker“ ausgeblendet: ${nkItems}`);
+  assert.deepStrictEqual((await nk.get('/api/search?q=metropolis')).data.movies, [], 'neue Suche filtert auch');
   assert.deepStrictEqual((await nk.get('/api/items?search=metro')).data.items, [], 'auch nicht über die Suche');
   assert.strictEqual((await nk.get(`/api/item/${I.M_METRO}`)).status, 403);
   assert.strictEqual((await nk.get(`/api/item/${I.EP1}`)).status, 200, 'Serien-Folge erlaubt');

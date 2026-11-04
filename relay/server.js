@@ -17,6 +17,9 @@ const { UserStore, SessionStore } = require('./lib/users');
 const { GroupStore, allowedByChain, allowedRoots, norm } = require('./lib/access');
 const { Telemetry, TICK_MS } = require('./lib/telemetry');
 const { handleAdmin } = require('./lib/admin');
+const { Guard } = require('./lib/guard');
+const { LibraryStore, variants, parseQuery, score, fold } = require('./lib/library');
+const { WishStore } = require('./lib/wishes');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -47,6 +50,13 @@ const tunnel = new Tunnel();
 const cache = new DiskCache(CONFIG.cacheDir, CONFIG.cacheBytes);
 const groups = new GroupStore(CONFIG.dataDir);
 const telemetry = new Telemetry(CONFIG.dataDir);
+const library = new LibraryStore(CONFIG.dataDir);
+const wishes = new WishStore(CONFIG.dataDir);
+const guard = new Guard(CONFIG.dataDir, (ip, b) => {
+  telemetry.audit({ type: 'ip-ban', ip, reason: b.reason, by: b.by === 'auto' ? undefined : b.by });
+  telemetry.event('security', `IP ${ip} gesperrt: ${b.reason}`, { level: 'warn' });
+  console.warn(`[guard] IP ${ip} gesperrt (${b.reason})`);
+});
 // Bytes vom Heimserver mitzählen
 {
   const onData = tunnel.onData.bind(tunnel);
@@ -57,6 +67,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const REACTIONS = ['😂', '😮', '❤️', '👍', '🔥', '😱', '👏', '💀'];
 const ID_RE = /^[a-f0-9]{32}$|^[a-f0-9-]{36}$/i;
 const CHUNK = 4 * 1024 * 1024;
+const ROUND_MS = Math.max(5, Number(process.env.ROUND_SECONDS) || 120) * 1000; // Dauer der Bewertungsrunde nach dem Film
 
 // Erstes Admin-Konto aus der Umgebung anlegen, falls noch keins existiert
 (async () => {
@@ -113,10 +124,22 @@ function mapItem(it) {
     playable: PLAYABLE_TYPES.has(it.Type),
     played: !!(it.UserData && it.UserData.Played),
     overview: it.Overview ? it.Overview.slice(0, 400) : '',
+    originalTitle: it.OriginalTitle && it.OriginalTitle !== it.Name ? it.OriginalTitle : null,
+    rating: it.CommunityRating ? Math.round(it.CommunityRating * 10) / 10 : null,
+    seriesId: it.SeriesId || null,
+    genres: it.Genres || undefined,
+    officialRating: it.OfficialRating || null,
+    hasBackdrop: !!((it.BackdropImageTags && it.BackdropImageTags.length) || (it.ParentBackdropImageTags && it.ParentBackdropImageTags.length)),
   };
 }
 
-const ITEM_FIELDS = 'PrimaryImageAspectRatio,ProductionYear,Overview';
+const ITEM_FIELDS = 'PrimaryImageAspectRatio,ProductionYear,Overview,OriginalTitle';
+const DETAIL_FIELDS = `${ITEM_FIELDS},Genres,OfficialRating,ChildCount,RecursiveItemCount`;
+
+/** Leichtgewichtige Item-Daten (ohne Mediendetails), gecacht. */
+function itemLite(id) {
+  return jsonCache.get(`li|${id}`, () => jf(`/Users/${uid()}/Items/${id}?Fields=${ITEM_FIELDS},Genres`));
+}
 
 function getItemDetails(id) {
   return jsonCache.get(`item|${id}`, async () => {
@@ -168,22 +191,53 @@ function getItemDetails(id) {
       directPlayable,
       width: video ? video.Width : null,
       height: video ? video.Height : null,
+      bitrate: ms.Bitrate || (video && video.BitRate) || null,
+      hdr: !!(video && video.VideoRange && video.VideoRange !== 'SDR'),
+      videoCodec: video ? (video.Codec || '').toLowerCase() : null,
+      container: ms.Container || null,
       nextEpisodeId,
+      seriesId: it.SeriesId || null,
+      seasonId: it.SeasonId || null,
+      genres: it.Genres || [],
+      segments: await mediaSegments(it.Id),
     };
   });
+}
+
+/**
+ * Intro/Abspann-Marker: Jellyfin 10.10+ (Media Segments) oder das Intro-Skipper-Plugin.
+ * Fehlt beides (oder lässt der Agent es nicht durch), gibt es einfach keine Marker.
+ */
+async function mediaSegments(id) {
+  const out = [];
+  try {
+    const d = await jf(`/MediaSegments/${id}`);
+    for (const s of (d && d.Items) || []) {
+      const type = { Intro: 'intro', Outro: 'outro', Recap: 'recap', Preview: 'preview', Commercial: 'commercial' }[s.Type];
+      if (type) out.push({ type, start: s.StartTicks / 1e7, end: s.EndTicks / 1e7 });
+    }
+  } catch { /* kein Media-Segments-API */ }
+  if (!out.length) {
+    try {
+      const d = await jf(`/Episode/${id}/IntroTimestamps/v1`);
+      if (d && d.Valid && d.IntroEnd > d.IntroStart) out.push({ type: 'intro', start: d.IntroStart, end: d.IntroEnd });
+    } catch { /* kein Plugin */ }
+  }
+  return out.filter((x) => x.end - x.start >= 5);
 }
 
 /* ------------------------------------------------------------------ */
 /* Sessions & login                                                    */
 /* ------------------------------------------------------------------ */
 
-const loginAttempts = new Map(); // ip|name -> { count, reset }
 
 function clientIp(req) {
   if (CONFIG.trustProxy && req.headers['x-forwarded-for']) {
-    return String(req.headers['x-forwarded-for']).split(',')[0].trim();
+    // Der LETZTE Eintrag stammt vom eigenen Proxy (Caddy); alles davor kann der Client selbst gesetzt haben.
+    const parts = String(req.headers['x-forwarded-for']).split(',').map((x) => x.trim()).filter(Boolean);
+    if (parts.length) return parts[parts.length - 1].replace(/^::ffff:/, '');
   }
-  return req.socket.remoteAddress || '?';
+  return String(req.socket.remoteAddress || '?').replace(/^::ffff:/, '');
 }
 
 function parseCookies(req) {
@@ -269,14 +323,6 @@ function cleanName(name) {
   return String(name || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 24);
 }
 
-function throttle(key, max, windowMs) {
-  const now = Date.now();
-  const a = loginAttempts.get(key) || { count: 0, reset: now + windowMs };
-  if (now > a.reset) { a.count = 0; a.reset = now + windowMs; }
-  loginAttempts.set(key, a);
-  return a;
-}
-
 function me(s) {
   const a = accessOf(s);
   const st = groups.settings;
@@ -284,6 +330,7 @@ function me(s) {
     name: s.name, username: s.username, admin: !!s.admin, owner: !!s.owner, perms: a.perms, maxBitrate: a.maxBitrate,
     restricted: !!a.rules, agentOnline: tunnel.online, server: tunnel.online ? tunnel.info.serverName : null,
     motd: st.motd || '', invitesEnabled: !!st.invitesEnabled, maintenance: !!st.maintenance,
+    wishNews: wishes.news(s.username).map((w) => ({ id: w.id, title: w.title, libraryItemId: w.libraryItemId })),
   };
 }
 
@@ -328,6 +375,11 @@ class Room {
     this.hostSid = hostSid;
     this.createdBy = createdBy || null;
     this.createdAt = Date.now();
+    this.queue = [];      // [{ id, title, subtitle, type, runtime, by }]
+    this.poll = null;     // Abstimmung
+    this.round = null;    // Bewertungsrunde nach dem Film
+    this.ratePrompted = false;
+    this.advancing = 0;
     this.allowAllControl = true;
     this.clients = new Map(); // clientId -> client
     this.chat = [];
@@ -428,7 +480,6 @@ setInterval(() => {
       room.broadcast({ t: 'members', members: room.members() });
     }
   }
-  for (const [k, a] of loginAttempts) if (now > a.reset) loginAttempts.delete(k);
 }, 2000).unref();
 
 
@@ -479,8 +530,28 @@ const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'SAMEORIGIN',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'",
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
 };
+
+/** Eigener Host (für den Origin-Check). */
+function ownHosts(req) {
+  const fwd = CONFIG.trustProxy && req.headers['x-forwarded-host'];
+  return [req.headers.host, fwd].filter(Boolean).map((h) => String(h).split(',')[0].trim().toLowerCase());
+}
+
+/** Schutz gegen Cross-Site-Anfragen (CSRF) bei allem, was etwas ändert. */
+function sameOrigin(req) {
+  const origin = req.headers.origin;
+  if (origin) {
+    try { return ownHosts(req).includes(new URL(origin).host.toLowerCase()); } catch { return false; }
+  }
+  const site = req.headers['sec-fetch-site'];
+  if (site) return site === 'same-origin' || site === 'none';
+  return true; // keine Browser-Herkunft (z. B. Desktop-Client, curl)
+}
 
 function stripKeys(text) {
   return text.replace(/([?&])(api_key|ApiKey)=[^&\s"]*&?/gi, '$1').replace(/[?&](\r?\n)/g, '$1');
@@ -585,10 +656,67 @@ async function serveDirect(req, res, itemId, ms) {
 
 const BITRATES = new Set([1500000, 3000000, 6000000, 10000000, 20000000, 40000000]);
 
+/** Transcode-Stufen: Bitrate → Auflösung und Name. */
+const TIERS = [
+  { br: 40000000, height: 2160, name: '4K' },
+  { br: 20000000, height: 1080, name: 'Full HD' },
+  { br: 10000000, height: 1080, name: 'Full HD', note: 'sparsam' },
+  { br: 6000000, height: 720, name: 'HD' },
+  { br: 3000000, height: 480, name: 'SD' },
+  { br: 1500000, height: 360, name: 'Mobil' },
+];
+const TIER_HEIGHT = Object.fromEntries(TIERS.map((t) => [t.br, t.height]));
+
+function resName(h) {
+  if (!h) return '';
+  if (h >= 1900) return '4K';
+  if (h >= 1300) return 'QHD';
+  if (h >= 1000) return 'Full HD';
+  if (h >= 700) return 'HD';
+  return 'SD';
+}
+function mbitLabel(br) { return `${(br / 1e6).toFixed(br < 10e6 ? 1 : 0).replace('.', ',').replace(',0', '')} Mbit/s`; }
+
+/**
+ * Wählbare Qualitäten für eine Datei: nie mehr als das Original hergibt
+ * (Bitrate und Auflösung) und nie mehr als die Gruppe darf.
+ */
+function qualityOptions(d, acc) {
+  const out = [];
+  const srcH = d.height || 0;
+  const srcBr = d.bitrate || 0;
+  if (acc.perms.direct) {
+    out.push({ id: 'direct', label: `Original · ${[resName(srcH), d.hdr ? 'HDR' : ''].filter(Boolean).join(' ')}${srcBr ? ` · ${mbitLabel(srcBr)}` : ''}`, height: srcH, br: srcBr || null, original: true });
+  }
+  for (const t of TIERS) {
+    if (t.br > acc.maxBitrate) continue;
+    if (srcH && t.height > srcH * 1.05) continue;       // nicht hochskalieren
+    if (srcBr && t.br >= srcBr * 0.95) continue;         // nicht mehr als das Original
+    out.push({ id: String(t.br), label: `${t.name}${t.note ? ` (${t.note})` : ''} · ${mbitLabel(t.br)}`, height: t.height, br: t.br });
+  }
+  // Ganz ohne Stufe (z. B. sehr kleine Datei, keine Originalqualität erlaubt): kleinste erlaubte nehmen
+  if (!out.length) {
+    const t = [...TIERS].reverse().find((x) => x.br <= acc.maxBitrate) || TIERS[TIERS.length - 1];
+    out.push({ id: String(t.br), label: `${t.name} · ${mbitLabel(t.br)}`, height: t.height, br: t.br });
+  }
+  return out;
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
+  if (isSecure(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  const ip = clientIp(req);
+  if (p.startsWith('/api/') || p.startsWith('/stream/') || p.startsWith('/img/') || p.startsWith('/subs/')) {
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) throw new HttpError(403, 'Anfrage von fremder Seite abgelehnt');
+    const ban = guard.banned(ip);
+    if (ban) {
+      const s = getSession(req);
+      if (!(s && s.admin)) throw new HttpError(403, `Deine IP ist gesperrt${ban.until ? ` bis ${new Date(ban.until).toLocaleString('de-DE')}` : ''}.`);
+    }
+    if (!guard.limit(`req|${ip}`, 1200, 60000)) throw new HttpError(429, 'Zu viele Anfragen – kurz durchatmen.');
+  }
 
   // --- statische Dateien ---
   if (req.method === 'GET' && (p === '/' || /^\/(r|invite)\/[A-Za-z0-9_-]{4,40}\/?$/.test(p))) {
@@ -610,16 +738,17 @@ async function handle(req, res) {
 
   // --- Login / Registrierung ---
   if (p === '/api/login' && req.method === 'POST') {
-    const ip = clientIp(req);
     const body = await readJson(req);
-    const username = String(body.username || '').trim();
-    const a = throttle(`ip|${ip}`, 10, 15 * 60 * 1000);
-    const b = throttle(`u|${username.toLowerCase()}`, 10, 15 * 60 * 1000);
-    if (a.count >= 10 || b.count >= 10) throw new HttpError(429, 'Zu viele Versuche – warte ein paar Minuten.');
-    const user = await users.verify(username, body.password || '');
-    if (!user) { a.count++; b.count++; telemetry.login(username.slice(0, 40), false, ip); throw new HttpError(401, 'Benutzername oder Passwort falsch'); }
-    loginAttempts.delete(`ip|${ip}`);
-    loginAttempts.delete(`u|${username.toLowerCase()}`);
+    const username = String(body.username || '').trim().slice(0, 40);
+    const chk = guard.checkLogin(ip, username);
+    if (!chk.ok) {
+      const sec = chk.wait ? Math.ceil(chk.wait / 1000) : null;
+      throw new HttpError(429, chk.reason === 'ban' ? 'Zu viele Fehlversuche – deine IP ist vorübergehend gesperrt.'
+        : `Zu viele Versuche – bitte ${sec > 90 ? `${Math.ceil(sec / 60)} Minuten` : `${sec} Sekunden`} warten.`);
+    }
+    const user = await users.verify(username, String(body.password || '').slice(0, 200));
+    if (!user) { guard.fail(ip, username); telemetry.login(username, false, ip); throw new HttpError(401, 'Benutzername oder Passwort falsch'); }
+    guard.success(ip, username);
     if (!users.usable(user)) {
       telemetry.audit({ type: 'login-blocked', user: user.username, ip });
       throw new HttpError(403, user.disabled ? 'Dieses Konto ist gesperrt.' : 'Dieses Konto ist abgelaufen.');
@@ -629,16 +758,14 @@ async function handle(req, res) {
     telemetry.login(user.username, true, ip);
     const s = sessions.create(user, { ua: req.headers['user-agent'], ip });
     s.admin = !!user.admin;
-    return sendJson(res, 200, me(s), { 'Set-Cookie': sessionCookie(req, s.id) });
+    return sendJson(res, 200, me(s), { 'Set-Cookie': sessionCookie(req, s.token) });
   }
 
   let m;
   if ((m = p.match(/^\/api\/invite\/([A-Za-z0-9_-]{8,40})$/))) {
+    if (!guard.limit(`inv|${ip}`, 20, 15 * 60 * 1000)) { guard.fail(ip, '(einladung)'); throw new HttpError(429, 'Zu viele Versuche'); }
     if (req.method === 'GET') return sendJson(res, 200, { valid: users.checkInvite(m[1]) });
     if (req.method === 'POST') {
-      const a = throttle(`reg|${clientIp(req)}`, 10, 15 * 60 * 1000);
-      if (a.count >= 10) throw new HttpError(429, 'Zu viele Versuche');
-      a.count++;
       const body = await readJson(req);
       let user;
       if (!groups.settings.invitesEnabled) throw new HttpError(403, 'Registrierung ist gerade abgeschaltet');
@@ -648,7 +775,7 @@ async function handle(req, res) {
       telemetry.event('register', `${user.username} hat sich per Einladung registriert`, { user: user.username });
       const s = sessions.create(user, { ua: req.headers['user-agent'], ip: clientIp(req) });
       console.log(`[users] "${user.username}" hat sich per Einladung registriert`);
-      return sendJson(res, 200, me(s), { 'Set-Cookie': sessionCookie(req, s.id) });
+      return sendJson(res, 200, me(s), { 'Set-Cookie': sessionCookie(req, s.token) });
     }
   }
 
@@ -709,6 +836,7 @@ async function handle(req, res) {
     return handleAdmin(adminCtx, req, res, url, session);
   }
   if ((m = p.match(/^\/api\/rooms\/([A-Za-z0-9]{4,12})$/)) && req.method === 'GET') {
+    if (!guard.limit(`room|${session.username.toLowerCase()}`, 30, 60000)) throw new HttpError(429, 'Zu viele Versuche');
     const room = rooms.get(m[1].toUpperCase());
     if (!room) throw new HttpError(404, 'Raum nicht gefunden');
     return sendJson(res, 200, { code: room.code, members: room.clients.size });
@@ -759,6 +887,9 @@ async function handle(req, res) {
       q.set('ParentId', parentId);
       const sort = url.searchParams.get('sort');
       if (sort === 'index') q.set('SortBy', 'ParentIndexNumber,IndexNumber,SortName');
+      else if (sort === 'added') { q.set('SortBy', 'DateCreated,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
+      else if (sort === 'year') { q.set('SortBy', 'ProductionYear,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
+      else if (sort === 'rating') { q.set('SortBy', 'CommunityRating,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
       else q.set('SortBy', 'SortName');
       const ct = url.searchParams.get('collectionType');
       if (ct === 'movies') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Movie'); }
@@ -771,12 +902,311 @@ async function handle(req, res) {
     return sendJson(res, 200, { items: kept.map(mapItem), total: Math.max(0, (data.TotalRecordCount || 0) - (all.length - kept.length)) });
   }
 
+  // --- Suche: gruppiert, nach Relevanz, tolerant bei Umlauten/ß, mit Jahr ---
+  if (p === '/api/search') {
+    const raw = String(url.searchParams.get('q') || '').trim().slice(0, 100);
+    if (raw.length < 2) return sendJson(res, 200, { movies: [], series: [], episodes: [], query: raw });
+    const { text, year } = parseQuery(raw);
+    const onlyYear = year && text === String(year);
+    const base = { Recursive: 'true', IncludeItemTypes: 'Movie,Series,Episode,BoxSet,Video', Limit: '60', Fields: ITEM_FIELDS, EnableImageTypes: 'Primary', ImageTypeLimit: '1' };
+    const queries = onlyYear
+      ? [new URLSearchParams({ ...base, IncludeItemTypes: 'Movie,Series', Years: String(year), SortBy: 'CommunityRating,SortName', SortOrder: 'Descending,Ascending' })]
+      : variants(text).map((v) => new URLSearchParams({ ...base, SearchTerm: v, ...(year ? { Years: String(year) } : {}) }));
+    const results = await Promise.all(queries.map((q) => jsonCache.get(`search|${q}`, () => jf(`/Users/${uid()}/Items?${q}`)).catch(() => ({ Items: [] }))));
+    const byId = new Map();
+    for (const r of results) for (const it of r.Items || []) if (!byId.has(it.Id)) byId.set(it.Id, it);
+    const allowed = await filterAllowed(session, [...byId.values()]);
+    const scored = allowed.map((it) => { const mi = mapItem(it); return { ...mi, score: onlyYear ? 50 : score(mi, text, year) }; })
+      .filter((x) => x.score > 0).sort((a, b) => b.score - a.score || (b.year || 0) - (a.year || 0));
+    const pick = (types, n) => scored.filter((x) => types.includes(x.type)).slice(0, n);
+    return sendJson(res, 200, {
+      query: raw, year,
+      movies: pick(['Movie', 'Video'], 30), series: pick(['Series', 'BoxSet'], 24), episodes: pick(['Episode'], 30),
+    });
+  }
+
+
+  // --- Detailseite (Film, Serie, Folge) ---
+  if ((m = p.match(/^\/api\/details\/([a-f0-9-]+)$/i))) {
+    if (!ID_RE.test(m[1])) throw new HttpError(400, 'Ungültige ID');
+    await assertAccess(session, m[1]);
+    const it = await jsonCache.get(`det|${m[1]}`, () => jf(`/Users/${uid()}/Items/${m[1]}?Fields=${DETAIL_FIELDS}`));
+    const h = library.history(session.username).find((x) => x.id === it.Id);
+    return sendJson(res, 200, {
+      ...mapItem(it), genres: it.Genres || [], officialRating: it.OfficialRating || null,
+      childCount: it.ChildCount || null, ours: library.rating(session.username, it.Id),
+      watched: library.isWatched(session.username, it.Id), inWatchlist: library.has(session.username, it.Id),
+      progress: h && h.runtime ? Math.round((h.pos / h.runtime) * 1000) / 10 : 0, resume: h ? h.pos : 0,
+    });
+  }
+
+  // --- Serie: Staffeln, Folgen, eigener Fortschritt, wer im Raum was gesehen hat ---
+  if ((m = p.match(/^\/api\/show\/([a-f0-9-]+)$/i))) {
+    if (!ID_RE.test(m[1])) throw new HttpError(400, 'Ungültige ID');
+    await assertAccess(session, m[1]);
+    const seasons = await jsonCache.get(`seasons|${m[1]}`, () => jf(`/Users/${uid()}/Items?ParentId=${m[1]}&SortBy=IndexNumber,SortName&Fields=${ITEM_FIELDS}`));
+    const eps = await jsonCache.get(`eps|${m[1]}`, () => jf(`/Shows/${m[1]}/Episodes?UserId=${uid()}&Fields=${ITEM_FIELDS}`));
+    const allowedEps = await filterAllowed(session, (eps && eps.Items) || []);
+    const watched = library.watchedMap(session.username);
+    const hist = new Map(library.history(session.username).map((h) => [h.id, h]));
+    // Wer im Raum hat welche Folge gesehen?
+    const code = String(url.searchParams.get('room') || '').toUpperCase();
+    const room = code && rooms.get(code);
+    const others = [];
+    if (room && [...room.clients.values()].some((c) => c.session.id === session.id)) {
+      const seen = new Set();
+      for (const c of room.clients.values()) {
+        const n = c.session.username.toLowerCase();
+        if (seen.has(n) || n === session.username.toLowerCase()) continue;
+        seen.add(n);
+        others.push({ name: c.session.name, watched: library.watchedMap(c.session.username) });
+      }
+    }
+    const epView = (e) => {
+      const h = hist.get(e.Id);
+      return {
+        ...mapItem(e), watched: !!watched[e.Id],
+        progress: h && h.runtime ? Math.round((h.pos / h.runtime) * 1000) / 10 : 0,
+        roomWatched: others.filter((o) => o.watched[e.Id]).map((o) => o.name),
+      };
+    };
+    const bySeason = new Map();
+    for (const e of allowedEps) {
+      const k = e.SeasonId || e.ParentId || 'none';
+      if (!bySeason.has(k)) bySeason.set(k, []);
+      bySeason.get(k).push(epView(e));
+    }
+    const seasonList = ((seasons && seasons.Items) || []).filter((x) => x.Type === 'Season').map((x) => ({
+      ...mapItem(x), episodes: bySeason.get(x.Id) || [],
+    })).filter((x) => x.episodes.length);
+    if (bySeason.has('none')) seasonList.push({ id: 'none', name: 'Weitere', index: 99, episodes: bySeason.get('none') });
+    // Nächste Folge: nach der zuletzt gesehenen/angefangenen die erste ungesehene
+    const flat = seasonList.flatMap((x) => x.episodes);
+    let lastIdx = -1;
+    flat.forEach((e, i) => { if (e.watched || e.progress > 2) lastIdx = i; });
+    let next = flat.slice(Math.max(0, lastIdx)).find((e) => !e.watched) || flat.find((e) => !e.watched) || null;
+    if (lastIdx >= 0 && flat[lastIdx] && !flat[lastIdx].watched && flat[lastIdx].progress > 2) next = flat[lastIdx];
+    return sendJson(res, 200, {
+      seasons: seasonList, next: next ? { id: next.id, label: `S${next.parentIndex ?? '?'}E${next.index ?? '?'}`, name: next.name, progress: next.progress } : null,
+      watchedCount: flat.filter((e) => e.watched).length, total: flat.length, roomMembers: others.map((o) => o.name),
+    });
+  }
+
+  // --- Gesehen markieren ---
+  if (p === '/api/watched' && req.method === 'POST') {
+    const body = await readJson(req, 64 * 1024);
+    const ids = [...new Set((body.ids || []).map(String))].filter((x) => ID_RE.test(x)).slice(0, 500);
+    if (!ids.length) throw new HttpError(400, 'Keine Titel');
+    for (const id of ids.slice(0, 3)) await assertAccess(session, id); // Stichprobe reicht: alle stammen aus einer Liste, die schon gefiltert war
+    library.setWatched(session.username, ids, body.on !== false);
+    return sendJson(res, 200, { ok: true, count: ids.length });
+  }
+
+  // --- Bewertungen 1–10 (anonym) ---
+  if (p === '/api/rate' && req.method === 'POST') {
+    const body = await readJson(req);
+    const id = String(body.itemId || '');
+    if (!ID_RE.test(id)) throw new HttpError(400, 'Ungültige ID');
+    await assertAccess(session, id);
+    const sc = body.score == null ? null : Number(body.score);
+    if (sc != null && !(sc >= 1 && sc <= 10)) throw new HttpError(400, 'Bewertung von 1 bis 10');
+    const r = library.rate(session.username, id, sc);
+    // Bewertungsrunde im Raum mitzählen
+    for (const room of rooms.values()) {
+      if (room.round && room.round.itemId === id && [...room.clients.values()].some((c) => c.session.id === session.id)) {
+        if (sc == null) room.round.votes.delete(session.username.toLowerCase()); else room.round.votes.set(session.username.toLowerCase(), sc);
+        room.broadcast({ t: 'round', votes: room.round.votes.size });
+      }
+    }
+    return sendJson(res, 200, r);
+  }
+  if (p === '/api/top-rated') {
+    const out = [];
+    for (const e of library.topRated(80)) {
+      if (out.length >= 40) break;
+      try {
+        if (!(await canAccess(session, e.id))) continue;
+        const it = await itemLite(e.id);
+        out.push({ ...mapItem(it), ours: library.rating(session.username, e.id) });
+      } catch { /* gelöscht */ }
+    }
+    return sendJson(res, 200, { items: out });
+  }
+
+  // --- Zufall ---
+  if (p === '/api/random') {
+    const sp = url.searchParams;
+    const type = sp.get('type') === 'series' ? 'Series' : sp.get('type') === 'episode' ? 'Episode' : 'Movie';
+    const q = new URLSearchParams({ Recursive: 'true', IncludeItemTypes: type, Fields: `${ITEM_FIELDS},Genres`, Limit: '400', SortBy: 'Random', EnableImageTypes: 'Primary', ImageTypeLimit: '1' });
+    const parentId = sp.get('parentId');
+    if (parentId && ID_RE.test(parentId)) { await assertAccess(session, parentId); q.set('ParentId', parentId); }
+    if (sp.get('genre')) q.set('Genres', String(sp.get('genre')).slice(0, 40));
+    const d = await jf(`/Users/${uid()}/Items?${q}`);
+    let list = d.Items || [];
+    const maxMin = Number(sp.get('maxMinutes')) || 0;
+    if (maxMin) list = list.filter((x) => !x.RunTimeTicks || x.RunTimeTicks / 6e8 <= maxMin);
+    if (sp.get('unwatched') === '1') { const w = library.watchedMap(session.username); list = list.filter((x) => !w[x.Id]); }
+    const minRating = Number(sp.get('minRating')) || 0;
+    if (minRating) list = list.filter((x) => (x.CommunityRating || 0) >= minRating);
+    // ein paar Kandidaten prüfen statt alle
+    for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [list[i], list[j]] = [list[j], list[i]]; }
+    const picks = [];
+    for (const it of list) {
+      if (picks.length >= 3) break;
+      if (await canAccess(session, it.Id)) picks.push({ ...mapItem(it), genres: it.Genres || [] });
+    }
+    if (!picks.length) throw new HttpError(404, 'Nichts gefunden, das passt – lockere die Filter etwas.');
+    return sendJson(res, 200, { pick: picks[0], alternatives: picks.slice(1), pool: list.length });
+  }
+
+  // --- Profil & Jahresrückblick ---
+  if (p === '/api/profile') {
+    const pd = library.profileData(session.username);
+    const year = new Date().getFullYear();
+    const dayEntries = Object.entries(pd.days);
+    const secYear = dayEntries.filter(([k]) => k.startsWith(String(year))).reduce((s2, [, v]) => s2 + v, 0);
+    const secAll = dayEntries.reduce((s2, [, v]) => s2 + v, 0);
+    // längste Serie an aufeinanderfolgenden Tagen
+    const days = dayEntries.map(([k]) => k).sort();
+    let streak = 0, best = 0, prev = null;
+    for (const k of days) {
+      const t = new Date(`${k}T12:00:00`).getTime();
+      streak = prev && t - prev < 1.5 * 86400000 ? streak + 1 : 1;
+      best = Math.max(best, streak); prev = t;
+    }
+    const top = Object.entries(pd.time).map(([id, t]) => ({ id, ...t, hours: Math.round((t.seconds / 3600) * 10) / 10 })).sort((a, b) => b.seconds - a.seconds);
+    // Genres aus den meistgeschauten Titeln
+    const genres = {};
+    for (const t of top.slice(0, 25)) {
+      try { const it = await itemLite(t.id); for (const g of it.Genres || []) genres[g] = (genres[g] || 0) + t.seconds; } catch { /* egal */ }
+    }
+    const watchedIds = Object.keys(pd.watched);
+    const ratings = library.ratingsDb();
+    const myRatings = Object.values(ratings).map((r) => r[session.username.toLowerCase()]).filter(Boolean);
+    const weekday = [0, 0, 0, 0, 0, 0, 0];
+    for (const [k, v] of dayEntries) weekday[(new Date(`${k}T12:00:00`).getDay() + 6) % 7] += v;
+    return sendJson(res, 200, {
+      name: session.name, year,
+      hoursYear: Math.round((secYear / 3600) * 10) / 10, hoursAll: Math.round((secAll / 3600) * 10) / 10, secondsAll: Math.round(secAll), secondsYear: Math.round(secYear),
+      daysActive: days.length, bestStreak: best, watchedCount: watchedIds.length,
+      topTitles: top.slice(0, 8), topSeries: top.filter((x) => x.type === 'Series').slice(0, 5),
+      genres: Object.entries(genres).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([g, sec]) => ({ genre: g, hours: Math.round((sec / 3600) * 10) / 10 })),
+      ratings: { count: myRatings.length, avg: myRatings.length ? Math.round((myRatings.reduce((a, b) => a + b, 0) / myRatings.length) * 10) / 10 : null },
+      weekday: weekday.map((x) => Math.round((x / 3600) * 10) / 10),
+      wishes: wishes.list.filter((w) => w.by === session.username).length,
+    });
+  }
+
+  // --- Schwarzes Brett ---
+  if (p.startsWith('/api/wishes')) {
+    const a = accessOf(session);
+    const canWish = a.admin || a.perms.wish;
+    if (p === '/api/wishes' && req.method === 'GET') {
+      const sort = url.searchParams.get('sort') || 'votes';
+      const status = url.searchParams.get('status') || '';
+      let list = wishes.list.filter((w) => !status || w.status === status);
+      list = list.sort((x, y) => (sort === 'new' ? y.created - x.created : (y.votes.length - x.votes.length) || (y.created - x.created)));
+      const tags = {};
+      for (const w of wishes.list) for (const [t, us] of Object.entries(w.tags)) tags[t] = (tags[t] || 0) + us.length;
+      return sendJson(res, 200, {
+        wishes: list.map((w) => wishes.view(w, session.username)), canWish, admin: !!session.admin,
+        tags: Object.entries(tags).sort((x, y) => y[1] - x[1]).slice(0, 30).map(([tag, votes]) => ({ tag, votes })),
+      });
+    }
+    if (p === '/api/wishes/check') {
+      const q = String(url.searchParams.get('q') || '').trim().slice(0, 100);
+      if (q.length < 2) return sendJson(res, 200, { wishes: [], library: [] });
+      const fq = fold(q);
+      const similar = wishes.list.filter((w) => fold(w.title).includes(fq) || fq.includes(fold(w.title))).slice(0, 5).map((w) => wishes.view(w, session.username));
+      let lib = [];
+      try {
+        const sq = new URLSearchParams({ SearchTerm: q, Recursive: 'true', IncludeItemTypes: 'Movie,Series', Limit: '8', Fields: ITEM_FIELDS, EnableImageTypes: 'Primary', ImageTypeLimit: '1' });
+        const d = await jsonCache.get(`search|${sq}`, () => jf(`/Users/${uid()}/Items?${sq}`));
+        lib = (await filterAllowed(session, d.Items || [])).slice(0, 5).map(mapItem);
+      } catch { /* offline */ }
+      return sendJson(res, 200, { wishes: similar, library: lib });
+    }
+    if (p === '/api/wishes/seen' && req.method === 'POST') { wishes.markSeen(session.username); return sendJson(res, 200, { ok: true }); }
+    if (p === '/api/wishes' && req.method === 'POST') {
+      if (!canWish) throw new HttpError(403, 'Du darfst keine Wünsche eintragen');
+      if (!guard.limit(`wish|${session.username}`, 10, 10 * 60000)) throw new HttpError(429, 'Langsam – höchstens 10 Wünsche in 10 Minuten');
+      const body = await readJson(req);
+      let w;
+      try { w = wishes.create(session.username, body); } catch (e) { const he = new HttpError(400, e.message); throw he; }
+      telemetry.event('wish', `${session.name} wünscht sich „${w.title}“`, { user: session.username });
+      matchWishes([w]).catch(() => {});
+      return sendJson(res, 200, { wish: wishes.view(w, session.username) });
+    }
+    if ((m = p.match(/^\/api\/wishes\/([a-f0-9]{10})(?:\/(vote|tag))?$/))) {
+      try {
+        if (m[2] === 'vote' && req.method === 'POST') {
+          if (!canWish) throw new HttpError(403, 'Du darfst nicht abstimmen');
+          return sendJson(res, 200, { wish: wishes.view(wishes.vote(session.username, m[1]), session.username) });
+        }
+        if (m[2] === 'tag' && req.method === 'POST') {
+          if (!canWish) throw new HttpError(403, 'Du darfst keine Tags vergeben');
+          const body = await readJson(req);
+          return sendJson(res, 200, { wish: wishes.view(wishes.tag(session.username, m[1], body.tag), session.username) });
+        }
+        if (!m[2] && req.method === 'PATCH') {
+          const body = await readJson(req);
+          const w = wishes.update(m[1], body, { admin: !!session.admin, username: session.username });
+          if ('status' in body) telemetry.audit({ type: 'wish-status', by: session.username, target: w.title, status: w.status });
+          return sendJson(res, 200, { wish: wishes.view(w, session.username) });
+        }
+        if (!m[2] && req.method === 'DELETE') {
+          wishes.remove(m[1], { admin: !!session.admin, username: session.username });
+          return sendJson(res, 200, { ok: true });
+        }
+      } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(400, e.message); }
+    }
+  }
+
+  // --- Merkliste & Verlauf ---
+  if (p === '/api/watchlist' && req.method === 'GET') {
+    const out = [];
+    for (const e of library.list(session.username).slice(0, 200)) {
+      try {
+        const it = await jsonCache.get(`li|${e.id}`, () => jf(`/Users/${uid()}/Items/${e.id}?Fields=${ITEM_FIELDS}`));
+        if (await canAccess(session, e.id)) out.push({ ...mapItem(it), added: e.added });
+      } catch { /* gelöscht oder offline */ }
+    }
+    return sendJson(res, 200, { items: out });
+  }
+  if (p === '/api/watchlist' && req.method === 'POST') {
+    const body = await readJson(req);
+    const id = String(body.itemId || '');
+    if (!ID_RE.test(id)) throw new HttpError(400, 'Ungültige ID');
+    await assertAccess(session, id);
+    const on = body.on !== undefined ? !!body.on : !library.has(session.username, id);
+    if (on) library.add(session.username, id); else library.remove(session.username, id);
+    return sendJson(res, 200, { on });
+  }
+  if (p === '/api/history' && req.method === 'GET') {
+    const out = [];
+    for (const h of library.history(session.username).slice(0, 30)) {
+      if (!(await canAccess(session, h.id).catch(() => false))) continue;
+      const done = h.runtime ? h.pos / h.runtime : 0;
+      out.push({ ...h, progress: Math.round(done * 1000) / 10, finished: done > 0.92 });
+    }
+    return sendJson(res, 200, { items: out });
+  }
+  if ((m = p.match(/^\/api\/history(?:\/([a-f0-9-]+))?$/i)) && req.method === 'DELETE') {
+    library.clearHistory(session.username, m[1] || null);
+    return sendJson(res, 200, { ok: true });
+  }
+
   if ((m = p.match(/^\/api\/item\/([a-f0-9-]+)$/i))) {
     if (!ID_RE.test(m[1])) throw new HttpError(400, 'Ungültige ID');
     await assertAccess(session, m[1]);
     const d = await getItemDetails(m[1]);
     const a = accessOf(session);
-    return sendJson(res, 200, { ...d, directPlayable: d.directPlayable && a.perms.direct, maxBitrate: a.maxBitrate, allowDirect: a.perms.direct });
+    return sendJson(res, 200, {
+      ...d, directPlayable: d.directPlayable && a.perms.direct, maxBitrate: a.maxBitrate, allowDirect: a.perms.direct,
+      qualities: qualityOptions(d, a), resolution: [resName(d.height), d.hdr ? 'HDR' : ''].filter(Boolean).join(' '),
+      inWatchlist: library.has(session.username, d.id),
+      resume: (library.history(session.username).find((h) => h.id === d.id) || {}).pos || 0,
+    });
   }
 
   // --- Bilder ---
@@ -807,6 +1237,7 @@ async function handle(req, res) {
       const ms = sp.get('ms');
       if (!ID_RE.test(ms || '')) throw new HttpError(400, 'Parameter fehlen');
       const br = Math.min(BITRATES.has(toInt(sp.get('br'), 0)) ? toInt(sp.get('br'), 0) : 10000000, acc.maxBitrate);
+      const maxH = TIER_HEIGHT[br] || 1080;
       const audio = /^\d{1,3}$/.test(sp.get('audio') || '') ? sp.get('audio') : '';
       const subIdx = /^\d{1,3}$/.test(sp.get('sub') || '') ? sp.get('sub') : '';
       // Alle Zuschauer mit gleichen Einstellungen teilen sich EINEN Transcode
@@ -818,6 +1249,7 @@ async function handle(req, res) {
         VideoCodec: 'h264',
         AudioCodec: 'aac,mp3',
         MaxStreamingBitrate: String(br),
+        MaxHeight: String(maxH),
         VideoBitrate: String(Math.max(br - 320000, 500000)),
         AudioBitrate: '192000',
         TranscodingMaxAudioChannels: '2',
@@ -902,6 +1334,11 @@ server.on('upgrade', (req, socket, head) => {
 
   const session = getSession(req);
   if (!session) return reject(401, 'Unauthorized');
+  if (guard.banned(clientIp(req)) && !session.admin) return reject(403, 'Forbidden');
+  let open = 0;
+  for (const r of rooms.values()) for (const c of r.clients.values()) if (c.session.id === session.id) open++;
+  if (open >= 8) return reject(429, 'Too Many Connections');
+  if (!guard.limit(`ws|${session.id}`, 30, 60000)) return reject(429, 'Too Many Requests');
   const code = String(url.searchParams.get('room') || '').toUpperCase();
   const room = rooms.get(code);
   if (!room) return reject(404, 'Room Not Found');
@@ -921,6 +1358,7 @@ function onConnection(ws, session, room, req) {
     joinedAt: Date.now(),
     status: { pos: 0, state: 'idle' },
     chatTimes: [],
+    statusTimes: [],
     ctrlTimes: [],
     alive: true,
   };
@@ -948,6 +1386,9 @@ function onConnection(ws, session, room, req) {
     agentOnline: tunnel.online,
     server: tunnel.online ? tunnel.info.serverName : null,
     serverNow: Date.now(),
+    queue: room.queue,
+    poll: room.poll ? pollView(room.poll) : null,
+    round: room.round ? { item: { id: room.round.itemId, title: room.round.title }, ends: room.round.ends, votes: room.round.votes.size } : null,
   });
   if (firstForSession) room.system(`${session.name} ist beigetreten`);
   room.broadcast({ t: 'members', members: room.members() });
@@ -966,6 +1407,7 @@ function onConnection(ws, session, room, req) {
           break;
 
         case 'status': {
+          if (!rateOk(client.statusTimes, 20, 10000)) break;
           const pos = Number(msg.pos);
           client.status = {
             pos: Number.isFinite(pos) ? Math.max(0, pos) : 0,
@@ -1020,17 +1462,78 @@ function onConnection(ws, session, room, req) {
           if (!ID_RE.test(String(msg.itemId || ''))) break;
           if (!rateOk(client.ctrlTimes, 12, 3000)) break;
           if (!(await canAccess(session, msg.itemId))) { send({ t: 'error', text: 'Darauf hast du keinen Zugriff.' }); break; }
-          const d = await getItemDetails(msg.itemId);
-          if (!d.playable) { send({ t: 'error', text: 'Das kann man nicht abspielen.' }); break; }
-          room.item = { id: d.id, title: d.title, subtitle: d.subtitle, type: d.type, runtime: d.runtime, nextEpisodeId: d.nextEpisodeId };
-          room.playing = false;
-          room.position = 0;
-          room.updatedAt = Date.now();
-          room.seq++;
-          room.broadcast({ t: 'playback', playback: room.playback(), by: session.name, action: 'load' });
-          room.system(`${session.name} hat „${d.title}${d.subtitle && d.type === 'Episode' ? ' – ' + d.subtitle : ''}“ ausgewählt`);
-          telemetry.itemStarted(room.item, session.name);
-          notifyNoAccess(room, d);
+          const ok = await startItem(room, msg.itemId, session.name, { position: Number(msg.position) || 0 });
+          if (!ok) send({ t: 'error', text: 'Das kann man nicht abspielen.' });
+          break;
+        }
+
+        /* ---------- Warteschlange ---------- */
+        case 'queue-add': {
+          const a = accessOf(session);
+          if (!(mayLoad(room, session) || a.perms.suggest)) { send({ t: 'error', text: 'Du darfst nichts einreihen.' }); break; }
+          if (!rateOk(client.ctrlTimes, 12, 3000)) break;
+          if (room.queue.length >= 50) { send({ t: 'error', text: 'Die Warteschlange ist voll (50).' }); break; }
+          const ids = (Array.isArray(msg.itemIds) ? msg.itemIds : [msg.itemId]).map(String).filter((x) => ID_RE.test(x)).slice(0, 50 - room.queue.length);
+          if (!ids.length) break;
+          for (const id of ids) {
+            if (!(await canAccess(session, id))) continue;
+            try {
+              const it = await itemLite(id);
+              if (!PLAYABLE_TYPES.has(it.Type)) continue;
+              const t = displayTitle(it);
+              room.queue.push({ id: it.Id, title: t.title, subtitle: t.subtitle, type: it.Type, runtime: it.RunTimeTicks ? it.RunTimeTicks / 1e7 : null, by: session.name });
+            } catch { /* weg */ }
+          }
+          room.broadcast({ t: 'queue', queue: room.queue });
+          room.system(`${session.name} hat ${ids.length > 1 ? `${ids.length} Titel` : `„${room.queue[room.queue.length - 1] ? room.queue[room.queue.length - 1].title : '?'}“`} eingereiht`);
+          break;
+        }
+        case 'queue-remove': case 'queue-move': case 'queue-clear': case 'queue-play': {
+          const i = Number(msg.index);
+          const entry = room.queue[i];
+          const own = entry && entry.by === session.name;
+          if (!mayLoad(room, session) && !(msg.t === 'queue-remove' && own)) { send({ t: 'error', text: 'Nur wer auswählen darf, kann die Warteschlange ändern.' }); break; }
+          if (msg.t === 'queue-clear') room.queue = [];
+          else if (!entry) break;
+          else if (msg.t === 'queue-remove') room.queue.splice(i, 1);
+          else if (msg.t === 'queue-move') {
+            const to = Math.max(0, Math.min(room.queue.length - 1, Number(msg.to)));
+            room.queue.splice(i, 1); room.queue.splice(to, 0, entry);
+          } else if (msg.t === 'queue-play') {
+            room.queue.splice(i, 1);
+            await startItem(room, entry.id, session.name, { play: true });
+          }
+          room.broadcast({ t: 'queue', queue: room.queue });
+          break;
+        }
+
+        /* ---------- Abstimmung „Was schauen wir?“ ---------- */
+        case 'poll-start': {
+          if (!mayLoad(room, session)) { send({ t: 'error', text: 'Nur wer auswählen darf, kann eine Abstimmung starten.' }); break; }
+          const ids = [...new Set((msg.itemIds || []).map(String))].filter((x) => ID_RE.test(x)).slice(0, 4);
+          if (ids.length < 2) { send({ t: 'error', text: 'Mindestens zwei Titel zur Auswahl.' }); break; }
+          const options = [];
+          for (const id of ids) {
+            try { const it = await itemLite(id); const t = displayTitle(it); options.push({ id: it.Id, title: t.title, subtitle: t.subtitle, type: it.Type, year: it.ProductionYear || null, votes: new Set() }); } catch { /* weg */ }
+          }
+          const secs = Math.min(Math.max(Number(msg.seconds) || 60, 15), 300);
+          room.poll = { id: crypto.randomBytes(4).toString('hex'), by: session.name, ends: Date.now() + secs * 1000, options };
+          room.broadcast({ t: 'poll', poll: pollView(room.poll) });
+          room.system(`${session.name} fragt: Was schauen wir? (${options.map((o) => o.title).join(' · ')})`);
+          break;
+        }
+        case 'poll-vote': {
+          const poll = room.poll;
+          if (!poll || !poll.options.some((o) => o.id === msg.itemId)) break;
+          const me2 = session.username.toLowerCase();
+          for (const o of poll.options) o.votes.delete(me2);
+          poll.options.find((o) => o.id === msg.itemId).votes.add(me2);
+          room.broadcast({ t: 'poll', poll: pollView(poll) });
+          break;
+        }
+        case 'poll-end': {
+          if (!room.poll || !mayLoad(room, session)) break;
+          await finishPoll(room, msg.cancel ? null : undefined);
           break;
         }
 
@@ -1129,6 +1632,89 @@ function mayControl(room, session) {
   return room.allowAllControl && accessOf(session).perms.control;
 }
 
+function mayLoad(room, session) {
+  return mayControl(room, session) && (session.id === room.hostSid || accessOf(session).perms.load);
+}
+
+/** Titel für den ganzen Raum starten (Auswahl, Warteschlange, Abstimmung). */
+async function startItem(room, itemId, byName, { play = false, position = 0 } = {}) {
+  const d = await getItemDetails(itemId);
+  if (!d.playable) return false;
+  room.item = { id: d.id, title: d.title, subtitle: d.subtitle, type: d.type, runtime: d.runtime, nextEpisodeId: d.nextEpisodeId, seriesId: d.seriesId, seriesName: d.seriesName };
+  room.ratePrompted = false;
+  room.round = null;
+  room.advancing = 0;
+  room.playing = !!play;
+  room.position = Math.max(0, position || 0);
+  room.updatedAt = Date.now();
+  room.seq++;
+  room.broadcast({ t: 'playback', playback: room.playback(), by: byName, action: 'load' });
+  room.system(`${byName} hat „${d.title}${d.subtitle && d.type === 'Episode' ? ' – ' + d.subtitle : ''}“ ausgewählt`);
+  telemetry.itemStarted(room.item, byName);
+  notifyNoAccess(room, d);
+  return true;
+}
+
+function pollView(poll) {
+  return {
+    id: poll.id, by: poll.by, ends: poll.ends,
+    options: poll.options.map((o) => ({ id: o.id, title: o.title, subtitle: o.subtitle, type: o.type, year: o.year, votes: o.votes.size, voters: [...o.votes] })),
+  };
+}
+
+async function finishPoll(room, forced) {
+  const poll = room.poll;
+  room.poll = null;
+  if (!poll) return;
+  if (forced === null) { room.broadcast({ t: 'poll', poll: null }); room.system('Abstimmung abgebrochen'); return; }
+  const max = Math.max(...poll.options.map((o) => o.votes.size));
+  const top = poll.options.filter((o) => o.votes.size === max);
+  const win = top[Math.floor(Math.random() * top.length)];
+  room.broadcast({ t: 'poll', poll: null, winner: { id: win.id, title: win.title, votes: win.votes.size } });
+  room.system(max ? `🏆 Gewonnen: „${win.title}“ mit ${max} ${max === 1 ? 'Stimme' : 'Stimmen'}${top.length > 1 ? ' (Los entschied)' : ''}` : `Niemand hat abgestimmt – das Los nimmt „${win.title}“`);
+  await startItem(room, win.id, 'Abstimmung').catch(() => {});
+}
+
+/** Läuft alle 2 s: Abstimmungen beenden, Bewertungsrunden, Warteschlange weiterschalten. */
+async function roomTimers(room) {
+  const now = Date.now();
+  if (room.poll && now >= room.poll.ends) await finishPoll(room);
+  const it = room.item;
+  if (!it || !it.runtime) return;
+  const wasPlaying = room.playing;
+  room.normalize();
+  if (wasPlaying && !room.playing) room.broadcast({ t: 'playback', playback: room.playback(), action: 'end' });
+  const pos = room.positionAt(now);
+  // Kurz vor Schluss (Abspann): Bewertung abfragen – nur bei Filmen
+  if (!room.ratePrompted && it.type === 'Movie' && room.clients.size && pos >= it.runtime * 0.95) {
+    room.ratePrompted = true;
+    room.round = { itemId: it.id, title: it.title, votes: new Map(), ends: now + ROUND_MS };
+    room.broadcast({ t: 'rate-prompt', item: { id: it.id, title: it.title }, ends: room.round.ends });
+  }
+  if (room.round && now >= room.round.ends) {
+    const r = room.round;
+    room.round = null;
+    const v = [...r.votes.values()];
+    if (v.length) {
+      const avg = Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10;
+      room.system(`⭐ Eure Runde zu „${r.title}“: ${String(avg).replace('.', ',')}/10 (${v.length} ${v.length === 1 ? 'Stimme' : 'Stimmen'})`);
+      room.broadcast({ t: 'round-end', item: { id: r.itemId, title: r.title }, avg, count: v.length });
+    } else room.broadcast({ t: 'round-end', item: { id: r.itemId, title: r.title }, avg: null, count: 0 });
+  }
+  // Am Ende: nächster Titel aus der Warteschlange (nach 8 s Pause)
+  if (!room.playing && pos >= it.runtime - 1 && room.queue.length && room.clients.size) {
+    if (!room.advancing) {
+      room.advancing = now;
+      room.system(`Gleich geht's weiter mit „${room.queue[0].title}“ …`);
+      room.broadcast({ t: 'advancing', next: room.queue[0], at: now + 8000 });
+    } else if (now - room.advancing >= 8000) {
+      const next = room.queue.shift();
+      room.broadcast({ t: 'queue', queue: room.queue });
+      await startItem(room, next.id, 'Warteschlange', { play: true }).catch(() => {});
+    }
+  }
+}
+
 /** Wer im Raum den gewählten Film nicht sehen darf, bekommt Bescheid (der Host auch). */
 async function notifyNoAccess(room, item) {
   const blocked = new Set();
@@ -1144,12 +1730,48 @@ function publicRoom(room) {
   return { code: room.code, host: room.hostSid.slice(0, 12), allowAllControl: room.allowAllControl };
 }
 
-setInterval(() => telemetry.tick(rooms, cache.stats()), TICK_MS).unref();
-process.on('SIGTERM', () => { telemetry.dirty = true; telemetry.save(); process.exit(0); });
-process.on('SIGINT', () => { telemetry.dirty = true; telemetry.save(); process.exit(0); });
+setInterval(() => {
+  for (const room of rooms.values()) roomTimers(room).catch((e) => console.error('[room]', e.message));
+}, 2000).unref();
+
+/** Schwarzes Brett: Wünsche automatisch als verfügbar markieren, wenn der Titel auftaucht. */
+async function matchWishes(list) {
+  if (!tunnel.online) return;
+  for (const w of list || wishes.list) {
+    if (w.status !== 'open' && w.status !== 'progress') continue;
+    try {
+      const q = new URLSearchParams({ SearchTerm: w.title, Recursive: 'true', IncludeItemTypes: w.type === 'series' ? 'Series' : 'Movie', Limit: '10' });
+      const d = await jf(`/Users/${uid()}/Items?${q}`);
+      const hit = (d.Items || []).find((it) => fold(it.Name) === fold(w.title) && (!w.year || !it.ProductionYear || Math.abs(it.ProductionYear - w.year) <= 1));
+      if (hit) {
+        wishes.update(w.id, { status: 'done', statusNote: 'Automatisch erkannt: ist jetzt in der Bibliothek', libraryItemId: hit.Id }, { admin: true });
+        telemetry.event('wish', `Wunsch erfüllt: „${w.title}“ ist da (${w.votes.length} Stimmen)`);
+      }
+    } catch { /* später nochmal */ }
+  }
+}
+setInterval(() => matchWishes().catch(() => {}), 10 * 60 * 1000).unref();
+tunnel.on('change', (online) => { if (online) setTimeout(() => matchWishes().catch(() => {}), 15000); });
+
+setInterval(() => {
+  telemetry.tick(rooms, cache.stats());
+  // Fortschritt für „Zuletzt geschaut“
+  for (const room of rooms.values()) {
+    if (!room.item || !room.playing) continue;
+    const pos = room.positionAt();
+    for (const c of room.clients.values()) {
+      if (!c.status || c.status.state !== 'playing') continue;
+      library.progress(c.session.username, room.item, pos);
+      library.addTime(c.session.username, room.item, TICK_MS / 1000);
+    }
+  }
+}, TICK_MS).unref();
+function shutdown() { telemetry.dirty = true; telemetry.save(); library.flush(true); sessions.flush(true); process.exit(0); }
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 const adminCtx = {
-  users, sessions, groups, telemetry, rooms, tunnel, cache, jf, uid, readJson, sendJson, HttpError,
+  users, sessions, groups, telemetry, rooms, tunnel, cache, jf, uid, readJson, sendJson, HttpError, guard,
   disconnectUser, closeRoom, bumpAccess, mapItem, getItemDetails, publicRoom, fmtTime, ID_RE, ITEM_FIELDS, clientIp,
 };
 

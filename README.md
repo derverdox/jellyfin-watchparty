@@ -12,6 +12,7 @@ Filme & Serien vom Jellyfin deines Kumpels **synchron zusammen schauen**, mit Li
 
 - **Relay** (Hetzner): Web-Oberfläche, Konten & Einladungen, Räume, Chat und Sync. Videos werden in 4-MB-Stücken bzw. HLS-Segmenten **zwischengespeichert und an alle verteilt**. Jedes Stück kommt also nur **einmal** vom Heimanschluss, egal wie viele zuschauen.
 - **Agent** (beim Jellyfin-Rechner): baut die Verbindung **von innen nach außen** auf. Es braucht **keine Portfreigabe und keine Router-Einstellungen**, und Jellyfin bleibt komplett unsichtbar im Internet. Der Jellyfin-API-Key verlässt das Heimnetz nie, und der Agent beantwortet nur eine feste Liste harmloser Anfragen (Bibliothek, Bilder, Streams), selbst wenn jemand das Relay übernehmen würde.
+- **Desktop-Client** (optional, Windows): schaut im selben Raum mit, aber in mpv, in Originalqualität, mit **RIFE-Zwischenbildern** und **RTX Video Super Resolution**. Siehe [`client/README.md`](client/README.md).
 
 ---
 
@@ -92,6 +93,10 @@ Admins finden in der Lobby **„⚙ Verwaltung öffnen“**, oder direkt unter `
 - **Protokoll:** Anmeldungen, Fehlversuche und alle Admin-Aktionen (`data/audit.jsonl`).
 - **Einstellungen:** Standardgruppe für neue Konten, Einladungen an/aus, maximale Räume pro Konto, Begrüßungstext in der Lobby, **Wartungsmodus** (nur Admins kommen rein).
 
+- **Sicherheit:** Fehlversuche bei der Anmeldung pro IP und pro Konto, automatisch gebremste und gesperrte IPs, manuelles Sperren und Entsperren.
+
+Wer mit einem Admin-Konto angemeldet ist, sieht die Website (und den Desktop-Client) in **Rot**, damit man nicht aus Versehen als Admin unterwegs ist.
+
 **Haupt-Admin:** Das erste Admin-Konto (`ADMIN_USER`) ist der Haupt-Admin. Es kann nicht gelöscht, gesperrt oder herabgestuft werden. Nur der Haupt-Admin darf andere zu Admins machen und andere Admins bearbeiten.
 
 > Die Bibliotheks-Ausschlüsse im Agent (siehe oben) gelten zusätzlich und für alle, auch für Admins. Die Gruppen regeln dann, wer innerhalb des Rests was sieht.
@@ -105,6 +110,36 @@ docker compose exec relay node server.js user passwd lisa
 docker compose exec relay node server.js user del lisa
 docker compose exec -e DOMAIN=example.com relay node server.js invite 48   # Einladungslink, 48 h
 ```
+
+## Bibliothek, Merkliste & Qualität
+
+- **Suche** über Filme, Serien und Folgen, nach Relevanz sortiert und gruppiert. Sie ist tolerant bei Umlauten, ß und Tippfehlern, versteht Wörter in beliebiger Reihenfolge und auf Wunsch ein Jahr („ritter 1999“, nur „2012“).
+- **Sortieren** in jeder Bibliothek: A–Z, neu hinzugefügt, neueste, beste Bewertung.
+- **Merkliste** (☆ auf jedem Titel) und **Zuletzt geschaut** mit Fortschritt. Die Startseite der Bibliothek zeigt „Weiterschauen“ und die Merkliste.
+- **Qualität:** Zur Auswahl steht nur, was die Datei hergibt. Ein 1080p-Film mit 8 Mbit/s bietet „Original · Full HD · 8 Mbit/s“, „HD · 6 Mbit/s“, „SD · 3 Mbit/s“ und „Mobil“. Stufen über dem Original gibt es nicht, und die Bitrate-Grenze der Gruppe gilt zusätzlich.
+
+## Serien, Bewertungen & Gemeinsam aussuchen
+
+- **Detailansicht** für jeden Titel: Hintergrundbild (abgedunkelt), Poster, Genres, Jellyfin-Wertung und unsere eigene Wertung, Beschreibung. Dort spielst du ab, setzt fort, schlägst vor, merkst dir den Titel oder markierst ihn als gesehen.
+- **Serien:** Staffel-Tabs mit Fortschritt („2/10“), Folgenliste mit Vorschaubild, Laufzeit, Beschreibung und Fortschrittsbalken. Oben steht **„Weiter mit S1E3“**. Folgen, Staffeln oder **„alles bis hier“** lassen sich als gesehen markieren, ab 90 % passiert das automatisch. Im Raum zeigen kleine Avatare, wer die Folge schon kennt.
+- **Bewertungen 1–10 ★**, anonym: Alle sehen nur Schnitt und Anzahl, nie wer was vergeben hat. „★ Top“ in der Bibliothek zeigt, was bei euch am besten ankommt. Nach einem Film kommt automatisch eine **Bewertungsrunde** (Ergebnis im Chat).
+- **Warteschlange** („Liste“ im Raum): Titel oder ganze Staffeln einreihen, sortieren, entfernen. Nach dem Ende geht es nach 8 s automatisch mit dem nächsten weiter.
+- **Abstimmung „Was schauen wir?“:** 2–4 Titel auswählen, 60 s abstimmen, der Gewinner startet sofort.
+- **🎲 Zufall** mit Filtern: Film/Serie/Folge, Höchstlänge, Mindestwertung, nur Ungesehenes, nur im aktuellen Ordner.
+- **Intro, Rückblick und Abspann überspringen**, wenn Jellyfin die Marker kennt (Media Segments ab 10.10 oder das Intro-Skipper-Plugin). Beim Abspann springt der Knopf zur nächsten Folge. Dafür braucht der Agent Version 2.2.
+- **📌 Schwarzes Brett:** Wunschliste für neue Medien. Jeder trägt Titel ein (mit Jahr, Notiz, Tags), stimmt ab und taggt. Beim Eintippen prüft es, ob der Titel schon da oder schon gewünscht ist. Admins setzen den Status (offen, in Arbeit, verfügbar, abgelehnt). Taucht ein Wunsch in Jellyfin auf, wird er von selbst „verfügbar“ und der Wünschende sieht es in der Lobby. Wer wünschen darf, steuert das Recht „Wünsche“ in den Gruppen.
+- **📊 Mein Jahr:** persönliche Statistik mit geschauten Stunden, aktiven Tagen, längster Serie am Stück, Top-Titeln, Lieblings-Genres und Wochentagen.
+
+## Sicherheit
+
+- **Brute-Force-Schutz:** Nach 5 Fehlversuchen pro IP wächst die Wartezeit (2 s, 4 s, 8 s … bis 15 min). Ab 30 Fehlversuchen pro Stunde wird die IP für 1 h gesperrt, ab 100 am Tag für 24 h. Pro Konto werden Versuche ab 20 Fehlern gebremst, aber nicht hart gesperrt, damit niemand fremde Konten aussperren kann. Sperren überleben Neustarts und sind in der Verwaltung unter **Sicherheit** einsehbar.
+- **Passwörter** mit scrypt gehasht. Bekannte Passwörter und solche, die den Benutzernamen enthalten, werden abgelehnt.
+- **Sitzungen:** HttpOnly- und SameSite-Cookies (über HTTPS mit `Secure` und HSTS). Auf der Platte liegen nur Hashes der Tokens.
+- **CSRF:** Ändernde Anfragen von fremden Seiten werden abgelehnt.
+- **Header:** CSP, `frame-ancestors`, `Permissions-Policy` und COOP/CORP.
+- **Bremsen** für Anfragen pro IP, WebSocket-Verbindungen pro Sitzung, Raum-Suchen, Einladungscodes und Statusmeldungen.
+- **Client-IP:** Hinter Caddy wird nur der letzte `X-Forwarded-For`-Eintrag vertraut, den der Proxy selbst setzt.
+- **Agent-Admin:** Durchprobieren des `ADMIN_TOKEN` wird gebremst (10 Fehlversuche, dann 10 min Pause).
 
 ## Gut zu wissen
 

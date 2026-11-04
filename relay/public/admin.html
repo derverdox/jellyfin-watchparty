@@ -30,6 +30,7 @@
         <button data-view="groups"><span class="ico">◈</span>Gruppen</button>
         <button data-view="invites"><span class="ico">✉</span>Einladungen</button>
         <button data-view="stats"><span class="ico">▤</span>Statistik</button>
+        <button data-view="security"><span class="ico">⛨</span>Sicherheit <span class="badge-n" id="nav-sec"></span></button>
         <button data-view="audit"><span class="ico">☰</span>Protokoll</button>
         <button data-view="settings"><span class="ico">⚙</span>Einstellungen</button>
       </nav>
@@ -181,6 +182,49 @@
         <div class="grid-2">
           <div class="card table-card"><div class="card-head pad"><h3>Meistgeschaut</h3></div><table class="tbl" id="top-items"><tbody></tbody></table></div>
           <div class="card table-card"><div class="card-head pad"><h3>Fleißigste Zuschauer</h3></div><table class="tbl" id="top-users"><tbody></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- Sicherheit -->
+      <section class="view" id="v-security" hidden>
+        <div class="stats-row" id="sec-kpis"></div>
+        <div class="grid-2 wide-left">
+          <div class="card table-card">
+            <div class="card-head pad"><h3>Gesperrte IPs</h3></div>
+            <table class="tbl" id="bans-table"><thead><tr><th>IP</th><th>Grund</th><th>Seit</th><th>Bis</th><th></th></tr></thead><tbody></tbody></table>
+          </div>
+          <form class="card invite-form" id="ban-form">
+            <h3>IP sperren</h3>
+            <label>IP-Adresse <input name="ip" required placeholder="z. B. 203.0.113.7" autocomplete="off"></label>
+            <div class="form-grid">
+              <label>Dauer
+                <select name="hours"><option value="1">1 Stunde</option><option value="24" selected>1 Tag</option><option value="168">1 Woche</option><option value="0">dauerhaft</option></select>
+              </label>
+              <label>Grund <input name="reason" maxlength="200" placeholder="optional"></label>
+            </div>
+            <div class="row end"><button class="btn danger" type="submit">Sperren</button></div>
+            <p class="tiny muted">Die eigene IP (<span id="my-ip"></span>) kann nicht gesperrt werden. Admins mit gültiger Anmeldung kommen auch von gesperrten IPs rein.</p>
+          </form>
+        </div>
+        <div class="grid-2">
+          <div class="card table-card">
+            <div class="card-head pad"><h3>Auffällige IPs</h3><span class="tiny muted">Fehlversuche, automatisch gebremst</span></div>
+            <table class="tbl" id="watch-table"><thead><tr><th>IP</th><th class="num">1 h</th><th class="num">24 h</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
+          </div>
+          <div class="card table-card">
+            <div class="card-head pad"><h3>Angegriffene Konten</h3><span class="tiny muted">letzte 15 min</span></div>
+            <table class="tbl" id="target-table"><thead><tr><th>Konto</th><th class="num">Fehlversuche</th><th>Status</th></tr></thead><tbody></tbody></table>
+          </div>
+        </div>
+        <div class="card">
+          <h3>So schützt sich der Server</h3>
+          <ul class="tiny muted sec-list">
+            <li>Nach 5 Fehlversuchen pro IP wächst die Wartezeit (2 s, 4 s, 8 s … bis 15 min). Ab 30 Fehlversuchen pro Stunde wird die IP für 1 h gesperrt, ab 100 am Tag für 24 h.</li>
+            <li>Pro Konto über alle IPs: ab 20 Fehlversuchen in 15 min nur noch ein Versuch alle 30 s. Bewusst keine harte Sperre, damit niemand fremde Konten aussperren kann.</li>
+            <li>Passwörter mit scrypt gehasht, bekannte Passwörter und solche mit dem Benutzernamen werden abgelehnt.</li>
+            <li>Sitzungs-Cookies sind HttpOnly, SameSite und gehasht gespeichert. Änderungen von fremden Seiten (CSRF) werden abgelehnt.</li>
+            <li>Allgemeine Bremse gegen Überflutung: Anfragen pro IP, WebSocket-Verbindungen pro Sitzung, Raum-Suchen und Statusmeldungen.</li>
+          </ul>
         </div>
       </section>
 

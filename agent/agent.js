@@ -15,7 +15,7 @@ const WebSocket = require('ws');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 const CFG = {
   relayUrl: process.env.RELAY_URL || '',
   token: process.env.AGENT_TOKEN || '',
@@ -80,6 +80,9 @@ function allowed(method, p) {
     new RegExp(`^/Videos/(${ID})/hls1/[A-Za-z0-9_]+/-?\\d+\\.(ts|mp4|m4s|aac|vtt)$`, 'i'),
     new RegExp(`^/Videos/(${ID})/stream$`, 'i'),
     new RegExp(`^/Videos/(${ID})/(${ID})/Subtitles/\\d{1,3}/Stream\\.vtt$`, 'i'),
+    // Intro/Abspann-Marker (Jellyfin Media Segments bzw. Intro-Skipper-Plugin), nur lesend
+    new RegExp(`^/MediaSegments/(${ID})$`, 'i'),
+    new RegExp(`^/Episode/(${ID})/IntroTimestamps(/v1)?$`, 'i'),
   ];
   return rules.some((r) => r.test(pathname));
 }
@@ -375,7 +378,10 @@ function adminAuthed(req, url) {
   return timingSafeEq(h, CFG.adminToken) || timingSafeEq(url.searchParams.get('token') || '', CFG.adminToken);
 }
 
+const adminFails = new Map(); // ip → { n, until }
+
 function startAdmin() {
+  if (CFG.adminToken && CFG.adminToken.length < 16) console.warn('[agent] ⚠ ADMIN_TOKEN ist kurz – mindestens 16 Zeichen empfohlen (openssl rand -hex 16)');
   const srv = http.createServer(async (req, res) => {
     let url;
     try { url = new URL(req.url, 'http://admin'); } catch { res.writeHead(400); return res.end(); }
@@ -385,7 +391,18 @@ function startAdmin() {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       return res.end(ADMIN_HTML);
     }
+    const rip = String(req.socket.remoteAddress || '?');
+    const lock = adminFails.get(rip);
+    if (lock && lock.until > Date.now()) {
+      res.writeHead(429, { 'content-type': 'text/plain; charset=utf-8', 'retry-after': String(Math.ceil((lock.until - Date.now()) / 1000)) });
+      return res.end('Zu viele Fehlversuche – bitte später nochmal.');
+    }
     if (!adminAuthed(req, url)) {
+      // Durchprobieren des Tokens bremsen: 10 Fehlversuche → 10 Minuten Pause
+      const f = adminFails.get(rip) || { n: 0, until: 0 };
+      f.n++;
+      if (f.n >= 10) { f.until = Date.now() + 10 * 60 * 1000; f.n = 0; console.warn('[agent] Admin-UI: zu viele Fehlversuche von ' + rip); }
+      adminFails.set(rip, f);
       res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' });
       return res.end('Token fehlt/falsch — ?token=… oder Authorization: Bearer …');
     }
