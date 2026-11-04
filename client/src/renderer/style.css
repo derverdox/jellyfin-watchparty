@@ -12,6 +12,7 @@
   --accent-2: #ffcf6e;
   --accent-ink: #1a1408;
   --accent-soft: #f2b5441f;
+  --accent-line: #f2b54440;
   --danger: #ff6b6b;
   --ok: #5fd68a;
   --info: #7aa7ff;
@@ -148,7 +149,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { font-size: 12px; padding: 4px 10px; border-radius: 20px; background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); }
 .chip.ok { color: var(--ok); border-color: #5fd68a40; }
-.chip.warn { color: var(--accent); border-color: #f2b54440; }
+.chip.warn { color: var(--accent); border-color: var(--accent-line); }
 .lobby-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 4px; }
 
 /* ---------- Raum ---------- */
@@ -185,7 +186,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .eyebrow { font-size: 11.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
 .badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .badge { font-size: 11.5px; font-weight: 600; padding: 3px 8px; border-radius: 7px; background: #ffffff14; border: 1px solid #ffffff12; backdrop-filter: blur(8px); }
-.badge.hot { background: var(--accent-soft); color: var(--accent); border-color: #f2b54433; }
+.badge.hot { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-line); }
 .badge.ok { background: #5fd68a1a; color: var(--ok); border-color: #5fd68a33; }
 
 .transport { padding: 16px 18px; display: grid; gap: 12px; }
@@ -201,7 +202,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .seek:hover .seek-knob { transform: translate(-50%, -50%) scale(1); }
 .seek-tip { position: absolute; bottom: 24px; transform: translateX(-50%); background: var(--surface-3); border: 1px solid var(--line-2); padding: 3px 8px; border-radius: 7px; font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none; }
 .btn-row { display: flex; align-items: center; gap: 10px; }
-.play { width: 58px; height: 58px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); font-size: 22px; cursor: pointer; display: grid; place-items: center; box-shadow: 0 8px 26px #f2b54433; transition: transform .08s, background .15s; padding-left: 3px; }
+.play { width: 58px; height: 58px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); font-size: 22px; cursor: pointer; display: grid; place-items: center; box-shadow: 0 8px 26px var(--accent-line); transition: transform .08s, background .15s; padding-left: 3px; }
 .play.paused-icon { padding-left: 0; font-size: 18px; letter-spacing: -2px; }
 .play:hover { background: var(--accent-2); }
 .play:active { transform: scale(.96); }
@@ -218,7 +219,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .fg-status:empty { display: none; }
 .fg-status .note { padding: 9px 11px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--line); display: flex; gap: 8px; align-items: center; justify-content: space-between; }
 .fg-status .note.on { border-color: #5fd68a40; color: var(--ok); }
-.fg-status .note.work { border-color: #f2b54440; color: var(--accent); }
+.fg-status .note.work { border-color: var(--accent-line); color: var(--accent); }
 .fg-status .bar { height: 5px; }
 .stats { font-variant-numeric: tabular-nums; }
 
@@ -289,3 +290,38 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .toast.bad { border-color: #ff6b6b66; }
 
 @media (max-width: 1100px) { .room-main { grid-template-columns: 1fr 300px; } }
+
+/* ---------- Konto & Lobby ---------- */
+.lobby-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-box { display: grid; gap: 10px; padding: 12px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); }
+.pw-form { display: grid; gap: 8px; }
+.motd { background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 12px; padding: 10px 12px; white-space: pre-wrap; }
+.admin-flag { font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; background: var(--accent); color: var(--accent-ink); padding: 2px 7px; border-radius: 6px; vertical-align: 2px; margin-left: 8px; }
+.now.locked .now-bg { filter: grayscale(1) blur(2px); }
+.msg.announce { background: var(--accent-soft); border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 10px; }
+.msg.announce .who { color: var(--accent); }
+
+/* ---------- Bibliothek: Reiter, Suche, Merkliste ---------- */
+.lib-tabs { display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; flex: none; }
+.lib-tabs button { background: none; border: 0; padding: 6px 12px; border-radius: 8px; cursor: pointer; color: var(--muted); font-weight: 600; font-size: 13px; white-space: nowrap; }
+.lib-tabs button.on { background: var(--surface-3); color: var(--text); }
+.lib-head input { max-width: none !important; flex: 1; }
+.lib-sub { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line); min-height: 46px; }
+.lib-sub select { width: auto; padding: 6px 30px 6px 10px; font-size: 13px; }
+.lib-grid.sections { display: block; }
+.lib-section { margin-bottom: 26px; }
+.lib-section h3 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+.lib-section .lib-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 18px; }
+.tile { position: relative; }
+.tile .fav { position: absolute; left: 8px; top: 8px; z-index: 2; width: 30px; height: 30px; border-radius: 50%; border: 0; background: #000a; color: #fff; cursor: pointer; font-size: 15px; display: grid; place-items: center; opacity: 0; transition: opacity .15s; }
+.tile:hover .fav, .tile .fav.on { opacity: 1; }
+.tile .fav.on { color: var(--accent); }
+.tile .prog { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: #0009; }
+.tile .prog > div { height: 100%; background: var(--accent); }
+.tile .rate { position: absolute; right: 8px; bottom: 8px; background: #000c; font-size: 11px; padding: 1px 6px; border-radius: 6px; color: #ffd76a; }
+
+/* ---------- Admin-Konto: rotes Design ---------- */
+body.is-admin { --accent: #ff4d5e; --accent-2: #ff7381; --accent-soft: #ff4d5e1f; --accent-line: #ff4d5e55; --accent-ink: #1c0407; }
+body.is-admin .play { box-shadow: 0 8px 26px #ff4d5e33; }
+body.is-admin .badge.hot { border-color: #ff4d5e40; }
+body.is-admin .fg-status .note.work { border-color: #ff4d5e55; }

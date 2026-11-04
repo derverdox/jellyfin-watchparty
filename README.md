@@ -93,6 +93,10 @@ Admins finden in der Lobby **„⚙ Verwaltung öffnen“**, oder direkt unter `
 - **Protokoll:** Anmeldungen, Fehlversuche und alle Admin-Aktionen (`data/audit.jsonl`).
 - **Einstellungen:** Standardgruppe für neue Konten, Einladungen an/aus, maximale Räume pro Konto, Begrüßungstext in der Lobby, **Wartungsmodus** (nur Admins kommen rein).
 
+- **Sicherheit:** Fehlversuche bei der Anmeldung pro IP und pro Konto, automatisch gebremste und gesperrte IPs, manuelles Sperren und Entsperren.
+
+Wer mit einem Admin-Konto angemeldet ist, sieht die Website (und den Desktop-Client) in **Rot**, damit man nicht aus Versehen als Admin unterwegs ist.
+
 **Haupt-Admin:** Das erste Admin-Konto (`ADMIN_USER`) ist der Haupt-Admin. Es kann nicht gelöscht, gesperrt oder herabgestuft werden. Nur der Haupt-Admin darf andere zu Admins machen und andere Admins bearbeiten.
 
 > Die Bibliotheks-Ausschlüsse im Agent (siehe oben) gelten zusätzlich und für alle, auch für Admins. Die Gruppen regeln dann, wer innerhalb des Rests was sieht.
@@ -106,6 +110,24 @@ docker compose exec relay node server.js user passwd lisa
 docker compose exec relay node server.js user del lisa
 docker compose exec -e DOMAIN=example.com relay node server.js invite 48   # Einladungslink, 48 h
 ```
+
+## Bibliothek, Merkliste & Qualität
+
+- **Suche** über Filme, Serien und Folgen, nach Relevanz sortiert und gruppiert. Sie ist tolerant bei Umlauten, ß und Tippfehlern, versteht Wörter in beliebiger Reihenfolge und auf Wunsch ein Jahr („ritter 1999“, nur „2012“).
+- **Sortieren** in jeder Bibliothek: A–Z, neu hinzugefügt, neueste, beste Bewertung.
+- **Merkliste** (☆ auf jedem Titel) und **Zuletzt geschaut** mit Fortschritt. Die Startseite der Bibliothek zeigt „Weiterschauen“ und die Merkliste.
+- **Qualität:** Zur Auswahl steht nur, was die Datei hergibt. Ein 1080p-Film mit 8 Mbit/s bietet „Original · Full HD · 8 Mbit/s“, „HD · 6 Mbit/s“, „SD · 3 Mbit/s“ und „Mobil“. Stufen über dem Original gibt es nicht, und die Bitrate-Grenze der Gruppe gilt zusätzlich.
+
+## Sicherheit
+
+- **Brute-Force-Schutz:** Nach 5 Fehlversuchen pro IP wächst die Wartezeit (2 s, 4 s, 8 s … bis 15 min). Ab 30 Fehlversuchen pro Stunde wird die IP für 1 h gesperrt, ab 100 am Tag für 24 h. Pro Konto werden Versuche ab 20 Fehlern gebremst, aber nicht hart gesperrt, damit niemand fremde Konten aussperren kann. Sperren überleben Neustarts und sind in der Verwaltung unter **Sicherheit** einsehbar.
+- **Passwörter** mit scrypt gehasht. Bekannte Passwörter und solche, die den Benutzernamen enthalten, werden abgelehnt.
+- **Sitzungen:** HttpOnly- und SameSite-Cookies (über HTTPS mit `Secure` und HSTS). Auf der Platte liegen nur Hashes der Tokens.
+- **CSRF:** Ändernde Anfragen von fremden Seiten werden abgelehnt.
+- **Header:** CSP, `frame-ancestors`, `Permissions-Policy` und COOP/CORP.
+- **Bremsen** für Anfragen pro IP, WebSocket-Verbindungen pro Sitzung, Raum-Suchen, Einladungscodes und Statusmeldungen.
+- **Client-IP:** Hinter Caddy wird nur der letzte `X-Forwarded-For`-Eintrag vertraut, den der Proxy selbst setzt.
+- **Agent-Admin:** Durchprobieren des `ADMIN_TOKEN` wird gebremst (10 Fehlversuche, dann 10 min Pause).
 
 ## Gut zu wissen
 

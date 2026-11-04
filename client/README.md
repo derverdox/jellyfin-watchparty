@@ -4,6 +4,10 @@ Der Desktop-Client für die Watchparty. Statt im Browser läuft der Film in **mp
 
 Am Relay und am Agent muss dafür **nichts** geändert werden.
 
+## Was der Client kann
+
+Alles, was die Website kann: anmelden oder **per Einladungslink registrieren**, Räume erstellen und beitreten, Chat, Reaktionen, Vorschläge, **Merkliste und Zuletzt geschaut**, die neue **Suche**, **nächste Folge**, Host-Funktionen (Steuerung freigeben, Host weitergeben, rauswerfen), Freunde einladen, **Name und Passwort ändern**. Admins öffnen die **Verwaltung** direkt in einem eigenen Fenster und sehen den Client in Rot. Rechte aus den Gruppen gelten genauso wie im Browser.
+
 ## Installieren
 
 1. Unter **Releases** die neueste `Watchparty-Setup-x.y.z.exe` herunterladen und starten (oder die `.zip` entpacken).

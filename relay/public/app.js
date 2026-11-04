@@ -105,6 +105,8 @@ async function api(path, opts = {}) {
 
 function showView(id) {
   for (const v of $$('.view')) v.hidden = v.id !== id;
+  // Mit Admin-Konto angemeldet → rotes Design
+  document.body.classList.toggle('is-admin', !!(S.me && S.me.admin));
 }
 
 function serverNow() { return Date.now() + S.offset; }
@@ -159,6 +161,7 @@ async function route() {
   renderAgentStatus(S.me.agentOnline, S.me.server);
   $('#admin-box').hidden = !(S.me.admin || (perm('invite') && S.me.invitesEnabled));
   $('#btn-admin').hidden = !S.me.admin;
+  $('#admin-flag').hidden = !S.me.admin;
   $('#btn-create').hidden = !perm('createRoom');
   $('#no-create').hidden = perm('createRoom');
   $('#lobby-or').hidden = !perm('createRoom');
@@ -1058,8 +1061,9 @@ window.addEventListener('pagehide', stopTranscode);
 
 function openLibrary() {
   $('#library').hidden = false;
-  if (!S.lib.stack.length) libGo({ id: null, name: 'Bibliothek' });
-  else renderLib();
+  loadWatchIds();
+  if (!S.lib.stack.length) S.lib.stack = [{ id: null, name: 'Bibliothek' }];
+  renderLib();
   setTimeout(() => $('#lib-search').focus(), 50);
 }
 function closeLibrary() { $('#library').hidden = true; }
@@ -1070,13 +1074,39 @@ $('#lib-close').addEventListener('click', closeLibrary);
 $('#library').addEventListener('click', (e) => { if (e.target.id === 'library') closeLibrary(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#library').hidden) closeLibrary(); });
 
+S.lib.view = 'browse';
+S.lib.sort = (() => { try { return localStorage.getItem('wp_sort') || 'name'; } catch { return 'name'; } })();
+S.watchIds = new Set();
+async function loadWatchIds() {
+  try { S.watchIds = new Set((await api('/api/watchlist')).items.map((x) => x.id)); } catch { /* egal */ }
+}
+
+for (const b of $$('#lib-tabs button')) {
+  b.addEventListener('click', () => {
+    S.lib.view = b.dataset.v;
+    S.lib.search = '';
+    $('#lib-search').value = '';
+    renderLib();
+  });
+}
+$('#lib-sort').value = S.lib.sort;
+$('#lib-sort').addEventListener('change', (e) => {
+  S.lib.sort = e.target.value;
+  try { localStorage.setItem('wp_sort', S.lib.sort); } catch { /* egal */ }
+  renderLib();
+});
+
 let searchTimer;
 $('#lib-search').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { S.lib.search = e.target.value.trim(); renderLib(); }, 300);
+  searchTimer = setTimeout(() => { S.lib.search = e.target.value.trim(); renderLib(); }, 250);
+});
+$('#lib-search').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { clearTimeout(searchTimer); S.lib.search = e.target.value.trim(); renderLib(); }
 });
 
 function libGo(entry) {
+  S.lib.view = 'browse';
   S.lib.stack.push(entry);
   S.lib.search = '';
   $('#lib-search').value = '';
@@ -1086,11 +1116,24 @@ function libGo(entry) {
 function renderCrumbs() {
   const nav = $('#crumbs');
   nav.innerHTML = '';
+  for (const b of $$('#lib-tabs button')) b.classList.toggle('on', !S.lib.search && b.dataset.v === S.lib.view);
+  const top = S.lib.stack[S.lib.stack.length - 1];
+  const sortable = !S.lib.search && S.lib.view === 'browse' && top && top.id && !['Series', 'Season'].includes(top.type);
+  $('#lib-sort').hidden = !sortable;
+  if (S.lib.search) { nav.append(el('button', {}, `Suche: „${S.lib.search}“`)); return; }
+  if (S.lib.view === 'watchlist') { nav.append(el('button', {}, 'Deine Merkliste')); return; }
+  if (S.lib.view === 'history') { nav.append(el('button', {}, 'Zuletzt geschaut')); return; }
   S.lib.stack.forEach((c, i) => {
     if (i) nav.append(el('span', { class: 'sep' }, '›'));
-    nav.append(el('button', { onclick: () => { S.lib.stack = S.lib.stack.slice(0, i + 1); S.lib.search = ''; $('#lib-search').value = ''; renderLib(); } }, c.name));
+    nav.append(el('button', { onclick: () => { S.lib.stack = S.lib.stack.slice(0, i + 1); renderLib(); } }, c.name));
   });
-  if (S.lib.search) nav.append(el('span', { class: 'sep' }, '›'), el('button', {}, `Suche: „${S.lib.search}“`));
+}
+
+function section(title, items, n) {
+  const wide = items.every((i) => i.type === 'Episode' || i.type === 'CollectionFolder' || i.type === 'UserView' || (i.aspect && i.aspect > 1.2));
+  return el('div', { class: 'lib-section' },
+    title ? el('h3', {}, title, n != null ? el('span', { class: 'n' }, `${n}`) : '') : '',
+    el('div', { class: `grid${wide ? ' wide' : ''}` }, items.map((it) => tile(it))));
 }
 
 let libToken = 0;
@@ -1101,11 +1144,59 @@ async function renderLib(append = false) {
   const top = S.lib.stack[S.lib.stack.length - 1];
   if (!append) body.innerHTML = '<div class="lib-empty"><div class="spinner" style="margin:auto"></div></div>';
   try {
+    /* --- Suche: gruppiert und nach Relevanz --- */
+    if (S.lib.search) {
+      if (S.lib.search.length < 2) { body.innerHTML = ''; body.append(el('div', { class: 'lib-empty' }, 'Mindestens zwei Buchstaben …')); return; }
+      const r = await api(`/api/search?q=${encodeURIComponent(S.lib.search)}`);
+      if (token !== libToken) return;
+      body.innerHTML = '';
+      const total = r.movies.length + r.series.length + r.episodes.length;
+      if (!total) { body.append(el('div', { class: 'lib-empty' }, `Nichts gefunden für „${S.lib.search}“. Tipp: weniger Wörter oder nur ein Teil des Titels.`)); return; }
+      if (r.year) body.append(el('p', { class: 'search-hint' }, `Nur Titel aus ${r.year}`));
+      if (r.movies.length) body.append(section('Filme', r.movies, r.movies.length));
+      if (r.series.length) body.append(section('Serien & Sammlungen', r.series, r.series.length));
+      if (r.episodes.length) body.append(section('Folgen', r.episodes, r.episodes.length));
+      return;
+    }
+    /* --- Merkliste --- */
+    if (S.lib.view === 'watchlist') {
+      const r = await api('/api/watchlist');
+      if (token !== libToken) return;
+      S.watchIds = new Set(r.items.map((x) => x.id));
+      body.innerHTML = '';
+      if (!r.items.length) { body.append(el('div', { class: 'lib-empty' }, 'Noch nichts gemerkt. Fahr über einen Titel und klick auf ☆.')); return; }
+      body.append(section('', r.items));
+      return;
+    }
+    /* --- Zuletzt geschaut --- */
+    if (S.lib.view === 'history') {
+      const r = await api('/api/history');
+      if (token !== libToken) return;
+      body.innerHTML = '';
+      if (!r.items.length) { body.append(el('div', { class: 'lib-empty' }, 'Hier erscheint, was du geschaut hast – mit Fortschritt.')); return; }
+      const items = r.items.map((h) => ({ id: h.id, name: h.type === 'Episode' ? `${h.title} – ${h.subtitle}` : h.title, type: h.type, playable: true, hasImage: true, runtime: h.runtime, progress: h.progress, finished: h.finished, when: h.at, aspect: h.type === 'Episode' ? 1.78 : null }));
+      body.append(section('', items));
+      body.append(el('div', { class: 'lib-more' }, el('button', { class: 'btn small', onclick: async () => { await api('/api/history', { method: 'DELETE' }); renderLib(); } }, 'Verlauf leeren')));
+      return;
+    }
+    /* --- Durchblättern --- */
     let data;
-    if (S.lib.search) data = await api(`/api/items?search=${encodeURIComponent(S.lib.search)}&limit=60`);
-    else if (!top.id) data = await api('/api/libraries');
-    else {
-      const sort = top.type === 'Series' || top.type === 'Season' ? 'index' : 'name';
+    if (!top.id) {
+      data = await api('/api/libraries');
+      // Startseite: oben die Merkliste-Vorschau und „Weiterschauen“
+      if (!append) {
+        const [hist, wl] = await Promise.all([api('/api/history').catch(() => ({ items: [] })), api('/api/watchlist').catch(() => ({ items: [] }))]);
+        if (token !== libToken) return;
+        body.innerHTML = '';
+        const cont = hist.items.filter((h) => !h.finished && h.progress > 2).slice(0, 6)
+          .map((h) => ({ id: h.id, name: h.type === 'Episode' ? `${h.title} – ${h.subtitle}` : h.title, type: h.type, playable: true, hasImage: true, runtime: h.runtime, progress: h.progress, aspect: 1.78 }));
+        if (cont.length) body.append(section('Weiterschauen', cont));
+        if (wl.items.length) body.append(section('Merkliste', wl.items.slice(0, 6)));
+        body.append(section('Bibliotheken', data.items || []));
+        return;
+      }
+    } else {
+      const sort = top.type === 'Series' || top.type === 'Season' ? 'index' : S.lib.sort;
       const q = new URLSearchParams({ parentId: top.id, sort, limit: 60, start: append ? top.loaded || 0 : 0 });
       if (top.collectionType) q.set('collectionType', top.collectionType);
       data = await api(`/api/items?${q}`);
@@ -1122,7 +1213,7 @@ async function renderLib(append = false) {
     }
     for (const it of items) grid.append(tile(it));
     $('.lib-more', body)?.remove();
-    if (top && top.id && !S.lib.search) {
+    if (top && top.id) {
       top.loaded = (append ? top.loaded || 0 : 0) + items.length;
       if (data.total > top.loaded) {
         body.append(el('div', { class: 'lib-more' }, el('button', { class: 'btn', onclick: () => renderLib(true) }, `Mehr laden (${data.total - top.loaded})`)));
@@ -1135,32 +1226,53 @@ async function renderLib(append = false) {
   }
 }
 
+async function toggleWatch(it, btn) {
+  try {
+    const r = await api('/api/watchlist', { method: 'POST', body: { itemId: it.id } });
+    if (r.on) S.watchIds.add(it.id); else S.watchIds.delete(it.id);
+    btn.classList.toggle('on', r.on);
+    btn.textContent = r.on ? '★' : '☆';
+    toast(r.on ? `„${it.name}“ gemerkt` : 'Von der Merkliste genommen');
+    if (S.lib.view === 'watchlist' && !r.on) renderLib();
+  } catch (ex) { toast(ex.message); }
+}
+
 function tile(it) {
-  const label = it.type === 'Episode'
+  const label = it.type === 'Episode' && !S.lib.search && S.lib.view === 'browse'
     ? `${it.index != null ? it.index + '. ' : ''}${it.name}`
     : it.name;
   let sub = '';
-  if (it.type === 'Episode' && S.lib.search) sub = `${it.seriesName || ''} · S${it.parentIndex ?? '?'}E${it.index ?? '?'}`;
+  if (it.type === 'Episode' && (S.lib.search || S.lib.view !== 'browse') && it.seriesName) sub = `${it.seriesName} · S${it.parentIndex ?? '?'}E${it.index ?? '?'}`;
   else if (it.year) sub = String(it.year);
   if (it.runtime && it.playable) sub += `${sub ? ' · ' : ''}${Math.round(it.runtime / 60)} min`;
+  if (it.progress != null) sub = it.finished ? 'zu Ende geschaut' : `${Math.round(it.progress)} % geschaut`;
   const wide = it.type === 'Episode' || (it.aspect && it.aspect > 1.2);
+  const canFav = it.playable || it.type === 'Series' || it.type === 'BoxSet' || it.type === 'Season';
+  const fav = canFav ? el('button', { class: `fav${S.watchIds.has(it.id) ? ' on' : ''}`, title: 'Merken', onclick: (e) => { e.stopPropagation(); toggleWatch(it, e.currentTarget); } }, S.watchIds.has(it.id) ? '★' : '☆') : '';
   const poster = el('div', { class: 'poster', style: it.hasImage ? `background-image:url('/img/${it.id}?w=${wide ? 480 : 320}')` : '' },
     it.hasImage ? '' : (it.isFolder ? '📁' : '🎬'),
     it.played ? el('span', { class: 'badge' }, '✓ gesehen') : '',
+    it.rating ? el('span', { class: 'rating' }, `★ ${String(it.rating).replace('.', ',')}`) : '',
+    it.progress != null ? el('div', { class: 'prog' }, el('div', { style: `width:${Math.min(100, it.progress)}%` })) : '',
     it.playable ? el('span', { class: 'play' }, canLoad() ? '▶ Abspielen' : perm('suggest') ? '💡 Vorschlagen' : '') : '');
-  return el('button', {
-    class: 'tile', title: it.overview || it.name,
-    onclick: () => {
-      if (it.playable) {
-        if (canLoad()) { send({ t: 'load', itemId: it.id }); toast(`„${it.name}“ wird geladen…`); }
-        else if (perm('suggest')) { send({ t: 'suggest', itemId: it.id }); toast('Vorschlag im Chat gepostet'); }
-        else toast('Du darfst hier nichts auswählen oder vorschlagen.');
-        closeLibrary();
-      } else if (it.isFolder) {
-        libGo({ id: it.id, name: it.name, type: it.type, collectionType: it.collectionType });
-      }
-    },
-  }, poster, el('div', { class: 't' }, label), sub ? el('div', { class: 's' }, sub) : '');
+  return el('div', { class: 'tile', title: it.overview || it.name, role: 'button', tabindex: 0,
+    onclick: () => openTile(it),
+    onkeydown: (e) => { if (e.key === 'Enter') openTile(it); },
+  }, fav, poster, el('div', { class: 't' }, label), sub ? el('div', { class: 's' }, sub) : '');
+}
+
+function openTile(it) {
+  if (it.playable) {
+    if (canLoad()) { send({ t: 'load', itemId: it.id }); toast(`„${it.name}“ wird geladen…`); }
+    else if (perm('suggest')) { send({ t: 'suggest', itemId: it.id }); toast('Vorschlag im Chat gepostet'); }
+    else { toast('Du darfst hier nichts auswählen oder vorschlagen.'); return; }
+    closeLibrary();
+  } else if (it.isFolder || it.type === 'Series' || it.type === 'BoxSet' || it.type === 'Season') {
+    S.lib.search = '';
+    $('#lib-search').value = '';
+    if (S.lib.view !== 'browse') { S.lib.view = 'browse'; S.lib.stack = [{ id: null, name: 'Bibliothek' }]; }
+    libGo({ id: it.id, name: it.name, type: it.type, collectionType: it.collectionType });
+  }
 }
 
 init();

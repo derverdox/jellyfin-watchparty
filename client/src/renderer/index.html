@@ -36,7 +36,25 @@
         <label class="check"><input type="checkbox" name="remember" checked> Angemeldet bleiben</label>
         <button class="btn primary" type="submit">Anmelden</button>
         <p class="error" id="login-error" hidden></p>
-        <p class="tiny muted">Dasselbe Konto wie auf der Website. Noch keins? Lass dir vom Admin einen Einladungslink schicken.</p>
+        <p class="tiny muted">Dasselbe Konto wie auf der Website. <button class="link" type="button" id="btn-to-register">Ich habe einen Einladungslink</button></p>
+      </form>
+      <form id="register-form" class="card auth" autocomplete="off" hidden>
+        <h2>Konto erstellen</h2>
+        <label>Einladungslink
+          <input name="link" placeholder="https://…/invite/…" spellcheck="false" required>
+        </label>
+        <label>Benutzername
+          <input name="username" maxlength="24" spellcheck="false" required pattern="[A-Za-z0-9_.\-äöüÄÖÜß]{2,24}" title="2–24 Zeichen: Buchstaben, Zahlen, . _ -">
+        </label>
+        <label>Passwort <span class="tiny">(mind. 8 Zeichen)</span>
+          <input name="password" type="password" minlength="8" autocomplete="new-password" required>
+        </label>
+        <label>Passwort wiederholen
+          <input name="password2" type="password" minlength="8" autocomplete="new-password" required>
+        </label>
+        <button class="btn primary" type="submit">Konto erstellen</button>
+        <p class="error" id="register-error" hidden></p>
+        <p class="tiny muted"><button class="link" type="button" id="btn-to-login">Zurück zur Anmeldung</button></p>
       </form>
     </div>
   </section>
@@ -88,15 +106,32 @@
   <section id="view-lobby" class="view center" hidden>
     <div class="card lobby">
       <div class="brand big"><span class="logo">▶</span> Watchparty</div>
-      <p class="muted">Hi <strong id="lobby-name"></strong>! Mach einen Raum auf oder tritt einem bei.</p>
+      <p class="muted">Hi <strong id="lobby-name"></strong>!<span class="admin-flag" id="admin-flag" hidden>Admin</span> <span id="lobby-hint">Mach einen Raum auf oder tritt einem bei.</span></p>
+      <p class="motd" id="motd" hidden></p>
       <button class="btn primary big" id="btn-create">Neuen Raum erstellen</button>
-      <div class="divider"><span>oder</span></div>
+      <div class="divider" id="lobby-or"><span>oder</span></div>
       <form id="join-form" class="row">
         <input name="code" maxlength="80" placeholder="Raum-Code oder Link" autocomplete="off" spellcheck="false" required>
         <button class="btn" type="submit">Beitreten</button>
       </form>
       <p class="error" id="lobby-error" hidden></p>
       <div class="chips" id="lobby-chips"></div>
+      <div class="lobby-actions">
+        <button class="btn small" id="btn-admin" hidden>⚙ Verwaltung</button>
+        <button class="btn small" id="btn-invite-user" hidden>✉ Freund einladen</button>
+        <button class="btn small" id="btn-account">👤 Konto</button>
+      </div>
+      <div class="account-box" id="account-box" hidden>
+        <form class="row" id="name-form">
+          <input name="name" maxlength="24" placeholder="Anzeigename">
+          <button class="btn small" type="submit">Speichern</button>
+        </form>
+        <form class="pw-form" id="pw-form">
+          <input name="old" type="password" placeholder="Altes Passwort" autocomplete="current-password" required>
+          <input name="password" type="password" placeholder="Neues Passwort (mind. 8)" minlength="8" autocomplete="new-password" required>
+          <button class="btn small" type="submit">Passwort ändern</button>
+        </form>
+      </div>
       <div class="lobby-foot">
         <span class="muted tiny" id="lobby-server"></span>
         <span>
@@ -151,6 +186,7 @@
             <button class="play" id="btn-play" title="Play/Pause">▶</button>
             <button class="icon big" id="btn-fwd" title="10 s vor">↻</button>
             <div class="spacer"></div>
+            <button class="btn" id="btn-next" hidden>⏭ Nächste Folge</button>
             <button class="btn" id="btn-player">⛶ Player öffnen</button>
           </div>
           <p class="tiny muted lock" id="lock-hint" hidden>🔒 Gerade steuert nur der Host.</p>
@@ -207,13 +243,7 @@
           <div class="card panel">
             <div class="panel-head"><h3>Wiedergabe</h3></div>
             <label>Qualität
-              <select id="sel-quality">
-                <option value="direct">Original (empfohlen)</option>
-                <option value="40000000">40 Mbit/s</option>
-                <option value="20000000">20 Mbit/s (1080p)</option>
-                <option value="10000000">10 Mbit/s</option>
-                <option value="6000000">6 Mbit/s (720p)</option>
-              </select>
+              <select id="sel-quality"><option value="direct">Original</option></select>
             </label>
             <label>Bildschirm <select id="sel-screen"></select></label>
             <div class="toggle-row slim">
@@ -260,9 +290,22 @@
   <div class="overlay" id="library" hidden>
     <div class="library">
       <div class="lib-head">
-        <div class="crumbs" id="crumbs"></div>
-        <input type="search" id="lib-search" placeholder="Suchen …" autocomplete="off" spellcheck="false">
+        <div class="lib-tabs" id="lib-tabs">
+          <button data-v="browse" class="on">Bibliothek</button>
+          <button data-v="watchlist">★ Merkliste</button>
+          <button data-v="history">Zuletzt</button>
+        </div>
+        <input type="search" id="lib-search" placeholder="Filme, Serien, Folgen suchen … (auch mit Jahr)" autocomplete="off" spellcheck="false">
         <button class="icon" id="btn-lib-close" title="Schließen">✕</button>
+      </div>
+      <div class="lib-sub">
+        <div class="crumbs" id="crumbs"></div>
+        <select id="lib-sort" hidden>
+          <option value="name">A–Z</option>
+          <option value="added">Neu hinzugefügt</option>
+          <option value="year">Neueste zuerst</option>
+          <option value="rating">Beste Bewertung</option>
+        </select>
       </div>
       <div class="lib-grid" id="lib-grid"></div>
       <div class="lib-more"><button class="btn small" id="btn-lib-more" hidden>Mehr laden</button></div>
@@ -279,6 +322,7 @@
           <div class="row">
             <button class="btn primary" id="btn-detail-play">▶ Für alle abspielen</button>
             <button class="btn" id="btn-detail-suggest">Vorschlagen</button>
+            <button class="btn" id="btn-detail-watch">☆ Merken</button>
           </div>
         </div>
       </div>

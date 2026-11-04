@@ -1,6 +1,6 @@
 'use strict';
 /* Watchparty Desktop – Hauptprozess */
-const { app, BrowserWindow, ipcMain, protocol, shell, clipboard, safeStorage, screen, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, shell, clipboard, safeStorage, screen, Menu, session: electronSession } = require('electron');
 const path = require('path');
 const { RelayClient } = require('./relay');
 const { Settings } = require('./settings');
@@ -107,6 +107,26 @@ app.whenReady().then(async () => {
     settings.setSession(remember === false ? null : relay.sid);
     return me;
   });
+  handle('auth:inviteCheck', async ({ server, code }) => {
+    relay.setServer(server);
+    return relay.inviteValid(code);
+  });
+  handle('auth:register', async ({ server, code, username, password }) => {
+    relay.setServer(server);
+    relay.setSession(null);
+    const me = await relay.register(code, username, password);
+    settings.data.server = relay.base;
+    settings.data.username = username;
+    settings.setSession(relay.sid);
+    return me;
+  });
+  handle('auth:name', async (name) => {
+    const me = await relay.setName(name);
+    if (session.code) session.send({ t: 'rename', name: me.name });
+    return me;
+  });
+  handle('auth:password', ({ old, password }) => relay.changePassword(old, password));
+  handle('auth:me', () => relay.me());
   handle('auth:logout', async () => {
     await session.leave();
     try { await relay.logout(); } catch { /* egal */ }
@@ -145,6 +165,35 @@ app.whenReady().then(async () => {
   handle('lib:libraries', () => relay.libraries());
   handle('lib:items', (params) => relay.items(params));
   handle('lib:item', (id) => relay.item(id));
+  handle('lib:search', (q) => relay.search(q));
+  handle('lib:watchlist', () => relay.watchlist());
+  handle('lib:toggleWatch', (id) => relay.toggleWatch(id));
+  handle('lib:history', () => relay.history());
+  handle('lib:clearHistory', (id) => relay.clearHistory(id));
+
+  /* ---------- Verwaltung im eigenen Fenster ---------- */
+  let adminWin = null;
+  handle('admin:open', async () => {
+    if (adminWin && !adminWin.isDestroyed()) { adminWin.focus(); return true; }
+    const ses = electronSession.fromPartition('persist:wp-admin');
+    await ses.cookies.set({ url: relay.base, name: 'wp_sid', value: relay.sid, httpOnly: true, secure: relay.base.startsWith('https:'), sameSite: 'lax' });
+    adminWin = new BrowserWindow({
+      width: 1440, height: 920, minWidth: 900, minHeight: 600, backgroundColor: '#0b0b0f', title: 'Verwaltung · Watchparty',
+      icon: path.join(__dirname, '..', '..', 'build', 'icon.png'), autoHideMenuBar: true,
+      webPreferences: { partition: 'persist:wp-admin', contextIsolation: true, sandbox: true, nodeIntegration: false },
+    });
+    adminWin.loadURL(`${relay.base}/admin`);
+    adminWin.webContents.setWindowOpenHandler(({ url }) => {
+      // „Beitreten“ in der Verwaltung → Raum im Client öffnen
+      const m = /\/r\/([A-Za-z0-9]{4,12})/.exec(url);
+      if (m && url.startsWith(relay.base)) { session.join(m[1].toUpperCase()); send('room:joined', { code: m[1].toUpperCase() }); if (win) win.focus(); }
+      else if (/^https?:\/\//.test(url)) shell.openExternal(url);
+      return { action: 'deny' };
+    });
+    adminWin.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(relay.base)) { e.preventDefault(); shell.openExternal(url); } });
+    adminWin.on('closed', () => { adminWin = null; });
+    return true;
+  });
 
   /* ---------- Player ---------- */
   handle('player:show', () => session.showPlayer());

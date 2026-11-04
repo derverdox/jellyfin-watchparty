@@ -68,10 +68,15 @@ function showErr(sel, ex) {
 function showView(id) {
   for (const v of $$('.view')) v.hidden = v.id !== id;
   document.body.classList.toggle('in-room', id === 'view-room');
+  document.body.classList.toggle('is-admin', !!(S.me && S.me.admin)); // rotes Design für Admins
 }
 function img(id, w = 400, type = 'Primary') { return `wpimg://img/${id}?w=${w}&type=${type}`; }
-function canControl() { return !!(S.room && S.you && (S.room.allowAllControl || S.room.host === S.you.sid)); }
 function isHost() { return !!(S.room && S.you && S.room.host === S.you.sid); }
+function perm(k) { return !!(S.me && (S.me.admin || (S.me.perms && S.me.perms[k]))); }
+/** Steuern: Host immer, sonst nur wenn der Host es allen erlaubt UND die eigene Gruppe es darf. */
+function canControl() { return !!(S.room && S.you && (isHost() || (S.room.allowAllControl && perm('control')))); }
+/** Etwas für alle starten */
+function canLoad() { return canControl() && (isHost() || perm('load')); }
 
 /* ---------------- Start ---------------- */
 
@@ -111,6 +116,38 @@ $('#login-form').addEventListener('submit', async (ev) => {
     S.server = st.server;
     await afterLogin();
   } catch (e) { showErr('#login-error', e); }
+  finally { btn.disabled = false; }
+});
+
+/* ---------------- Registrierung per Einladung ---------------- */
+
+$('#btn-to-register').addEventListener('click', () => {
+  $('#login-form').hidden = true;
+  $('#register-form').hidden = false;
+  $('#register-form').link.focus();
+});
+$('#btn-to-login').addEventListener('click', () => {
+  $('#register-form').hidden = true;
+  $('#login-form').hidden = false;
+});
+$('#register-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  showErr('#register-error', null);
+  const m = /^(https?:\/\/[^/]+)\/invite\/([A-Za-z0-9_-]{8,40})/.exec(f.link.value.trim());
+  if (!m) return showErr('#register-error', new Error('Bitte den kompletten Einladungslink einfügen (…/invite/…).'));
+  if (f.password.value !== f.password2.value) return showErr('#register-error', new Error('Die Passwörter stimmen nicht überein.'));
+  const btn = $('button[type=submit]', f);
+  btn.disabled = true;
+  try {
+    const chk = await call('auth:inviteCheck', { server: m[1], code: m[2] });
+    if (!chk.valid) throw new Error('Diese Einladung ist ungültig oder schon benutzt.');
+    S.me = await call('auth:register', { server: m[1], code: m[2], username: f.username.value.trim(), password: f.password.value });
+    const st = await call('auth:state');
+    S.server = st.server;
+    toast(`Willkommen, ${S.me.name}!`);
+    await afterLogin();
+  } catch (e) { showErr('#register-error', e); }
   finally { btn.disabled = false; }
 });
 
@@ -201,9 +238,20 @@ function onProgress(p) {
 
 /* ---------------- Lobby ---------------- */
 
-function showLobby() {
+async function showLobby() {
+  try { S.me = await call('auth:me'); } catch { /* offline: alten Stand nehmen */ }
   showView('view-lobby');
   $('#lobby-name').textContent = S.me ? S.me.name : '';
+  const canCreate = perm('createRoom');
+  $('#btn-create').hidden = !canCreate;
+  $('#lobby-or').hidden = !canCreate;
+  $('#lobby-hint').textContent = canCreate ? 'Mach einen Raum auf oder tritt einem bei.' : 'Gib den Raum-Code oder Link ein, den du bekommen hast.';
+  $('#admin-flag').hidden = !(S.me && S.me.admin);
+  $('#btn-admin').hidden = !(S.me && S.me.admin);
+  $('#btn-invite-user').hidden = !(S.me && (S.me.admin || (perm('invite') && S.me.invitesEnabled)));
+  $('#motd').hidden = !(S.me && S.me.motd);
+  $('#motd').textContent = (S.me && S.me.motd) || '';
+  $('#name-form').name.value = S.me ? S.me.name : '';
   $('#lobby-server').textContent = S.server.replace(/^https?:\/\//, '');
   const chips = $('#lobby-chips');
   chips.innerHTML = '';
@@ -230,6 +278,20 @@ $('#btn-logout').addEventListener('click', async () => {
   showView('view-login');
 });
 $('#btn-setup').addEventListener('click', openSetup);
+$('#btn-admin').addEventListener('click', () => call('admin:open').catch((e) => toast(e.message, true)));
+$('#btn-account').addEventListener('click', () => { $('#account-box').hidden = !$('#account-box').hidden; });
+$('#btn-invite-user').addEventListener('click', async () => {
+  try { const r = await call('room:invite'); await call('util:copy', r.url); toast(`Einladungslink kopiert (${r.hours} h gültig).`); } catch (e) { toast(e.message, true); }
+});
+$('#name-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  try { S.me = await call('auth:name', ev.target.name.value.trim()); toast('Name gespeichert'); $('#lobby-name').textContent = S.me.name; } catch (e) { toast(e.message, true); }
+});
+$('#pw-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  try { await call('auth:password', { old: f.old.value, password: f.password.value }); f.reset(); toast('Passwort geändert. Andere Geräte wurden abgemeldet.'); } catch (e) { toast(e.message, true); }
+});
 
 /* ---------------- Raum ---------------- */
 
@@ -284,15 +346,28 @@ function onEvent(ch, p) {
       if (!p.playback.item) { S.item = null; }
       renderNow(); updateTransport();
       break;
-    case 'room:item': S.item = p; renderNow(); break;
+    case 'room:item': S.item = p; S.noaccess = null; $('#now').classList.remove('locked'); renderNow(); renderQuality(); break;
     case 'room:members': S.members = p; renderMembers(); break;
     case 'room:room': S.room = p.room; S.members = p.members || S.members; renderMembers(); renderControlState(); break;
     case 'room:chat': addChat(p); break;
     case 'room:react': floatEmoji(p.emoji, p.from); break;
     case 'room:error': toast(p, true); break;
+    case 'room:announce': toast(`📣 ${p.from}: ${p.text}`); break;
+    case 'room:noaccess':
+      S.noaccess = p.id;
+      $('#now').classList.add('locked');
+      $('#now-eyebrow').textContent = 'Kein Zugriff';
+      $('#now-sub').textContent = `„${p.title}“ ist für dein Konto nicht freigegeben. Frag den Admin oder schlagt was anderes vor.`;
+      break;
+    case 'room:joined': enterRoom(p.code); break;
     case 'room:agent': if (S.me) { S.me.agentOnline = p.online; } if (!p.online) toast('Der Heimserver ist gerade offline.', true); break;
-    case 'room:kicked': toast('Du wurdest aus dem Raum entfernt.', true); S.code = null; showLobby(); break;
-    case 'player:state': S.player = p; updateTransport(); renderStats(); break;
+    case 'room:kicked': toast(p.text || 'Du wurdest aus dem Raum entfernt.', true); S.code = null; showLobby(); break;
+    case 'player:state': {
+      const q = S.player && S.player.quality;
+      S.player = p; updateTransport(); renderStats();
+      if (p.quality && p.quality !== q) renderQuality();
+      break;
+    }
     case 'player:tracks': S.tracks = p; renderTracks(); break;
     case 'player:filters': S.filters = p; renderPicture(); renderNow(); break;
     case 'player:opened': $('#btn-player').textContent = '⛶ Vollbild'; break;
@@ -361,10 +436,16 @@ function updateTransport() {
   const ok = canControl() && hasItem;
   for (const id of ['#btn-play', '#btn-back', '#btn-fwd']) $(id).disabled = !ok;
   $('#seek').classList.toggle('disabled', !ok);
+  const next = pb && pb.item && pb.item.nextEpisodeId;
+  $('#btn-next').hidden = !(next && canLoad() && dur && cur > dur - 180);
 }
 
 function renderControlState() {
   $('#lock-hint').hidden = canControl();
+  const chatOk = perm('chat');
+  for (const x of $$('#chat-form input, #chat-form button')) x.disabled = !chatOk;
+  $('#chat-form').text.placeholder = chatOk ? 'Nachricht …' : 'Chatten ist für dich nicht freigeschaltet';
+  $('#react-bar').hidden = !chatOk;
   $('#btn-library').disabled = false;
   $('#host-box').hidden = !isHost();
   $('#chk-all-control').checked = !!(S.room && S.room.allowAllControl);
@@ -374,6 +455,7 @@ function renderControlState() {
 }
 
 $('#btn-play').addEventListener('click', () => call('room:toggle'));
+$('#btn-next').addEventListener('click', () => { const pb = S.playback; if (pb && pb.item && pb.item.nextEpisodeId) call('room:load', pb.item.nextEpisodeId); });
 $('#btn-back').addEventListener('click', () => call('room:seekBy', -10));
 $('#btn-fwd').addEventListener('click', () => call('room:seekBy', 10));
 $('#btn-player').addEventListener('click', async () => {
@@ -434,7 +516,7 @@ function renderPrefs() {
   ms.value = p.framegen.model;
   $('#vsr-enabled').checked = !!p.vsr.enabled;
   $('#vsr-hdr').checked = !!p.vsr.hdr;
-  $('#sel-quality').value = String(p.quality);
+  renderQuality();
   $('#volume').value = p.volume;
   $('#opt-fullscreen').checked = !!p.fullscreen;
   $('#opt-osdchat').checked = !!p.osdChat;
@@ -485,6 +567,16 @@ $('#fg-model').addEventListener('change', (e) => setPrefs({ framegen: { model: e
 $('#vsr-enabled').addEventListener('change', (e) => setPrefs({ vsr: { enabled: e.target.checked } }));
 $('#vsr-hdr').addEventListener('change', (e) => setPrefs({ vsr: { hdr: e.target.checked } }));
 $('#sel-quality').addEventListener('change', (e) => setPrefs({ quality: e.target.value }));
+
+/** Qualitäten der aktuellen Datei: nie mehr als das Original hergibt (kommt vom Server). */
+function renderQuality() {
+  const sel = $('#sel-quality');
+  const list = (S.item && S.item.qualities) || [{ id: 'direct', label: 'Original' }];
+  const active = (S.player && S.player.quality) || (S.prefs && String(S.prefs.quality)) || 'direct';
+  sel.innerHTML = '';
+  for (const q of list) sel.append(el('option', { value: q.id }, q.label));
+  sel.value = list.some((q) => q.id === active) ? active : list[0].id;
+}
 $('#opt-fullscreen').addEventListener('change', (e) => setPrefs({ fullscreen: e.target.checked }));
 $('#opt-osdchat').addEventListener('change', (e) => setPrefs({ osdChat: e.target.checked }));
 let volTimer;
@@ -543,10 +635,11 @@ function scrollChat(force) {
 function addChat(m, silent) {
   let node;
   if (m.kind === 'system') node = el('div', { class: 'msg system' }, m.text);
+  else if (m.kind === 'announce') node = el('div', { class: 'msg announce' }, el('span', { class: 'who' }, `📣 ${m.from}`), el('span', { class: 'text' }, m.text));
   else if (m.kind === 'suggest') {
     node = el('div', { class: 'msg suggest' },
       el('span', { class: 'who', style: `color:${colorFor(m.from)}` }, `${m.from} schlägt vor`),
-      el('div', { class: 'text' }, el('span', {}, `🎬 ${m.text}`), canControl() ? el('button', { class: 'btn small', onclick: () => call('room:load', m.itemId) }, 'Abspielen') : null));
+      el('div', { class: 'text' }, el('span', {}, `🎬 ${m.text}`), canLoad() ? el('button', { class: 'btn small', onclick: () => call('room:load', m.itemId) }, 'Abspielen') : null));
   } else {
     node = el('div', { class: 'msg' }, el('span', { class: 'who', style: `color:${colorFor(m.from)}` }, m.from), el('span', { class: 'text' }, m.text));
   }
@@ -631,6 +724,10 @@ $('#btn-invite').addEventListener('click', async () => {
 
 /* ---------- Bibliothek ---------- */
 
+S.lib.view = 'browse';
+S.lib.sort = 'name';
+S.watchIds = new Set();
+
 $('#btn-library').addEventListener('click', openLibrary);
 $('#btn-lib-close').addEventListener('click', () => { $('#library').hidden = true; });
 $('#library').addEventListener('click', (e) => { if (e.target.id === 'library') $('#library').hidden = true; });
@@ -643,17 +740,24 @@ document.addEventListener('keydown', (e) => {
 async function openLibrary() {
   $('#library').hidden = false;
   if (!S.lib.stack.length) S.lib.stack = [{ id: null, name: 'Bibliothek' }];
+  try { S.watchIds = new Set((await call('lib:watchlist')).items.map((x) => x.id)); } catch { /* egal */ }
   renderLib();
   $('#lib-search').focus();
 }
 
+for (const b of $$('#lib-tabs button')) {
+  b.addEventListener('click', () => { S.lib.view = b.dataset.v; S.lib.search = ''; $('#lib-search').value = ''; renderLib(); });
+}
+$('#lib-sort').addEventListener('change', (e) => { S.lib.sort = e.target.value; renderLib(); });
+
 let searchTimer;
 $('#lib-search').addEventListener('input', (e) => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { S.lib.search = e.target.value.trim(); renderLib(); }, 280);
+  searchTimer = setTimeout(() => { S.lib.search = e.target.value.trim(); renderLib(); }, 250);
 });
 
 function libGo(entry) {
+  S.lib.view = 'browse';
   S.lib.search = '';
   $('#lib-search').value = '';
   S.lib.stack.push(entry);
@@ -663,31 +767,77 @@ function libGo(entry) {
 function renderCrumbs() {
   const c = $('#crumbs');
   c.innerHTML = '';
+  for (const b of $$('#lib-tabs button')) b.classList.toggle('on', !S.lib.search && b.dataset.v === S.lib.view);
+  const top = S.lib.stack[S.lib.stack.length - 1];
+  $('#lib-sort').hidden = !(!S.lib.search && S.lib.view === 'browse' && top && top.id && !['Series', 'Season'].includes(top.type));
   if (S.lib.search) { c.append(el('button', {}, `Suche: „${S.lib.search}“`)); return; }
+  if (S.lib.view === 'watchlist') { c.append(el('button', {}, 'Deine Merkliste')); return; }
+  if (S.lib.view === 'history') { c.append(el('button', {}, 'Zuletzt geschaut')); return; }
   S.lib.stack.forEach((e, i) => {
     if (i) c.append(el('span', { class: 'sep' }, '›'));
     c.append(el('button', { onclick: () => { S.lib.stack = S.lib.stack.slice(0, i + 1); renderLib(); } }, e.name));
   });
 }
 
+function section(title, items) {
+  return el('div', { class: 'lib-section' }, title ? el('h3', {}, title) : null, el('div', { class: 'lib-row' }, items.map(tile)));
+}
+const histItem = (h) => ({ id: h.id, name: h.type === 'Episode' ? `${h.title} – ${h.subtitle}` : h.title, type: h.type, playable: true, hasImage: true, runtime: h.runtime, progress: h.progress, finished: h.finished, aspect: 1.78 });
+
 let libToken = 0;
 async function renderLib(append = false) {
   const token = ++libToken;
   renderCrumbs();
   const grid = $('#lib-grid');
-  if (!append) { grid.innerHTML = ''; S.lib.start = 0; }
   const top = S.lib.stack[S.lib.stack.length - 1];
+  if (!append) { grid.innerHTML = ''; S.lib.start = 0; grid.classList.remove('sections'); }
+  $('#btn-lib-more').hidden = true;
   try {
+    if (S.lib.search) {
+      if (S.lib.search.length < 2) return;
+      const r = await call('lib:search', S.lib.search);
+      if (token !== libToken) return;
+      grid.classList.add('sections');
+      if (!r.movies.length && !r.series.length && !r.episodes.length) { grid.append(el('div', { class: 'lib-empty' }, `Nichts gefunden für „${S.lib.search}“.`)); return; }
+      if (r.year) grid.append(el('p', { class: 'muted tiny' }, `Nur Titel aus ${r.year}`));
+      if (r.movies.length) grid.append(section('Filme', r.movies));
+      if (r.series.length) grid.append(section('Serien & Sammlungen', r.series));
+      if (r.episodes.length) grid.append(section('Folgen', r.episodes));
+      return;
+    }
+    if (S.lib.view === 'watchlist') {
+      const r = await call('lib:watchlist');
+      if (token !== libToken) return;
+      S.watchIds = new Set(r.items.map((x) => x.id));
+      if (!r.items.length) { grid.append(el('div', { class: 'lib-empty' }, 'Noch nichts gemerkt. Fahr über einen Titel und klick auf ☆.')); return; }
+      for (const it of r.items) grid.append(tile(it));
+      return;
+    }
+    if (S.lib.view === 'history') {
+      const r = await call('lib:history');
+      if (token !== libToken) return;
+      if (!r.items.length) { grid.append(el('div', { class: 'lib-empty' }, 'Hier erscheint, was du geschaut hast – mit Fortschritt.')); return; }
+      for (const h of r.items) grid.append(tile(histItem(h)));
+      return;
+    }
     let data;
-    if (S.lib.search) data = await call('lib:items', { search: S.lib.search, start: S.lib.start, limit: 60 });
-    else if (!top.id) data = await call('lib:libraries');
-    else data = await call('lib:items', { parentId: top.id, start: S.lib.start, limit: 60, ...(top.collectionType ? { collectionType: top.collectionType } : {}), ...(top.sort ? { sort: top.sort } : {}) });
+    if (!top.id) {
+      const [libs, hist, wl] = await Promise.all([call('lib:libraries'), call('lib:history').catch(() => ({ items: [] })), call('lib:watchlist').catch(() => ({ items: [] }))]);
+      if (token !== libToken) return;
+      grid.classList.add('sections');
+      const cont = hist.items.filter((h) => !h.finished && h.progress > 2).slice(0, 6).map(histItem);
+      if (cont.length) grid.append(section('Weiterschauen', cont));
+      if (wl.items.length) grid.append(section('Merkliste', wl.items.slice(0, 6)));
+      grid.append(section('Bibliotheken', libs.items || []));
+      return;
+    }
+    const sort = top.sort === 'index' ? 'index' : S.lib.sort;
+    data = await call('lib:items', { parentId: top.id, start: S.lib.start, limit: 60, sort, ...(top.collectionType ? { collectionType: top.collectionType } : {}) });
     if (token !== libToken) return;
     const items = data.items || [];
-    if (!items.length && !append) grid.append(el('div', { class: 'lib-empty' }, S.lib.search ? 'Nichts gefunden.' : 'Hier ist nichts.'));
+    if (!items.length && !append) grid.append(el('div', { class: 'lib-empty' }, 'Hier ist nichts.'));
     for (const it of items) grid.append(tile(it));
     S.lib.start += items.length;
-    S.lib.total = data.total || items.length;
     $('#btn-lib-more').hidden = !(data.total && S.lib.start < data.total);
   } catch (e) {
     if (token !== libToken) return;
@@ -696,17 +846,40 @@ async function renderLib(append = false) {
 }
 $('#btn-lib-more').addEventListener('click', () => renderLib(true));
 
+async function toggleWatch(it, btn) {
+  try {
+    const r = await call('lib:toggleWatch', it.id);
+    if (r.on) S.watchIds.add(it.id); else S.watchIds.delete(it.id);
+    if (btn) { btn.classList.toggle('on', r.on); btn.textContent = r.on ? '★' : '☆'; }
+    toast(r.on ? `„${it.name}“ gemerkt` : 'Von der Merkliste genommen');
+    return r.on;
+  } catch (e) { toast(e.message, true); return null; }
+}
+
 function tile(it) {
   const wide = it.type === 'Episode' || it.type === 'CollectionFolder' || it.type === 'UserView' || (it.aspect && it.aspect > 1.2);
-  const sub = it.type === 'Episode' ? `${it.parentIndex != null ? `S${it.parentIndex} ` : ''}${it.index != null ? `E${it.index}` : ''}` : it.year || '';
-  const imgEl = el('div', { class: 'img', style: it.hasImage ? `background-image:url("${img(it.id, wide ? 480 : 320)}")` : '' }, it.hasImage ? null : (it.isFolder ? '📁' : '🎬'), it.played ? el('span', { class: 'played' }, '✓') : null);
-  return el('button', {
-    class: `tile${wide ? ' wide' : ''}`,
-    onclick: () => {
-      if (it.isFolder) libGo({ id: it.id, name: it.name, collectionType: it.collectionType, sort: it.type === 'Series' || it.type === 'Season' ? 'index' : null });
-      else if (it.playable) openDetail(it);
-    },
-  }, imgEl, el('span', { class: 't' }, it.type === 'Episode' && it.seriesName && S.lib.search ? `${it.seriesName} – ${it.name}` : it.name), sub ? el('span', { class: 's' }, String(sub)) : null);
+  let sub = it.type === 'Episode' && it.seriesName && S.lib.view !== 'browse' ? it.seriesName : it.type === 'Episode' ? `${it.parentIndex != null ? `S${it.parentIndex} ` : ''}${it.index != null ? `E${it.index}` : ''}` : it.year || '';
+  if (S.lib.search && it.type === 'Episode') sub = `${it.seriesName || ''} · S${it.parentIndex ?? '?'}E${it.index ?? '?'}`;
+  if (it.progress != null) sub = it.finished ? 'zu Ende geschaut' : `${Math.round(it.progress)} % geschaut`;
+  const canFav = it.playable || ['Series', 'BoxSet', 'Season'].includes(it.type);
+  const fav = canFav ? el('button', { class: `fav${S.watchIds.has(it.id) ? ' on' : ''}`, title: 'Merken', onclick: (e) => { e.stopPropagation(); toggleWatch(it, e.currentTarget); } }, S.watchIds.has(it.id) ? '★' : '☆') : null;
+  const imgEl = el('div', { class: 'img', style: it.hasImage ? `background-image:url("${img(it.id, wide ? 480 : 320)}")` : '' },
+    it.hasImage ? null : (it.isFolder ? '📁' : '🎬'), it.played ? el('span', { class: 'played' }, '✓') : null,
+    it.rating ? el('span', { class: 'rate' }, `★ ${String(it.rating).replace('.', ',')}`) : null,
+    it.progress != null ? el('div', { class: 'prog' }, el('div', { style: `width:${Math.min(100, it.progress)}%` })) : null);
+  return el('div', {
+    class: `tile${wide ? ' wide' : ''}`, role: 'button', tabindex: 0,
+    onclick: () => openTile(it),
+    onkeydown: (e) => { if (e.key === 'Enter') openTile(it); },
+  }, fav, imgEl, el('span', { class: 't' }, it.type === 'Episode' && it.seriesName && S.lib.search ? `${it.seriesName} – ${it.name}` : it.name), sub ? el('span', { class: 's' }, String(sub)) : null);
+}
+
+function openTile(it) {
+  if (it.playable) return openDetail(it);
+  if (it.isFolder || ['Series', 'BoxSet', 'Season'].includes(it.type)) {
+    if (S.lib.view !== 'browse' || S.lib.search) S.lib.stack = [{ id: null, name: 'Bibliothek' }];
+    libGo({ id: it.id, name: it.name, type: it.type, collectionType: it.collectionType, sort: it.type === 'Series' || it.type === 'Season' ? 'index' : null });
+  }
 }
 
 async function openDetail(it) {
@@ -716,16 +889,23 @@ async function openDetail(it) {
   $('#detail-sub').textContent = [it.seriesName, it.year].filter(Boolean).join(' · ');
   $('#detail-overview').textContent = it.overview || '';
   $('#detail-bg').style.backgroundImage = `url("${img(it.id, 1280, 'Backdrop')}"), url("${img(it.id, 640)}")`;
-  $('#btn-detail-play').hidden = !canControl();
+  $('#btn-detail-play').hidden = !canLoad();
+  $('#btn-detail-suggest').hidden = !perm('suggest');
+  const wb = $('#btn-detail-watch');
+  wb.textContent = S.watchIds.has(it.id) ? '★ Gemerkt' : '☆ Merken';
   const b = $('#detail-badges');
   b.innerHTML = '';
   if (it.runtime) b.append(el('span', { class: 'badge' }, fmt(it.runtime)));
   try {
     const d = await call('lib:item', it.id);
     if (S.detail !== it) return;
-    if (d.width) b.append(el('span', { class: 'badge' }, `${d.width}×${d.height}`));
+    if (d.resolution) b.append(el('span', { class: 'badge hot' }, d.resolution));
+    if (d.qualities && d.qualities[0] && d.qualities[0].original) b.append(el('span', { class: 'badge' }, d.qualities[0].label.replace(/^Original · /, '')));
     if (d.audio.length) b.append(el('span', { class: 'badge' }, `${d.audio.length} Tonspur${d.audio.length > 1 ? 'en' : ''}`));
     if (d.subs.length) b.append(el('span', { class: 'badge' }, `${d.subs.length} Untertitel`));
+    if (d.resume > 30 && d.runtime && d.resume < d.runtime * 0.92) b.append(el('span', { class: 'badge ok' }, `zuletzt bei ${fmt(d.resume)}`));
+    wb.textContent = d.inWatchlist ? '★ Gemerkt' : '☆ Merken';
+    if (d.inWatchlist) S.watchIds.add(it.id); else S.watchIds.delete(it.id);
   } catch { /* egal */ }
 }
 $('#btn-detail-close').addEventListener('click', () => { $('#detail').hidden = true; });
@@ -739,6 +919,10 @@ $('#btn-detail-suggest').addEventListener('click', () => {
   call('room:suggest', S.detail.id);
   $('#detail').hidden = true;
   toast('Vorschlag im Chat gepostet.');
+});
+$('#btn-detail-watch').addEventListener('click', async () => {
+  const on = await toggleWatch(S.detail);
+  if (on != null) $('#btn-detail-watch').textContent = on ? '★ Gemerkt' : '☆ Merken';
 });
 
 init();

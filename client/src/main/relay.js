@@ -78,6 +78,15 @@ class RelayClient extends EventEmitter {
   items(params) { return this.request('GET', `/api/items?${new URLSearchParams(params)}`); }
   item(id) { return this.request('GET', `/api/item/${encodeURIComponent(id)}`); }
   createInvite() { return this.request('POST', '/api/invites', {}); }
+  inviteValid(code) { return this.request('GET', `/api/invite/${encodeURIComponent(code)}`); }
+  register(code, username, password) { return this.request('POST', `/api/invite/${encodeURIComponent(code)}`, { username, password }); }
+  setName(name) { return this.request('POST', '/api/name', { name }); }
+  changePassword(old, password) { return this.request('POST', '/api/password', { old, password }); }
+  search(q) { return this.request('GET', `/api/search?q=${encodeURIComponent(q)}`); }
+  watchlist() { return this.request('GET', '/api/watchlist'); }
+  toggleWatch(itemId, on) { return this.request('POST', '/api/watchlist', { itemId, ...(on !== undefined ? { on } : {}) }); }
+  history() { return this.request('GET', '/api/history'); }
+  clearHistory(id) { return this.request('DELETE', `/api/history${id ? `/${encodeURIComponent(id)}` : ''}`); }
 
   /* ---------------- WebSocket ---------------- */
 

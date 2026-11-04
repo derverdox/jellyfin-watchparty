@@ -28,7 +28,7 @@ const A = {
   lastOk: 0,
 };
 
-const TITLES = { overview: 'Übersicht', rooms: 'Räume', users: 'Benutzer', groups: 'Gruppen', invites: 'Einladungen', stats: 'Statistik', audit: 'Protokoll', settings: 'Einstellungen' };
+const TITLES = { overview: 'Übersicht', rooms: 'Räume', users: 'Benutzer', groups: 'Gruppen', invites: 'Einladungen', stats: 'Statistik', security: 'Sicherheit', audit: 'Protokoll', settings: 'Einstellungen' };
 const STATE = { playing: ['spielt', 'ok'], paused: ['pausiert', ''], buffering: ['lädt', 'warn'], idle: ['wartet', ''], blocked: ['blockiert', 'warn'], error: ['Fehler', 'bad'] };
 const KIND = { web: '🌐 Browser', desktop: '🖥️ Desktop', mobile: '📱 Mobil' };
 const BITRATE_LABEL = { 1500000: '1,5 Mbit/s (mobil)', 3000000: '3 Mbit/s', 6000000: '6 Mbit/s (720p)', 10000000: '10 Mbit/s', 20000000: '20 Mbit/s (1080p)', 40000000: '40 Mbit/s (max.)' };
@@ -233,7 +233,7 @@ function barChart(box, rows, key, fmt) {
   rows.forEach((r, i) => {
     const v = r[key] || 0;
     const h = (v / max) * ih;
-    const rect = mk('rect', { x: pad.l + i * bw + bw * 0.18, y: pad.t + ih - h, width: Math.max(2, bw * 0.64), height: Math.max(0, h), rx: 3, fill: i === rows.length - 1 ? '#f2b544' : '#f2b544a0' });
+    const rect = mk('rect', { x: pad.l + i * bw + bw * 0.18, y: pad.t + ih - h, width: Math.max(2, bw * 0.64), height: Math.max(0, h), rx: 3, fill: i === rows.length - 1 ? '#ff4d5e' : '#ff4d5ea0' });
     rect.addEventListener('mouseenter', () => {
       tip.hidden = false; tip.innerHTML = '';
       tip.append(el('span', { class: 'muted' }, new Date(r.date).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })), el('b', {}, fmt(v)));
@@ -295,6 +295,7 @@ function go(view) {
   if (view === 'invites') loadInvites();
   if (view === 'stats') loadStats();
   if (view === 'audit') loadAudit();
+  if (view === 'security') { loadSecurity(); A.timer = setInterval(loadSecurity, 5000); }
   if (view === 'settings') loadSettings();
 }
 
@@ -405,12 +406,12 @@ function metric(label, value, pct, bad, good) {
 function seriesFor(key) {
   if (key === 'traffic') {
     return [
-      { key: 'out', label: 'An Zuschauer', color: '#f2b544', fmt: (v, axis) => (axis ? `${((v * 8) / 1e6).toFixed(0)}M` : mbit(v)) },
+      { key: 'out', label: 'An Zuschauer', color: '#ff4d5e', fmt: (v, axis) => (axis ? `${((v * 8) / 1e6).toFixed(0)}M` : mbit(v)) },
       { key: 'in', label: 'Vom Heimserver', color: '#7aa7ff', fmt: (v) => mbit(v) },
     ];
   }
   return [
-    { key: 'viewers', label: 'Zuschauer', color: '#f2b544', fmt: (v) => num(v) },
+    { key: 'viewers', label: 'Zuschauer', color: '#ff4d5e', fmt: (v) => num(v) },
     { key: 'playing', label: 'Schauen gerade', color: '#5fd68a', fmt: (v) => num(v) },
   ];
 }
@@ -848,12 +849,76 @@ function fillDays(days) {
   return out;
 }
 
+/* ---------------- Sicherheit ---------------- */
+
+async function loadSecurity() {
+  try {
+    const d = await api('/security');
+    $('#my-ip').textContent = d.me || '?';
+    $('#nav-sec').textContent = d.bans.length || '';
+    $('#sec-kpis').replaceChildren(
+      kpi('Fehlversuche (24 h)', num(d.failures24h), 'seit dem letzten Neustart', d.failures24h > 50 ? 'badc' : ''),
+      kpi('Fehlversuche (7 Tage)', num(d.failed7d), 'laut Protokoll'),
+      kpi('Gesperrte IPs', num(d.bans.length), `${d.bans.filter((b) => b.by === 'auto').length} automatisch`, d.bans.length ? 'hot' : ''),
+      kpi('Gebremste IPs', num(d.watch.filter((w) => w.waitUntil).length), 'müssen gerade warten'),
+      kpi('Angegriffene Konten', num(d.users.length), 'letzte 15 min', d.users.some((u) => u.slowed) ? 'badc' : ''),
+    );
+    const bt = $('#bans-table tbody');
+    bt.innerHTML = '';
+    if (!d.bans.length) bt.append(el('tr', {}, el('td', { colspan: 5, class: 'empty' }, 'Keine Sperren.')));
+    for (const b of d.bans) {
+      bt.append(el('tr', {},
+        el('td', {}, el('code', {}, b.ip)),
+        el('td', {}, b.reason || '–', el('div', { class: 'tiny muted' }, b.by === 'auto' ? 'automatisch' : `von ${b.by}`)),
+        el('td', { class: 'muted' }, ago(b.since)),
+        el('td', { class: 'muted' }, b.until ? when(b.until) : 'dauerhaft'),
+        el('td', { class: 'num' }, el('button', { class: 'btn small', onclick: () => unban(b.ip) }, 'Entsperren'))));
+    }
+    const wt = $('#watch-table tbody');
+    wt.innerHTML = '';
+    if (!d.watch.length) wt.append(el('tr', {}, el('td', { colspan: 5, class: 'empty' }, 'Alles ruhig.')));
+    const banned = new Set(d.bans.map((b) => b.ip));
+    for (const w of d.watch) {
+      wt.append(el('tr', {},
+        el('td', {}, el('code', {}, w.ip), el('div', { class: 'tiny muted' }, `zuletzt ${ago(w.last)}`)),
+        el('td', { class: 'num' }, num(w.fails1h)),
+        el('td', { class: 'num' }, num(w.fails24h)),
+        el('td', {}, banned.has(w.ip) ? el('span', { class: 'tag off' }, 'gesperrt') : w.waitUntil ? el('span', { class: 'tag', style: 'color:var(--accent)' }, `wartet ${dur((w.waitUntil - Date.now()) / 1000)}`) : el('span', { class: 'tag' }, 'beobachtet')),
+        el('td', { class: 'num' }, el('div', { class: 'row end' },
+          banned.has(w.ip) ? null : el('button', { class: 'btn small danger', onclick: () => { $('#ban-form').ip.value = w.ip; $('#ban-form').reason.value = `${w.fails24h} Fehlversuche`; $('#ban-form').ip.focus(); } }, 'Sperren'),
+          el('button', { class: 'btn small', onclick: () => unban(w.ip) }, 'Zurücksetzen')))));
+    }
+    const tt = $('#target-table tbody');
+    tt.innerHTML = '';
+    if (!d.users.length) tt.append(el('tr', {}, el('td', { colspan: 3, class: 'empty' }, 'Keine.')));
+    for (const u of d.users) {
+      tt.append(el('tr', {}, el('td', {}, u.name), el('td', { class: 'num' }, num(u.fails15m)), el('td', {}, u.slowed ? el('span', { class: 'tag off' }, 'gebremst') : el('span', { class: 'tag' }, 'beobachtet'))));
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+async function unban(ip) {
+  try { await api('/security/unban', { method: 'POST', body: { ip } }); toast(`${ip} entsperrt`); loadSecurity(); } catch (e) { toast(e.message, true); }
+}
+
+$('#ban-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await api('/security/ban', { method: 'POST', body: { ip: f.ip.value.trim(), hours: Number(f.hours.value), reason: f.reason.value } });
+    toast(`${f.ip.value} gesperrt`);
+    f.ip.value = ''; f.reason.value = '';
+    loadSecurity();
+  } catch (ex) { toast(ex.message, true); }
+});
+
 /* ---------------- Protokoll ---------------- */
 
 const AUDIT = {
   login: ['🔑', 'Anmeldung'], 'login-failed': ['⚠️', 'Fehlversuch'], 'login-blocked': ['⛔', 'Gesperrtes Konto versucht'], register: ['✨', 'Registriert'],
   'user-create': ['➕', 'Konto angelegt'], 'user-update': ['✎', 'Konto geändert'], 'user-delete': ['🗑', 'Konto gelöscht'], 'user-password': ['🔑', 'Passwort zurückgesetzt'], 'user-logout': ['⏏', 'Abgemeldet'],
   'session-revoke': ['⏏', 'Sitzung beendet'], 'group-create': ['◈', 'Gruppe angelegt'], 'group-update': ['◈', 'Gruppe geändert'], 'group-delete': ['🗑', 'Gruppe gelöscht'],
+  'ip-ban': ['⛔', 'IP gesperrt'], 'ip-unban': ['🔓', 'IP entsperrt'],
   'invite-create': ['✉', 'Einladung erstellt'], 'invite-revoke': ['✉', 'Einladung widerrufen'], 'room-close': ['▣', 'Raum geschlossen'], 'room-kick': ['✕', 'Aus Raum entfernt'], announce: ['📣', 'Ansage'], settings: ['⚙', 'Einstellungen'],
 };
 let auditTimer;

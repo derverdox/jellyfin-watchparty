@@ -185,5 +185,11 @@ test('Client folgt dem Raum und meldet eigene Aktionen', { skip: !hasFfmpeg() &&
   other.send({ t: 'chat', text: 'Popcorn!' });
   await until(() => mpvEvents().find((e) => e.ev === 'osd' && /Popcorn!/.test(e.text)), 3000, 'Chat im Bild');
 
+  /* 11) Ansage aus der Verwaltung erscheint im Bild, Qualität kommt vom Server */
+  await other.request('POST', `/api/admin/rooms/${code}/announce`, { text: 'Gleich Pause' });
+  await until(() => mpvEvents().find((e) => e.ev === 'osd' && /📣.*Gleich Pause/.test(e.text)), 3000, 'Ansage im Bild');
+  assert.strictEqual(session.activeQuality, 'direct');
+  assert.ok(session.info.qualities.length >= 1 && session.info.qualities[0].original);
+
   other.leave();
 });

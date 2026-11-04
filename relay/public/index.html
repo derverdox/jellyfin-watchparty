@@ -48,7 +48,7 @@
   <section id="view-lobby" class="view center" hidden>
     <div class="card auth">
       <div class="brand big"><span class="logo">▶</span> Watchparty</div>
-      <p class="muted">Hi <strong id="lobby-name"></strong>! <span id="lobby-hint">Mach einen Raum auf und schick deinem Kumpel den Link.</span></p>
+      <p class="muted">Hi <strong id="lobby-name"></strong>! <span class="admin-flag" id="admin-flag" hidden>Admin</span> <span id="lobby-hint">Mach einen Raum auf und schick deinem Kumpel den Link.</span></p>
       <button class="btn primary" id="btn-create">Neuen Raum erstellen</button>
       <div class="divider" id="lobby-or"><span>oder</span></div>
       <form id="join-form" class="row">
@@ -191,9 +191,22 @@
   <div class="modal" id="library" hidden>
     <div class="modal-box">
       <div class="lib-head">
-        <nav class="crumbs" id="crumbs"></nav>
-        <input id="lib-search" type="search" placeholder="Suchen…" autocomplete="off">
+        <div class="lib-tabs" id="lib-tabs">
+          <button data-v="browse" class="on">Bibliothek</button>
+          <button data-v="watchlist">★ Merkliste</button>
+          <button data-v="history">Zuletzt</button>
+        </div>
+        <input id="lib-search" type="search" placeholder="Filme, Serien, Folgen suchen … (auch mit Jahr)" autocomplete="off">
         <button class="icon" id="lib-close" aria-label="Schließen">✕</button>
+      </div>
+      <div class="lib-sub" id="lib-sub">
+        <nav class="crumbs" id="crumbs"></nav>
+        <select id="lib-sort" hidden>
+          <option value="name">A–Z</option>
+          <option value="added">Neu hinzugefügt</option>
+          <option value="year">Neueste zuerst</option>
+          <option value="rating">Beste Bewertung</option>
+        </select>
       </div>
       <div class="lib-body" id="lib-body"></div>
     </div>

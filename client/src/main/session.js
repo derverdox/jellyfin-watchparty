@@ -14,7 +14,7 @@ const { Mpv } = require('./mpv');
 
 const SYNC_MS = 250;
 const STATUS_MS = 2000;
-const BITRATES = new Set(['40000000', '20000000', '10000000', '6000000', '3000000']);
+const BITRATES = new Set(['40000000', '20000000', '10000000', '6000000', '3000000', '1500000']);
 
 const INPUT_CONF = `# Watchparty: Steuerung läuft über den Raum
 SPACE script-message wp toggle
@@ -146,7 +146,19 @@ class Session extends EventEmitter {
         break;
       case 'agent': this.ui('room:agent', msg); if (msg.online && this.playback && this.playback.item && !this.info) { this.loadedId = null; this.setPlayback(this.playback); } break;
       case 'error': this.ui('room:error', msg.text); if (this.mpv) this.mpv.osd(msg.text); break;
-      case 'kicked': this.ui('room:kicked', {}); this.leave(); break;
+      case 'announce':
+        this.ui('room:announce', msg);
+        if (this.mpv) this.mpv.osd(`📣 ${msg.from}: ${msg.text}`, 8000);
+        break;
+      case 'noaccess':
+        // Dieser Titel ist für das eigene Konto nicht freigegeben
+        this.ui('room:noaccess', msg.item);
+        if (this.mpv) { this.mpv.command('stop').catch(() => {}); this.mpv.osd(`🔒 Kein Zugriff auf „${msg.item.title}“`, 6000); }
+        this.loadedId = msg.item.id;
+        this.loadedKey = null;
+        this.fileReady = false;
+        break;
+      case 'kicked': this.ui('room:kicked', { text: msg.text }); this.leave(); break;
       default: break;
     }
   }
@@ -199,9 +211,21 @@ class Session extends EventEmitter {
     }
   }
 
+  /** Gewünschte Qualität auf das abbilden, was diese Datei und die eigene Gruppe hergeben. */
+  chooseQuality() {
+    const info = this.info;
+    const list = info.qualities || [];
+    const want = String(this.settings.prefs.quality || 'direct');
+    if (list.some((x) => x.id === want)) return want;
+    if (want === 'direct' || want === 'auto') return list.length ? list[0].id : 'direct';
+    const lower = list.filter((x) => x.id !== 'direct' && Number(x.id) <= Number(want));
+    return lower.length ? lower[0].id : (list.length ? list[list.length - 1].id : 'direct');
+  }
+
   sourceUrl() {
     const info = this.info;
-    const q = this.settings.prefs.quality;
+    const q = this.chooseQuality();
+    this.activeQuality = q;
     if (q === 'direct' || !BITRATES.has(String(q))) {
       return { key: `${info.id}|direct`, url: `${this.relay.base}/stream/${info.id}/direct?ms=${info.mediaSourceId}`, direct: true };
     }
@@ -449,6 +473,8 @@ class Session extends EventEmitter {
     this.ui('player:state', {
       running: !!(mpv && mpv.running),
       ready: this.fileReady,
+      quality: this.activeQuality || null,
+      nextEpisodeId: (this.playback && this.playback.item && this.playback.item.nextEpisodeId) || null,
       pos: Number.isFinite(p['time-pos']) ? p['time-pos'] : this.expectedPos(),
       expected: this.expectedPos(),
       duration: (this.playback && this.playback.item && this.playback.item.runtime) || p.duration || 0,
