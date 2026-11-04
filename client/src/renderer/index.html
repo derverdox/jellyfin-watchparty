@@ -121,6 +121,11 @@
         <button class="btn small" id="btn-invite-user" hidden>✉ Freund einladen</button>
         <button class="btn small" id="btn-account">👤 Konto</button>
       </div>
+      <div class="wish-news" id="wish-news" hidden></div>
+      <div class="lobby-extras">
+        <button class="btn small" id="btn-board">📌 Schwarzes Brett</button>
+        <button class="btn small" id="btn-profile">📊 Mein Jahr</button>
+      </div>
       <div class="account-box" id="account-box" hidden>
         <form class="row" id="name-form">
           <input name="name" maxlength="24" placeholder="Anzeigename">
@@ -168,6 +173,10 @@
               <div class="badges" id="now-badges"></div>
             </div>
           </div>
+        </div>
+        <div class="room-cards">
+          <div class="player-cards" id="player-cards"></div>
+          <button class="btn skip-btn" id="btn-skip" hidden>Intro überspringen ⏭</button>
         </div>
 
         <div class="transport card">
@@ -263,6 +272,7 @@
         <div class="tabs">
           <button class="tab active" data-tab="chat">Chat</button>
           <button class="tab" data-tab="people">Leute <span class="count" id="people-count">0</span></button>
+          <button class="tab" data-tab="queue">Liste <span class="count" id="queue-count">0</span></button>
         </div>
         <div class="tab-body" id="tab-chat">
           <div class="chat" id="chat"></div>
@@ -282,6 +292,9 @@
           </div>
           <button class="btn small" id="btn-invite" hidden>Freund einladen</button>
         </div>
+        <div class="tab-body" id="tab-queue" hidden>
+          <div class="queue" id="queue"></div>
+        </div>
       </aside>
     </main>
   </section>
@@ -294,12 +307,15 @@
           <button data-v="browse" class="on">Bibliothek</button>
           <button data-v="watchlist">★ Merkliste</button>
           <button data-v="history">Zuletzt</button>
+          <button data-v="top">★ Top</button>
+          <button data-v="wishes">📌 Wünsche</button>
         </div>
         <input type="search" id="lib-search" placeholder="Filme, Serien, Folgen suchen … (auch mit Jahr)" autocomplete="off" spellcheck="false">
         <button class="icon" id="btn-lib-close" title="Schließen">✕</button>
       </div>
       <div class="lib-sub">
         <div class="crumbs" id="crumbs"></div>
+        <button class="btn small" id="btn-random" title="Zufälligen Titel vorschlagen">🎲 Zufall</button>
         <select id="lib-sort" hidden>
           <option value="name">A–Z</option>
           <option value="added">Neu hinzugefügt</option>
@@ -330,6 +346,9 @@
   </div>
 
   <div class="toast" id="toast" hidden></div>
+  <div class="overlay xmodal" id="xmodal" hidden><div class="xbox" id="xbox"></div></div>
+
   <script src="app.js"></script>
+  <script src="extras.js"></script>
 </body>
 </html>

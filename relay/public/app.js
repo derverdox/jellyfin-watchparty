@@ -1288,4 +1288,13 @@ function openTile(it) {
   }
 }
 
+// Schnittstelle für extras.js (im Desktop-Client gibt es dieselbe mit IPC)
+window.WPX = {
+  api, send, serverNow, closeLibrary,
+  img: (id, w, type) => `/img/${id}?w=${w}${type ? `&type=${type}` : ''}`,
+  seek: (pos) => control('seek', pos),
+  segments: () => (S.info && S.info.segments) || [],
+};
+video.addEventListener('timeupdate', () => { if (window.WP) WP.tick(video.currentTime); });
+
 init();

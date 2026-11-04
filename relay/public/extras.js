@@ -3,12 +3,21 @@
  * Watchparty – Zusatzfunktionen der Web-Oberfläche:
  * Detail- und Serienansicht, Bewertungen, Gesehen-Status, Warteschlange,
  * Abstimmung, Bewertungsrunde, Intro überspringen, Zufall, schwarzes Brett, Profil.
- * Baut auf den Helfern aus app.js auf ($, el, api, send, S, toast, …).
+ * Baut auf den Helfern aus app.js auf ($, el, S, toast, perm, canLoad, …).
+ * Was sich zwischen Web und Desktop-Client unterscheidet, kommt über window.WPX:
+ *   api(path, opts), send(msg), img(id, w, type), serverNow(), closeLibrary(),
+ *   seek(pos), segments()
+ * Die Datei ist in relay/public und client/src/renderer identisch (Test prüft das).
  */
 (() => {
+  const env = window.WPX;
+  const api = (p, o) => env.api(p, o);
+  const send = (m) => env.send(m);
+  const serverNow = () => env.serverNow();
+  const closeLibrary = () => env.closeLibrary();
   const X = { detail: null, show: null, season: 0, pollDraft: [], queue: [], poll: null, round: null, rated: null, board: { sort: 'votes', status: '', tag: '' } };
 
-  const img = (id, w, type) => `/img/${id}?w=${w}${type ? `&type=${type}` : ''}`;
+  const img = (id, w, type) => env.img(id, w, type);
   const n1 = (x) => String(Math.round(x * 10) / 10).replace('.', ',');
   const ago = (t) => {
     const s = (Date.now() - t) / 1000;
@@ -207,13 +216,13 @@
     send({ t: 'load', itemId: d.id, position: position || 0 });
     toast(`„${d.name}“ wird geladen…`);
     closeModal();
-    if (typeof closeLibrary === 'function') closeLibrary();
+    closeLibrary();
   }
   function suggest(d) {
     send({ t: 'suggest', itemId: d.id });
     toast('Vorschlag im Chat gepostet');
     closeModal();
-    if (typeof closeLibrary === 'function') closeLibrary();
+    closeLibrary();
   }
   function playOrSuggest(e) {
     if (!inRoom()) { toast('Erst einen Raum öffnen.'); return; }
@@ -268,7 +277,7 @@
       ...X.pollDraft.map((x) => el('span', { class: 'chip' }, x.name, el('button', { onclick: () => { X.pollDraft = X.pollDraft.filter((y) => y !== x); renderPollDraft(); } }, '✕'))),
       el('button', { class: 'btn small primary', disabled: X.pollDraft.length < 2, onclick: () => {
         send({ t: 'poll-start', itemIds: X.pollDraft.map((x) => x.id), seconds: 60 });
-        X.pollDraft = []; renderPollDraft(); closeModal(); if (typeof closeLibrary === 'function') closeLibrary();
+        X.pollDraft = []; renderPollDraft(); closeModal(); closeLibrary();
       } }, X.pollDraft.length < 2 ? 'mind. 2 Titel' : 'Starten (60 s)'),
       el('button', { class: 'icon', title: 'Verwerfen', onclick: () => { X.pollDraft = []; renderPollDraft(); } }, '✕'));
   }
@@ -306,10 +315,11 @@
 
   /* ---------------- Intro überspringen ---------------- */
 
-  video.addEventListener('timeupdate', () => {
+  /** Wird vom Player mit der aktuellen Position aufgerufen. */
+  function tick(t) {
     const btn = $('#btn-skip');
-    const segs = (S.info && S.info.segments) || [];
-    const t = video.currentTime;
+    if (!btn) return;
+    const segs = env.segments() || [];
     const seg = segs.find((s) => t >= s.start - 0.5 && t < s.end - 1.5 && ['intro', 'recap', 'preview', 'outro'].includes(s.type));
     const next = S.playback && S.playback.item && S.playback.item.nextEpisodeId;
     if (!seg || !canControl() || (seg.type === 'outro' && !(next && canLoad()))) { btn.hidden = true; return; }
@@ -317,10 +327,10 @@
     btn.textContent = { intro: 'Intro überspringen ⏭', recap: 'Rückblick überspringen ⏭', preview: 'Vorschau überspringen ⏭', outro: 'Nächste Folge ⏭' }[seg.type];
     btn.onclick = () => {
       if (seg.type === 'outro') send({ t: 'load', itemId: next });
-      else control('seek', seg.end);
+      else env.seek(seg.end);
       btn.hidden = true;
     };
-  });
+  }
 
   /* ---------------- Zufall ---------------- */
 
@@ -527,5 +537,5 @@
     }
   }
 
-  window.WP = { onMessage, openDetail, openBoard, openProfile, lobby };
+  window.WP = { onMessage, openDetail, openBoard, openProfile, lobby, tick };
 })();

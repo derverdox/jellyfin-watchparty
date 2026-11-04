@@ -47,6 +47,8 @@ MBTN_LEFT_DBL cycle fullscreen
 F1 script-message wp framegen
 F2 script-message wp vsr
 c script-message wp osdchat
+s script-message wp skip
+S script-message wp skip
 i script-binding stats/display-stats-toggle
 `;
 
@@ -159,11 +161,59 @@ class Session extends EventEmitter {
         this.fileReady = false;
         break;
       case 'kicked': this.ui('room:kicked', { text: msg.text }); this.leave(); break;
+      // Warteschlange, Abstimmung, Bewertungsrunde → an die Oberfläche (extras.js)
+      case 'queue': case 'poll': case 'rate-prompt': case 'round': case 'round-end': case 'advancing':
+        this.ui('room:extra', msg);
+        this.osdExtra(msg);
+        break;
       default: break;
     }
   }
 
   send(msg) { return this.relay.send(msg); }
+
+  osdExtra(msg) {
+    if (!this.mpv) return;
+    if (msg.t === 'poll' && msg.poll && !this.osdPollId) {
+      this.osdPollId = msg.poll.id;
+      this.mpv.osd(`🗳 Abstimmung: ${msg.poll.options.map((o) => o.title).join(' · ')} – im Fenster abstimmen`, 6000);
+    } else if (msg.t === 'poll' && !msg.poll) {
+      this.osdPollId = null;
+      if (msg.winner) this.mpv.osd(`🏆 Gewonnen: ${msg.winner.title}`, 5000);
+    } else if (msg.t === 'rate-prompt') this.mpv.osd(`⭐ Wie fandet ihr „${msg.item.title}“? Im Fenster 1–10 Sterne vergeben`, 8000);
+    else if (msg.t === 'round-end' && msg.count) this.mpv.osd(`⭐ Eure Runde: ${String(msg.avg).replace('.', ',')}/10 (${msg.count})`, 6000);
+    else if (msg.t === 'advancing' && msg.next) this.mpv.osd(`⏭ Gleich: ${msg.next.title}`, 6000);
+  }
+
+  /* ---------- Intro, Rückblick, Abspann ---------- */
+
+  currentSegment() {
+    const segs = (this.info && this.info.segments) || [];
+    const t = this.mpv && this.mpv.props['time-pos'];
+    if (!Number.isFinite(t)) return null;
+    return segs.find((x) => t >= x.start - 0.5 && t < x.end - 1.5 && ['intro', 'recap', 'preview', 'outro'].includes(x.type)) || null;
+  }
+
+  checkSegment() {
+    const seg = this.currentSegment();
+    const key = seg ? `${this.loadedId}|${seg.type}|${seg.start}` : null;
+    if (key && key !== this.segKey && this.mpv && this.canControl()) {
+      const what = { intro: 'Intro', recap: 'Rückblick', preview: 'Vorschau', outro: 'Abspann' }[seg.type];
+      this.mpv.osd(`${what} – [S] ${seg.type === 'outro' ? 'nächste Folge' : 'überspringen'}`, 4000);
+    }
+    this.segKey = key;
+  }
+
+  skipSegment() {
+    const seg = this.currentSegment();
+    if (!seg) { if (this.mpv) this.mpv.osd('Hier gibt es nichts zu überspringen'); return; }
+    if (seg.type === 'outro') {
+      const next = this.playback && this.playback.item && this.playback.item.nextEpisodeId;
+      if (next) this.send({ t: 'load', itemId: next });
+      return;
+    }
+    this.control('seek', seg.end);
+  }
 
   /* ------------------------------------------------------------ */
   /* Wiedergabe                                                    */
@@ -469,6 +519,7 @@ class Session extends EventEmitter {
 
   pushPlayerState() {
     if (!this.code) return;
+    this.checkSegment();
     const mpv = this.mpv;
     const p = (mpv && mpv.props) || {};
     this.ui('player:state', {
@@ -665,6 +716,7 @@ class Session extends EventEmitter {
       case 'pause': if (this.playback && this.playback.playing) this.togglePlay(); break;
       case 'seek': this.seekBy(Number(val) || 0); break;
       case 'close': this.stopPlayer(); break;
+      case 'skip': this.skipSegment(); break;
       case 'framegen': {
         const fg = this.settings.prefs.framegen;
         this.setPrefs({ framegen: { enabled: !fg.enabled } }).then((p) => {

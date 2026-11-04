@@ -171,6 +171,34 @@ app.whenReady().then(async () => {
   handle('lib:history', () => relay.history());
   handle('lib:clearHistory', (id) => relay.clearHistory(id));
 
+  /* ---------- Zusatzfunktionen (Serien, Bewertungen, Brett, Profil …) ---------- */
+  // Der Renderer darf nur diese Endpunkte über das eigene Konto aufrufen
+  const ID = '[a-f0-9-]{32,36}';
+  const API_ALLOW = [
+    ['GET', new RegExp(`^/api/details/${ID}$`, 'i')],
+    ['GET', new RegExp(`^/api/show/${ID}(\\?room=[A-Z0-9]{4,12})?$`, 'i')],
+    ['GET', /^\/api\/(top-rated|profile)$/],
+    ['GET', /^\/api\/random(\?[\w=&%.-]*)?$/],
+    ['GET', /^\/api\/wishes(\?[\w=&%.-]*)?$/],
+    ['GET', /^\/api\/wishes\/check\?q=[^#]*$/],
+    ['POST', /^\/api\/(watched|rate|wishes|wishes\/seen)$/],
+    ['POST', /^\/api\/watchlist$/],
+    ['POST', /^\/api\/wishes\/[a-z0-9]{4,40}\/(vote|tag)$/i],
+    ['PATCH', /^\/api\/wishes\/[a-z0-9]{4,40}$/i],
+    ['DELETE', /^\/api\/wishes\/[a-z0-9]{4,40}$/i],
+  ];
+  handle('api', ({ path: p, method = 'GET', body } = {}) => {
+    const m = String(method).toUpperCase();
+    const ps = String(p || '');
+    if (!API_ALLOW.some(([mm, re]) => mm === m && re.test(ps))) throw new Error('Nicht erlaubt');
+    return relay.request(m, ps, m === 'GET' ? undefined : (body || {}));
+  });
+  const SEND_ALLOW = new Set(['load', 'suggest', 'queue-add', 'queue-remove', 'queue-move', 'queue-clear', 'queue-play', 'poll-start', 'poll-vote', 'poll-end']);
+  handle('room:send', (msg) => {
+    if (!msg || !SEND_ALLOW.has(msg.t)) throw new Error('Nicht erlaubt');
+    return session.send(msg);
+  });
+
   /* ---------- Verwaltung im eigenen Fenster ---------- */
   let adminWin = null;
   handle('admin:open', async () => {

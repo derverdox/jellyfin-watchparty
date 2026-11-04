@@ -260,6 +260,7 @@ async function showLobby() {
   else if (S.me) chips.append(el('span', { class: 'chip ok' }, `● ${S.me.server || 'Heimserver'} online`));
   chips.append(el('span', { class: `chip ${st.base || st.platform !== 'win32' ? 'ok' : 'warn'}` }, st.base || st.platform !== 'win32' ? '✓ Player' : 'Player fehlt'));
   if (st.platform === 'win32') chips.append(el('span', { class: `chip ${st.framegen ? 'ok' : ''}` }, st.framegen ? '✓ Framegen' : 'Framegen aus'));
+  if (window.WP) WP.lobby();
   $('#join-form').code.focus();
 }
 
@@ -340,11 +341,15 @@ function onEvent(ch, p) {
       renderReactBar(p.reactions || REACTIONS_DEFAULT);
       if (S.me) { S.me.agentOnline = p.agentOnline; S.me.server = p.server; }
       renderMembers(); renderControlState();
+      if (p.serverNow) S.offset = p.serverNow - Date.now();
+      if (window.WP) WP.onMessage({ ...p, t: 'welcome' });
       break;
+    case 'room:extra': if (window.WP) WP.onMessage(p); break;
     case 'room:playback':
       S.playback = p.playback;
       if (!p.playback.item) { S.item = null; }
       renderNow(); updateTransport();
+      if (window.WP) WP.onMessage({ t: 'playback', action: p.action });
       break;
     case 'room:item': S.item = p; S.noaccess = null; $('#now').classList.remove('locked'); renderNow(); renderQuality(); break;
     case 'room:members': S.members = p; renderMembers(); break;
@@ -365,6 +370,7 @@ function onEvent(ch, p) {
     case 'player:state': {
       const q = S.player && S.player.quality;
       S.player = p; updateTransport(); renderStats();
+      if (window.WP && Number.isFinite(p.pos)) WP.tick(p.pos);
       if (p.quality && p.quality !== q) renderQuality();
       break;
     }
@@ -673,8 +679,7 @@ function floatEmoji(emoji, from) {
 for (const t of $$('.tab')) {
   t.addEventListener('click', () => {
     for (const x of $$('.tab')) x.classList.toggle('active', x === t);
-    $('#tab-chat').hidden = t.dataset.tab !== 'chat';
-    $('#tab-people').hidden = t.dataset.tab !== 'people';
+    for (const b of $$('.side .tab-body')) b.hidden = b.id !== `tab-${t.dataset.tab}`;
   });
 }
 
@@ -746,7 +751,9 @@ async function openLibrary() {
 }
 
 for (const b of $$('#lib-tabs button')) {
-  b.addEventListener('click', () => { S.lib.view = b.dataset.v; S.lib.search = ''; $('#lib-search').value = ''; renderLib(); });
+  b.addEventListener('click', () => {
+    if (b.dataset.v === 'wishes') { if (window.WP) WP.openBoard(); return; }
+    S.lib.view = b.dataset.v; S.lib.search = ''; $('#lib-search').value = ''; renderLib(); });
 }
 $('#lib-sort').addEventListener('change', (e) => { S.lib.sort = e.target.value; renderLib(); });
 
@@ -773,6 +780,7 @@ function renderCrumbs() {
   if (S.lib.search) { c.append(el('button', {}, `Suche: „${S.lib.search}“`)); return; }
   if (S.lib.view === 'watchlist') { c.append(el('button', {}, 'Deine Merkliste')); return; }
   if (S.lib.view === 'history') { c.append(el('button', {}, 'Zuletzt geschaut')); return; }
+  if (S.lib.view === 'top') { c.append(el('button', {}, 'Bei uns am besten bewertet')); return; }
   S.lib.stack.forEach((e, i) => {
     if (i) c.append(el('span', { class: 'sep' }, '›'));
     c.append(el('button', { onclick: () => { S.lib.stack = S.lib.stack.slice(0, i + 1); renderLib(); } }, e.name));
@@ -820,6 +828,13 @@ async function renderLib(append = false) {
       for (const h of r.items) grid.append(tile(histItem(h)));
       return;
     }
+    if (S.lib.view === 'top') {
+      const r = await call('api', { path: '/api/top-rated' });
+      if (token !== libToken) return;
+      if (!r.items.length) { grid.append(el('div', { class: 'lib-empty' }, 'Noch hat niemand etwas bewertet. Öffne einen Film und vergib Sterne!')); return; }
+      for (const it of r.items) grid.append(tile({ ...it, ourRating: it.ours }));
+      return;
+    }
     let data;
     if (!top.id) {
       const [libs, hist, wl] = await Promise.all([call('lib:libraries'), call('lib:history').catch(() => ({ items: [] })), call('lib:watchlist').catch(() => ({ items: [] }))]);
@@ -865,7 +880,7 @@ function tile(it) {
   const fav = canFav ? el('button', { class: `fav${S.watchIds.has(it.id) ? ' on' : ''}`, title: 'Merken', onclick: (e) => { e.stopPropagation(); toggleWatch(it, e.currentTarget); } }, S.watchIds.has(it.id) ? '★' : '☆') : null;
   const imgEl = el('div', { class: 'img', style: it.hasImage ? `background-image:url("${img(it.id, wide ? 480 : 320)}")` : '' },
     it.hasImage ? null : (it.isFolder ? '📁' : '🎬'), it.played ? el('span', { class: 'played' }, '✓') : null,
-    it.rating ? el('span', { class: 'rate' }, `★ ${String(it.rating).replace('.', ',')}`) : null,
+    it.ourRating && it.ourRating.avg ? el('span', { class: 'rate ours', title: `bei uns · ${it.ourRating.count} Stimmen` }, `★ ${String(it.ourRating.avg).replace('.', ',')}`) : it.rating ? el('span', { class: 'rate' }, `★ ${String(it.rating).replace('.', ',')}`) : null,
     it.progress != null ? el('div', { class: 'prog' }, el('div', { style: `width:${Math.min(100, it.progress)}%` })) : null);
   return el('div', {
     class: `tile${wide ? ' wide' : ''}`, role: 'button', tabindex: 0,
@@ -875,6 +890,7 @@ function tile(it) {
 }
 
 function openTile(it) {
+  if (window.WP && (it.playable || it.type === 'Series')) return WP.openDetail(it);
   if (it.playable) return openDetail(it);
   if (it.isFolder || ['Series', 'BoxSet', 'Season'].includes(it.type)) {
     if (S.lib.view !== 'browse' || S.lib.search) S.lib.stack = [{ id: null, name: 'Bibliothek' }];
@@ -924,5 +940,16 @@ $('#btn-detail-watch').addEventListener('click', async () => {
   const on = await toggleWatch(S.detail);
   if (on != null) $('#btn-detail-watch').textContent = on ? '★ Gemerkt' : '☆ Merken';
 });
+
+// Schnittstelle für extras.js (dieselbe Datei wie im Web, hier über IPC)
+window.WPX = {
+  api: (path, opts = {}) => call('api', { path, method: opts.method || 'GET', body: opts.body }),
+  send: (msg) => call('room:send', msg).catch((e) => toast(e.message, true)),
+  serverNow: () => Date.now() + (S.offset || 0),
+  closeLibrary: () => { $('#library').hidden = true; },
+  img,
+  seek: (pos) => call('room:control', { action: 'seek', position: pos }),
+  segments: () => (S.item && S.item.segments) || [],
+};
 
 init();

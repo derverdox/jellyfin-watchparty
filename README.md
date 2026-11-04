@@ -118,6 +118,18 @@ docker compose exec -e DOMAIN=example.com relay node server.js invite 48   # Ein
 - **Merkliste** (☆ auf jedem Titel) und **Zuletzt geschaut** mit Fortschritt. Die Startseite der Bibliothek zeigt „Weiterschauen“ und die Merkliste.
 - **Qualität:** Zur Auswahl steht nur, was die Datei hergibt. Ein 1080p-Film mit 8 Mbit/s bietet „Original · Full HD · 8 Mbit/s“, „HD · 6 Mbit/s“, „SD · 3 Mbit/s“ und „Mobil“. Stufen über dem Original gibt es nicht, und die Bitrate-Grenze der Gruppe gilt zusätzlich.
 
+## Serien, Bewertungen & Gemeinsam aussuchen
+
+- **Detailansicht** für jeden Titel: Hintergrundbild (abgedunkelt), Poster, Genres, Jellyfin-Wertung und unsere eigene Wertung, Beschreibung. Dort spielst du ab, setzt fort, schlägst vor, merkst dir den Titel oder markierst ihn als gesehen.
+- **Serien:** Staffel-Tabs mit Fortschritt („2/10“), Folgenliste mit Vorschaubild, Laufzeit, Beschreibung und Fortschrittsbalken. Oben steht **„Weiter mit S1E3“**. Folgen, Staffeln oder **„alles bis hier“** lassen sich als gesehen markieren, ab 90 % passiert das automatisch. Im Raum zeigen kleine Avatare, wer die Folge schon kennt.
+- **Bewertungen 1–10 ★**, anonym: Alle sehen nur Schnitt und Anzahl, nie wer was vergeben hat. „★ Top“ in der Bibliothek zeigt, was bei euch am besten ankommt. Nach einem Film kommt automatisch eine **Bewertungsrunde** (Ergebnis im Chat).
+- **Warteschlange** („Liste“ im Raum): Titel oder ganze Staffeln einreihen, sortieren, entfernen. Nach dem Ende geht es nach 8 s automatisch mit dem nächsten weiter.
+- **Abstimmung „Was schauen wir?“:** 2–4 Titel auswählen, 60 s abstimmen, der Gewinner startet sofort.
+- **🎲 Zufall** mit Filtern: Film/Serie/Folge, Höchstlänge, Mindestwertung, nur Ungesehenes, nur im aktuellen Ordner.
+- **Intro, Rückblick und Abspann überspringen**, wenn Jellyfin die Marker kennt (Media Segments ab 10.10 oder das Intro-Skipper-Plugin). Beim Abspann springt der Knopf zur nächsten Folge. Dafür braucht der Agent Version 2.2.
+- **📌 Schwarzes Brett:** Wunschliste für neue Medien. Jeder trägt Titel ein (mit Jahr, Notiz, Tags), stimmt ab und taggt. Beim Eintippen prüft es, ob der Titel schon da oder schon gewünscht ist. Admins setzen den Status (offen, in Arbeit, verfügbar, abgelehnt). Taucht ein Wunsch in Jellyfin auf, wird er von selbst „verfügbar“ und der Wünschende sieht es in der Lobby. Wer wünschen darf, steuert das Recht „Wünsche“ in den Gruppen.
+- **📊 Mein Jahr:** persönliche Statistik mit geschauten Stunden, aktiven Tagen, längster Serie am Stück, Top-Titeln, Lieblings-Genres und Wochentagen.
+
 ## Sicherheit
 
 - **Brute-Force-Schutz:** Nach 5 Fehlversuchen pro IP wächst die Wartezeit (2 s, 4 s, 8 s … bis 15 min). Ab 30 Fehlversuchen pro Stunde wird die IP für 1 h gesperrt, ab 100 am Tag für 24 h. Pro Konto werden Versuche ab 20 Fehlern gebremst, aber nicht hart gesperrt, damit niemand fremde Konten aussperren kann. Sperren überleben Neustarts und sind in der Verwaltung unter **Sicherheit** einsehbar.

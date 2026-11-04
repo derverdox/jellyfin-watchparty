@@ -6,7 +6,7 @@ Am Relay und am Agent muss dafür **nichts** geändert werden.
 
 ## Was der Client kann
 
-Alles, was die Website kann: anmelden oder **per Einladungslink registrieren**, Räume erstellen und beitreten, Chat, Reaktionen, Vorschläge, **Merkliste und Zuletzt geschaut**, die neue **Suche**, **nächste Folge**, Host-Funktionen (Steuerung freigeben, Host weitergeben, rauswerfen), Freunde einladen, **Name und Passwort ändern**. Admins öffnen die **Verwaltung** direkt in einem eigenen Fenster und sehen den Client in Rot. Rechte aus den Gruppen gelten genauso wie im Browser.
+Alles, was die Website kann: anmelden oder **per Einladungslink registrieren**, Räume erstellen und beitreten, Chat, Reaktionen, Vorschläge, **Merkliste und Zuletzt geschaut**, die neue **Suche**, **nächste Folge**, die **Serienansicht mit Gesehen-Markern**, **Bewertungen**, **Warteschlange**, **Abstimmung**, **Zufall**, **schwarzes Brett**, **Mein Jahr**, **Intro überspringen**, Host-Funktionen (Steuerung freigeben, Host weitergeben, rauswerfen), Freunde einladen, **Name und Passwort ändern**. Admins öffnen die **Verwaltung** direkt in einem eigenen Fenster und sehen den Client in Rot. Rechte aus den Gruppen gelten genauso wie im Browser.
 
 ## Installieren
 
@@ -56,6 +56,7 @@ Framegen und VSR lassen sich kombinieren: erst die Zwischenbilder, dann das Hoch
 | F / Doppelklick | Vollbild |
 | F1 | Framegen an/aus |
 | F2 | RTX Super Resolution an/aus |
+| S | Intro/Rückblick überspringen, im Abspann zur nächsten Folge |
 | C | Chat im Bild an/aus |
 | I | Statistik |
 | Q | Player schließen (du bleibst im Raum) |

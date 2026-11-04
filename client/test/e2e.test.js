@@ -191,5 +191,18 @@ test('Client folgt dem Raum und meldet eigene Aktionen', { skip: !hasFfmpeg() &&
   assert.strictEqual(session.activeQuality, 'direct');
   assert.ok(session.info.qualities.length >= 1 && session.info.qualities[0].original);
 
+  /* 12) Warteschlange: was der Browser einreiht, kommt in der Oberfläche an */
+  other.send({ t: 'queue-add', itemId: jf.ids.MOVIE });
+  const q = await until(() => uiEvents.find((e) => e.ch === 'room:extra' && e.p.t === 'queue' && e.p.queue.length === 1), 5000, 'Warteschlange in der Oberfläche');
+  assert.strictEqual(q.p.queue[0].id, jf.ids.MOVIE);
+
+  /* 13) Intro überspringen mit [S] im Player → Sprung ans Intro-Ende kommt beim Browser an */
+  session.info.segments = [{ type: 'intro', start: 70, end: 84 }];
+  await until(() => mpvEvents().find((e) => e.ev === 'osd' && /Intro – \[S\]/.test(e.text)), 3000, 'Hinweis im Bild');
+  const n4 = seen.length;
+  await session.mpv.command('fake-key', 'skip');
+  const skip = await until(() => seen.slice(n4).find((m) => m.t === 'playback' && m.action === 'seek'), 5000, 'Intro übersprungen');
+  assert.ok(Math.abs(skip.playback.position - 84) < 0.2, `Position ${skip.playback.position}`);
+
   other.leave();
 });
