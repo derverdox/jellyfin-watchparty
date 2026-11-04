@@ -65,6 +65,10 @@ Filme & Serien vom Jellyfin deines Kumpels **synchron zusammen schauen**, mit Li
 
 > Läuft Jellyfin selbst in Docker: `JELLYFIN_URL=http://host.docker.internal:8096` (oder den Container-Namen, wenn beide im selben Docker-Netz sind).
 
+### Bestimmte Bibliotheken ausschließen
+
+Der Agent hat eine eigene **Admin-UI im LAN** (Standard-Port **8098**): `http://<IP-des-Agent-Rechners>:8098`. Dort stellst du pro Jellyfin-Bibliothek auf „aus“ — ausgeschlossene Bibliotheken sind für **alle** Zuschauer unsichtbar und nicht abspielbar (auch nicht über direkte Links), ohne Neustart. Damit die UI im LAN erreichbar ist, setze `ADMIN_TOKEN` in der `.env` des Agenten (die UI fragt dann nach diesem Token). Ohne `ADMIN_TOKEN` ist die UI nur vom Agent-Rechner selbst erreichbar. Die Auswahl überlebt Neustarts (Volume `agent-data`).
+
 ---
 
 ## Benutzung
