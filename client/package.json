@@ -47,15 +47,13 @@
           ]
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "artifactName": "Watchparty-${version}-win-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": true,
       "perMachine": false,
       "artifactName": "Watchparty-Setup-${version}.${ext}"
-    },
-    "zip": {
-      "artifactName": "Watchparty-${version}-win-x64.${ext}"
     }
   }
 }
