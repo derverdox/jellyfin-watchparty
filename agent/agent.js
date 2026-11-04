@@ -13,7 +13,10 @@ const crypto = require('crypto');
 const { Readable } = require('stream');
 const WebSocket = require('ws');
 
-loadEnvFile(path.join(__dirname, '.env'));
+// Im pkg-Executable (watchparty-agent.exe) zeigt __dirname ins Bündel hinein —
+// die .env muss neben der EXE-Datei liegen dürfen.
+const selfDir = process.pkg ? path.dirname(process.execPath) : __dirname;
+loadEnvFile(path.join(selfDir, '.env'));
 
 const VERSION = '2.3.0';
 const CFG = {

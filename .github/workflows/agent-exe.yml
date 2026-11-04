@@ -1,0 +1,53 @@
+name: Agent-EXE → GitHub Release
+
+# Baut bei jedem Tag v* (z. B. v2.1.0) ein Windows- und Linux-Executable
+# des Agenten und hängt es an den Release. Alternativ manuell anstoßbar.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build-exe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Abhängigkeiten installieren
+        working-directory: agent
+        run: npm ci
+
+      - name: Executables bauen
+        working-directory: agent
+        run: |
+          npx pkg --targets node22-win-x64,node22-linux-x64 --output dist/watchparty-agent .
+          ls -la dist/
+
+      # Auf Tags: an den Release hängen (wird bei Bedarf erstellt)
+      - name: Release mit EXE-Dateien
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            agent/dist/watchparty-agent-win.exe
+            agent/dist/watchparty-agent-linux
+          generate_release_notes: true
+
+      # Manuell gestartet: als Artifacts zum Download
+      - name: Artifacts hochladen
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchparty-agent-exe
+          path: |
+            agent/dist/watchparty-agent-win.exe
+            agent/dist/watchparty-agent-linux

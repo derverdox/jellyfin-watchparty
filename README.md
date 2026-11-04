@@ -58,7 +58,11 @@ Filme & Serien vom Jellyfin deines Kumpels **synchron zusammen schauen**, mit Li
    docker compose up -d --build
    docker compose logs -f
    ```
-   **oder ohne Docker** (Node.js 18+, geht auch unter Windows):
+   **oder als fertige EXE ohne Docker/Node** (z. B. Windows-PC): unter
+   [Releases](../../releases) `watchparty-agent-win.exe` (bzw. `-linux`) herunterladen,
+   zusammen mit einer `.env` in einen Ordner legen und per Doppelklick starten.
+   Die EXE wird bei jedem Tag (`git tag v2.3.0 && git push --tags`) automatisch von GitHub gebaut.
+   **oder ohne Docker** selbst (Node.js 18+, geht auch unter Windows):
    ```bash
    npm install
    npm start
