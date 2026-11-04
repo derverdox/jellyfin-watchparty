@@ -5,6 +5,12 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const video = $('#video');
 const player = $('#player');
+// Heiße Pfade (updateControls, seek) laufen mehrfach pro Sekunde → Knoten cachen
+const D = {
+  btnPlay: $('#btn-play'), btnBack: $('#btn-back'), btnFwd: $('#btn-fwd'), btnNext: $('#btn-next'),
+  tCur: $('#t-cur'), tDur: $('#t-dur'),
+  seek: $('#seek'), seekFill: $('#seek-fill'), seekBuffer: $('#seek-buffer'), seekTip: $('#seek-tip'),
+};
 
 /** Qualitäten kommen pro Datei vom Server (nie mehr als das Original hergibt). */
 function qualityList(info) {
@@ -629,7 +635,8 @@ $('#btn-unblock').addEventListener('click', () => {
  */
 function syncTick(force = false) {
   const pb = S.playback;
-  if (!pb || !pb.item || !S.loadedKey || video.readyState < 1) return;
+  // Während der Nutzer am Balken zieht, nicht hinter ihm ins Video springen
+  if (!pb || !pb.item || !S.loadedKey || video.readyState < 1 || S.seeking) return;
   const exp = expectedPos();
 
   if (!pb.playing) {
@@ -704,21 +711,22 @@ function duration() {
 function updateControls() {
   const pb = S.playback;
   const dur = duration();
-  const cur = S.seeking ? Number($('#seek').value) / 1000 * dur : (S.loadedKey ? video.currentTime : expectedPos());
-  $('#t-cur').textContent = fmt(cur);
-  $('#t-dur').textContent = fmt(dur);
-  $('#btn-play').textContent = pb && pb.playing ? '❚❚' : '▶';
+  const cur = S.seeking ? Number(D.seek.value) / 1000 * dur : (S.loadedKey ? video.currentTime : expectedPos());
+  D.tCur.textContent = fmt(cur);
+  D.tDur.textContent = fmt(dur);
+  D.btnPlay.textContent = pb && pb.playing ? '❚❚' : '▶';
   if (!S.seeking) {
-    $('#seek').value = dur ? Math.round((cur / dur) * 1000) : 0;
-    $('#seek-fill').style.width = dur ? `${(cur / dur) * 100}%` : '0';
+    D.seek.value = dur ? Math.round((cur / dur) * 1000) : 0;
+    D.seekFill.style.width = dur ? `${(cur / dur) * 100}%` : '0';
   }
   let buf = 0;
   for (let i = 0; i < video.buffered.length; i++) {
     if (video.buffered.start(i) <= video.currentTime + 1) buf = Math.max(buf, video.buffered.end(i));
   }
-  $('#seek-buffer').style.width = dur ? `${Math.min(100, (buf / dur) * 100)}%` : '0';
+  D.seekBuffer.style.width = dur ? `${Math.min(100, (buf / dur) * 100)}%` : '0';
   const next = pb && pb.item && pb.item.nextEpisodeId;
-  $('#btn-next').hidden = !(next && canLoad() && dur && cur > dur - 180);
+  const hideNext = !(next && canLoad() && dur && cur > dur - 180);
+  if (D.btnNext.hidden !== hideNext) D.btnNext.hidden = hideNext;
 }
 
 function renderControlState() {
@@ -767,23 +775,32 @@ const seek = $('#seek');
 seek.addEventListener('input', () => {
   S.seeking = true;
   const t = (Number(seek.value) / 1000) * duration();
-  $('#seek-fill').style.width = `${seek.value / 10}%`;
-  $('#t-cur').textContent = fmt(t);
+  D.seekFill.style.width = `${seek.value / 10}%`;
+  D.tCur.textContent = fmt(t);
 });
 seek.addEventListener('change', () => {
   const t = (Number(seek.value) / 1000) * duration();
   S.seeking = false;
   control('seek', t);
 });
+// Tooltip: Rect cachen (getBoundingClientRect pro Maus-Event erzwingt Reflow) und
+// DOM-Schreibarbeiten auf ein rAF pro Frame bündeln.
+let seekRect = null, tipRaf = 0, tipPos = 0;
+seek.addEventListener('mouseenter', () => { seekRect = seek.getBoundingClientRect(); });
+window.addEventListener('resize', () => { seekRect = null; });
+document.addEventListener('fullscreenchange', () => { seekRect = null; });
 seek.addEventListener('mousemove', (e) => {
-  const r = seek.getBoundingClientRect();
-  const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-  const tip = $('#seek-tip');
-  tip.hidden = !duration();
-  tip.textContent = fmt(f * duration());
-  tip.style.left = `${f * 100}%`;
+  const r = seekRect || (seekRect = seek.getBoundingClientRect());
+  tipPos = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  if (!tipRaf) tipRaf = requestAnimationFrame(() => {
+    tipRaf = 0;
+    const dur = duration();
+    D.seekTip.hidden = !dur;
+    D.seekTip.textContent = fmt(tipPos * dur);
+    D.seekTip.style.left = `${tipPos * 100}%`;
+  });
 });
-seek.addEventListener('mouseleave', () => { $('#seek-tip').hidden = true; });
+seek.addEventListener('mouseleave', () => { D.seekTip.hidden = true; });
 
 $('#btn-next').addEventListener('click', () => {
   const next = S.playback && S.playback.item && S.playback.item.nextEpisodeId;
@@ -854,7 +871,7 @@ document.addEventListener('webkitfullscreenchange', () => player.classList.toggl
 $('#btn-chat-toggle').addEventListener('click', () => document.body.classList.toggle('chat-hidden'));
 
 // Steuerleiste automatisch ausblenden
-let idleTimer;
+let idleTimer, lastWakeAt = 0;
 function wake() {
   player.classList.remove('idle');
   clearTimeout(idleTimer);
@@ -862,7 +879,13 @@ function wake() {
     if (S.playback && S.playback.playing && $('#settings-menu').hidden) player.classList.add('idle');
   }, 3000);
 }
-player.addEventListener('mousemove', wake);
+player.addEventListener('mousemove', () => {
+  // Maus liefert 60–125 Events/s: Timer nur neu stellen, wenn es wirklich zählt
+  const now = performance.now();
+  if (now - lastWakeAt < 250 && !player.classList.contains('idle')) return;
+  lastWakeAt = now;
+  wake();
+});
 player.addEventListener('touchstart', wake, { passive: true });
 player.addEventListener('mouseleave', () => { if (S.playback && S.playback.playing) player.classList.add('idle'); });
 
@@ -1249,6 +1272,17 @@ async function toggleWatch(it, btn) {
   } catch (ex) { toast(ex.message); }
 }
 
+/* Poster lazy laden: eine Bibliotheksseite liefert bis zu 60 Kacheln. Ohne
+   Begrenzung schießt der Browser 60 Bildanfragen gleichzeitig durch den
+   Tunnel zum Heimserver und blockiert dort HLS-Segmente und API-Calls. */
+const posterIO = typeof IntersectionObserver === 'function' ? new IntersectionObserver((entries) => {
+  for (const en of entries) {
+    if (!en.isIntersecting) continue;
+    posterIO.unobserve(en.target);
+    en.target.style.backgroundImage = `url('${en.target.dataset.img}')`;
+  }
+}, { root: $('#lib-body'), rootMargin: '400px' }) : null;
+
 function tile(it) {
   const label = it.type === 'Episode' && !S.lib.search && S.lib.view === 'browse'
     ? `${it.index != null ? it.index + '. ' : ''}${it.name}`
@@ -1261,12 +1295,17 @@ function tile(it) {
   const wide = it.type === 'Episode' || (it.aspect && it.aspect > 1.2);
   const canFav = it.playable || it.type === 'Series' || it.type === 'BoxSet' || it.type === 'Season';
   const fav = canFav ? el('button', { class: `fav${S.watchIds.has(it.id) ? ' on' : ''}`, title: 'Merken', onclick: (e) => { e.stopPropagation(); toggleWatch(it, e.currentTarget); } }, S.watchIds.has(it.id) ? '★' : '☆') : '';
-  const poster = el('div', { class: 'poster', style: it.hasImage ? `background-image:url('/img/${it.id}?w=${wide ? 480 : 320}')` : '' },
+  const poster = el('div', { class: 'poster' },
     it.hasImage ? '' : (it.isFolder ? '📁' : '🎬'),
     it.played ? el('span', { class: 'badge' }, '✓ gesehen') : '',
     it.ourRating && it.ourRating.avg ? el('span', { class: 'rating ours' }, `★ ${String(it.ourRating.avg).replace('.', ',')} · ${it.ourRating.count}`) : it.rating ? el('span', { class: 'rating' }, `★ ${String(it.rating).replace('.', ',')}`) : '',
     it.progress != null ? el('div', { class: 'prog' }, el('div', { style: `width:${Math.min(100, it.progress)}%` })) : '',
     it.playable ? el('span', { class: 'play' }, canLoad() ? '▶ Abspielen' : perm('suggest') ? '💡 Vorschlagen' : '') : '');
+  if (it.hasImage) {
+    const posterUrl = `/img/${it.id}?w=${wide ? 480 : 320}`;
+    if (posterIO) { poster.dataset.img = posterUrl; posterIO.observe(poster); }
+    else poster.style.backgroundImage = `url('${posterUrl}')`;
+  }
   return el('div', { class: 'tile', title: it.overview || it.name, role: 'button', tabindex: 0,
     onclick: () => openTile(it),
     onkeydown: (e) => { if (e.key === 'Enter') openTile(it); },

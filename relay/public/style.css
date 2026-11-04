@@ -184,7 +184,9 @@ body.chat-hidden .player .toasts-layer { display: grid; }
 .switch input { width: 18px; height: 18px; accent-color: var(--accent); }
 
 /* ---------- Library ---------- */
-.modal { position: fixed; inset: 0; background: #000b; z-index: 50; display: grid; place-items: center; padding: 24px; backdrop-filter: blur(4px); }
+/* Kein backdrop-filter: vollflächiges Blur über einem spielenden Video lässt
+   den Compositor jede Frame neu rechnen — spürbarer Ruckel auf schwacher GPU. */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.82); z-index: 50; display: grid; place-items: center; padding: 24px; }
 .modal-box { width: min(1100px, 100%); height: min(820px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 18px; display: flex; flex-direction: column; overflow: hidden; }
 .lib-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
 .lib-head input { max-width: 260px; }
