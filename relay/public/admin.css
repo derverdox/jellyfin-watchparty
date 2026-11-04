@@ -282,3 +282,5 @@ input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
   .member-row { grid-template-columns: 26px 1fr auto auto; }
   .member-row .hide-sm { display: none; }
 }
+.toolbar form.row { flex-wrap: nowrap; }
+.toolbar form.row input, .announce-row input { flex: 1; min-width: 0; }

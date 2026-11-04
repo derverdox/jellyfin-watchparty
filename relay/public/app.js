@@ -160,6 +160,8 @@ async function route() {
   $('#btn-admin').hidden = !S.me.admin;
   $('#btn-create').hidden = !perm('createRoom');
   $('#no-create').hidden = perm('createRoom');
+  $('#lobby-or').hidden = !perm('createRoom');
+  $('#lobby-hint').textContent = perm('createRoom') ? 'Mach einen Raum auf und schick deinem Kumpel den Link.' : 'Gib den Raum-Code ein, den du bekommen hast.';
   const motd = $('#motd');
   motd.hidden = !S.me.motd;
   motd.textContent = S.me.motd || '';

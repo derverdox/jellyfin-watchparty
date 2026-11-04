@@ -75,6 +75,8 @@ function bytes(n, dec = 1) {
   while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
   return `${n.toFixed(i ? dec : 0).replace('.', ',')} ${u[i]}`;
 }
+/** Stunden lesbar: unter einer Stunde in Minuten */
+function hrs(h) { return !Number.isFinite(h) ? '–' : h < 1 ? `${Math.round(h * 60)} min` : `${num(h, 1)} h`; }
 function rate(n) { return `${bytes(n)}/s`; }
 function mbit(n) { return `${((n * 8) / 1e6).toFixed(1).replace('.', ',')} Mbit/s`; }
 function num(n, d = 0) { return Number.isFinite(n) ? n.toLocaleString('de-DE', { maximumFractionDigits: d, minimumFractionDigits: d }) : '–'; }
@@ -124,7 +126,7 @@ function showSecret(title, text, secret, extra) {
   card.innerHTML = '';
   card.append(el('h2', {}, title), el('p', { class: 'muted' }, text),
     el('div', { class: 'secret' }, el('code', {}, secret), el('button', { class: 'btn small', onclick: () => copy(secret) }, 'Kopieren')),
-    extra || null,
+    ...(extra ? [extra] : []),
     el('p', { class: 'tiny muted' }, 'Wird nur jetzt angezeigt.'),
     el('div', { class: 'row end' }, el('button', { class: 'btn primary', onclick: () => { $('#modal').hidden = true; } }, 'Fertig')));
   $('#modal').hidden = false;
@@ -528,7 +530,7 @@ function renderUsers() {
       el('td', {}, u.admin ? el('span', { class: 'tiny muted' }, 'alles') : el('div', { class: 'chips' }, u.effective.map(groupChip))),
       el('td', {}, userStatus(u)),
       el('td', { class: 'muted' }, ago(u.lastSeen || u.lastLogin)),
-      el('td', { class: 'num' }, `${num(u.stats.watchHours, 1)} h`),
+      el('td', { class: 'num' }, hrs(u.stats.watchHours)),
       el('td', { class: 'muted' }, new Date(u.created).toLocaleDateString('de-DE'))));
   }
 }
@@ -589,12 +591,12 @@ function openUser(name) {
     g.id === A.defaultGroup ? el('span', { class: 'tiny muted' }, ' (Standard)') : null)));
   const expiresIn = el('input', { type: 'date', value: u.expires ? new Date(u.expires).toISOString().slice(0, 10) : '', disabled: locked || u.owner });
   const noteIn = el('input', { maxlength: 500, value: u.note || '', placeholder: 'nur für Admins sichtbar', disabled: locked });
-  d.append(
+  d.append(...[
     el('div', { class: 'drawer-head' }, avatar(u.username),
       el('div', { class: 'grow' }, el('h2', {}, u.username), el('div', { class: 'row' }, u.owner ? el('span', { class: 'tag owner' }, 'Haupt-Admin') : u.admin ? el('span', { class: 'tag admin' }, 'Admin') : null, userStatus(u))),
       el('button', { class: 'icon', onclick: closeDrawer }, '✕')),
     el('div', { class: 'kv' },
-      el('div', {}, el('span', {}, 'Watchtime'), el('b', {}, `${num(u.stats.watchHours, 1)} h`)),
+      el('div', {}, el('span', {}, 'Watchtime'), el('b', {}, hrs(u.stats.watchHours))),
       el('div', {}, el('span', {}, 'Anmeldungen'), el('b', {}, num(u.stats.logins))),
       el('div', {}, el('span', {}, 'Zuletzt geschaut'), el('b', { title: u.stats.lastItem || '' }, u.stats.lastWatched ? ago(u.stats.lastWatched) : '–')),
       el('div', {}, el('span', {}, 'Angelegt'), el('b', {}, new Date(u.created).toLocaleDateString('de-DE'))),
@@ -631,7 +633,7 @@ function openUser(name) {
           try { await api(`/users/${encodeURIComponent(u.username)}`, { method: 'DELETE' }); toast('Gelöscht'); closeDrawer(); loadUsers(); } catch (e) { toast(e.message, true); }
         } }, '🗑 Konto löschen'))),
     u.owner ? el('p', { class: 'tiny muted' }, 'Der Haupt-Admin kann nicht gelöscht, gesperrt oder herabgestuft werden.') : null,
-  );
+  ].filter(Boolean));
   d.hidden = false;
   $('#drawer-bg').hidden = false;
 }
@@ -809,7 +811,7 @@ function renderStats() {
   const t = s.totals;
   const saved = t.bytesOut ? (t.bytesFromCache / t.bytesOut) * 100 : 0;
   $('#stat-kpis').replaceChildren(
-    kpi('Watchtime gesamt', `${num(t.watchHours, 1)} h`, 'Summe über alle Zuschauer', 'hot'),
+    kpi('Watchtime gesamt', hrs(t.watchSeconds / 3600), 'Summe über alle Zuschauer', 'hot'),
     kpi('Rekord gleichzeitig', String(s.peak.viewers), s.peak.at ? when(s.peak.at) : '–'),
     kpi('Ausgeliefert', bytes(t.bytesOut), 'an alle Zuschauer'),
     kpi('Heim-Upload gespart', `${num(saved, 1)} %`, `${bytes(t.bytesFromCache)} kamen aus dem Cache`, 'okc'),
@@ -824,14 +826,14 @@ function renderStats() {
   s.topItems.forEach((it, i) => ti.append(el('tr', {},
     el('td', { style: 'width:34px' }, el('span', { class: `rank${i === 0 ? ' r1' : ''}` }, i + 1)),
     el('td', {}, el('b', {}, it.title), it.subtitle && it.type === 'Episode' ? el('span', { class: 'muted' }, ` · ${it.subtitle}`) : null, el('div', { class: 'tiny muted' }, `${it.starts}× gestartet · ${it.viewers} Zuschauer · zuletzt ${ago(it.lastPlayed)}`)),
-    el('td', { class: 'num' }, `${num(it.hours, 1)} h`))));
+    el('td', { class: 'num' }, hrs(it.seconds / 3600)))));
   const tu = $('#top-users tbody');
   tu.innerHTML = '';
   if (!s.topUsers.length) tu.append(el('tr', {}, el('td', { class: 'empty' }, 'Noch keine Daten.')));
   s.topUsers.forEach((u, i) => tu.append(el('tr', {},
     el('td', { style: 'width:34px' }, el('span', { class: `rank${i === 0 ? ' r1' : ''}` }, i + 1)),
     el('td', {}, el('div', { class: 'ucell' }, avatar(u.name, true), el('div', {}, el('b', {}, u.name), el('div', { class: 'tiny muted' }, u.lastItem ? `zuletzt „${u.lastItem}“ ${ago(u.lastWatched)}` : `${u.logins || 0} Anmeldungen`)))),
-    el('td', { class: 'num' }, `${num(u.hours, 1)} h`))));
+    el('td', { class: 'num' }, hrs(u.watchSeconds / 3600)))));
 }
 
 /** Lücken der letzten 30 Tage mit Nullen füllen. */
@@ -871,7 +873,12 @@ async function loadAudit() {
     if (!entries.length) tb.append(el('tr', {}, el('td', { colspan: 4, class: 'empty' }, 'Keine Einträge.')));
     for (const e of entries) {
       const [ico, label] = AUDIT[e.type] || ['•', e.type];
-      const details = Object.entries(e).filter(([k]) => !['t', 'type', 'by', 'user'].includes(k)).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.map((x) => (groupById(x) ? groupById(x).name : x)).join(', ') : typeof v === 'object' && v ? JSON.stringify(v) : v}`).join(' · ');
+      const LBL = { target: 'Konto', ip: 'IP', groups: 'Gruppen', group: 'Gruppe', admin: 'Admin', disabled: 'gesperrt', uses: 'Nutzungen', code: 'Code', room: 'Raum', text: 'Text', note: 'Notiz', expires: 'läuft ab', via: 'Einladung' };
+      const val = (k, v) => (Array.isArray(v) ? v.map((x) => (groupById(x) ? groupById(x).name : x)).join(', ') || '–'
+        : k === 'group' || k === 'defaultGroup' ? (groupById(v) ? groupById(v).name : v)
+          : k === 'expires' ? when(v) : typeof v === 'boolean' ? (v ? 'ja' : 'nein') : typeof v === 'object' ? JSON.stringify(v) : v);
+      const details = Object.entries(e).filter(([k, v]) => !['t', 'type', 'by', 'user'].includes(k) && v != null && v !== '')
+        .map(([k, v]) => `${LBL[k] || k}: ${val(k, v)}`).join(' · ');
       tb.append(el('tr', { class: e.type === 'login-failed' ? 'warn' : '' },
         el('td', { class: 'muted', style: 'white-space:nowrap' }, when(e.t)),
         el('td', {}, `${ico} ${label}`),

@@ -48,9 +48,9 @@
   <section id="view-lobby" class="view center" hidden>
     <div class="card auth">
       <div class="brand big"><span class="logo">▶</span> Watchparty</div>
-      <p class="muted">Hi <strong id="lobby-name"></strong>! Mach einen Raum auf und schick deinem Kumpel den Link.</p>
+      <p class="muted">Hi <strong id="lobby-name"></strong>! <span id="lobby-hint">Mach einen Raum auf und schick deinem Kumpel den Link.</span></p>
       <button class="btn primary" id="btn-create">Neuen Raum erstellen</button>
-      <div class="divider"><span>oder</span></div>
+      <div class="divider" id="lobby-or"><span>oder</span></div>
       <form id="join-form" class="row">
         <input name="code" maxlength="12" placeholder="Raum-Code" autocomplete="off" required style="text-transform:uppercase">
         <button class="btn" type="submit">Beitreten</button>
