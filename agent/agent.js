@@ -15,7 +15,7 @@ const WebSocket = require('ws');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 const CFG = {
   relayUrl: process.env.RELAY_URL || '',
   token: process.env.AGENT_TOKEN || '',
@@ -28,6 +28,7 @@ const CFG = {
   // Ohne ADMIN_TOKEN ist die Admin-UI nur lokal erreichbar (127.0.0.1).
   adminBind: process.env.ADMIN_BIND || (process.env.ADMIN_TOKEN ? '0.0.0.0' : '127.0.0.1'),
   adminToken: process.env.ADMIN_TOKEN || '',
+  maxUploadMbps: toFloat(process.env.MAX_UPLOAD_MBPS, 0), // 0 = ungedrosselt
 };
 if (!CFG.relayUrl) fatal('RELAY_URL fehlt, z. B. wss://example.com/agent');
 if (!/^wss?:\/\//.test(CFG.relayUrl)) fatal('RELAY_URL muss mit wss:// (oder ws:// zum Testen) beginnen');
@@ -36,6 +37,12 @@ if (!CFG.apiKey) fatal('JELLYFIN_API_KEY fehlt (Jellyfin → Dashboard → API-S
 
 const HIGH_WATER = 8 * 1024 * 1024; // so viel darf maximal im Socket-Puffer warten
 const LOW_WATER = 2 * 1024 * 1024;
+
+/* ---------- Upload-Drossel (Token-Eimer, global über alle Streams) ---------- */
+const RATE_BPS = CFG.maxUploadMbps > 0 ? Math.round(CFG.maxUploadMbps * 1e6 / 8) : 0;
+const BURST = Math.max(256 * 1024, Math.round(RATE_BPS * 0.25)); // kurze Bursts erlauben
+let bucket = BURST;
+if (RATE_BPS) console.log(`[agent] Upload zum Relay gedrosselt auf ${CFG.maxUploadMbps} Mbit/s`);
 
 function jfAuth() {
   return `MediaBrowser Client="Watchparty", Device="Watchparty Agent", DeviceId="watchparty-agent", Version="${VERSION}", Token="${CFG.apiKey}"`;
@@ -204,7 +211,7 @@ async function filterJson(id, res, mode) {
 /* ---------- Verbindung zum Relay ---------- */
 let ws = null;
 let retry = 0;
-const streams = new Map(); // id -> { ac, body, relayPaused, wsPaused }
+const streams = new Map(); // id -> { ac, body, relayPaused, wsPaused, throttled, paused }
 
 function frame(id, chunk) {
   const h = Buffer.allocUnsafe(4);
@@ -284,12 +291,12 @@ function onMessage(m) {
     }
     case 'pause': {
       const st = streams.get(id);
-      if (st) { st.relayPaused = true; if (st.body) st.body.pause(); }
+      if (st) { st.relayPaused = true; syncPaused(st); }
       return;
     }
     case 'resume': {
       const st = streams.get(id);
-      if (st) { st.relayPaused = false; if (st.body && !st.wsPaused) st.body.resume(); }
+      if (st) { st.relayPaused = false; syncPaused(st); }
       return;
     }
   }
@@ -312,7 +319,7 @@ async function handleRequest(id, m) {
     }
   }
 
-  const st = { ac: new AbortController(), body: null, relayPaused: false, wsPaused: false };
+  const st = { ac: new AbortController(), body: null, relayPaused: false, wsPaused: false, throttled: false, paused: false };
   streams.set(id, st);
   const headers = { Authorization: jfAuth(), 'Accept-Encoding': 'identity' };
   const h = m.headers || {};
@@ -347,11 +354,16 @@ async function handleRequest(id, m) {
 
   const body = Readable.fromWeb(res.body);
   st.body = body;
-  if (st.relayPaused) body.pause();
+  syncPaused(st);
   body.on('data', (chunk) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return body.destroy();
     ws.send(frame(id, chunk));
-    if (ws.bufferedAmount > HIGH_WATER && !st.wsPaused) { st.wsPaused = true; body.pause(); }
+    if (ws.bufferedAmount > HIGH_WATER) st.wsPaused = true;
+    if (RATE_BPS) {
+      bucket -= chunk.length;
+      if (bucket <= 0) st.throttled = true; // Eimer leer → nächster Chunk wartet
+    }
+    syncPaused(st);
   });
   body.on('end', () => { if (streams.get(id) === st) { streams.delete(id); send({ t: 'end', id }); } });
   body.on('error', (e) => {
@@ -359,11 +371,24 @@ async function handleRequest(id, m) {
   });
 }
 
-// Socket-Puffer geleert → pausierte Streams weiterlaufen lassen
+/* Stream pausieren/weiterlaufen lassen, je nachdem ob Relay, Socket-Puffer
+   oder Upload-Drossel gerade bremsen. */
+function syncPaused(st) {
+  if (!st.body) return;
+  const wantPause = st.relayPaused || st.wsPaused || st.throttled;
+  if (wantPause && !st.paused) { st.paused = true; st.body.pause(); }
+  else if (!wantPause && st.paused) { st.paused = false; st.body.resume(); }
+}
+
+// Timer: Token-Eimer nachfüllen, Socket-Puffer und Drossel prüfen → Streams freilassen
 setInterval(() => {
-  if (!ws || ws.bufferedAmount > LOW_WATER) return;
+  if (!ws) return;
+  if (RATE_BPS) bucket = Math.min(BURST, bucket + RATE_BPS * 0.025);
+  const canDrain = ws.bufferedAmount <= LOW_WATER;
   for (const st of streams.values()) {
-    if (st.wsPaused) { st.wsPaused = false; if (!st.relayPaused && st.body) st.body.resume(); }
+    if (st.wsPaused && canDrain) st.wsPaused = false;
+    if (st.throttled && bucket > 0) st.throttled = false;
+    syncPaused(st);
   }
 }, 25);
 
@@ -488,6 +513,7 @@ if(T)load();
 
 /* ---------- Helpers ---------- */
 function toInt(v, d) { const n = parseInt(v, 10); return Number.isFinite(n) ? n : d; }
+function toFloat(v, d) { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) && n >= 0 ? n : d; }
 function loadEnvFile(file) {
   if (!fs.existsSync(file)) return;
   for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
