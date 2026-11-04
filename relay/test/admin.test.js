@@ -77,7 +77,7 @@ test('Konten, Gruppen, Rechte und Telemetrie', { timeout: 120000 }, async (t) =>
     JELLYFIN_API_KEY: 'k', DATA_DIR: path.join(tmp, 'agent'), ADMIN_PORT: '0',
   });
   const clients = [];
-  t.after(() => { for (const c of clients) try { c.ws && c.ws.close(); } catch { /* egal */ } for (const p of procs) p.kill(); jf.server.close(); fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
+  t.after(async () => { for (const c of clients) try { c.ws && c.ws.close(); } catch { /* egal */ } await Promise.all(procs.map((p) => new Promise((r) => { if (p.exitCode !== null || p.signalCode) return r(); p.once('exit', r); p.kill(); }))); jf.server.close(); fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 
   const base = `http://127.0.0.1:${port}`;
   await until(async () => { try { return (await (await fetch(`${base}/healthz`)).json()).agent; } catch { return false; } }, 15000, 'online')

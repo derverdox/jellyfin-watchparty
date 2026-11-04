@@ -22,7 +22,10 @@ const PERMISSIONS = [
   { key: 'chat', label: 'Chatten', desc: 'Nachrichten und Reaktionen' },
   { key: 'invite', label: 'Freunde einladen', desc: 'Einladungslinks für neue Konten erstellen' },
   { key: 'direct', label: 'Originalqualität', desc: 'Datei unverändert abspielen (braucht am meisten Upload)' },
+  { key: 'wish', label: 'Wünsche', desc: 'Auf dem schwarzen Brett Titel wünschen, abstimmen und taggen' },
 ];
+// Rechte, die neu dazugekommen sind: in alten Gruppen gelten sie als erlaubt
+const NEW_DEFAULT_ON = new Set(['wish']);
 const PERM_KEYS = PERMISSIONS.map((p) => p.key);
 const BITRATES = [1500000, 3000000, 6000000, 10000000, 20000000, 40000000];
 const ID_RE = /^[a-f0-9]{32}$|^[a-f0-9-]{36}$/i;
@@ -145,7 +148,7 @@ class GroupStore {
     const perms = allPerms(false);
     let maxBitrate = 0;
     for (const g of groups) {
-      for (const k of PERM_KEYS) if (g.perms && g.perms[k]) perms[k] = true;
+      for (const k of PERM_KEYS) if (g.perms && (g.perms[k] ?? NEW_DEFAULT_ON.has(k))) perms[k] = true;
       maxBitrate = Math.max(maxBitrate, g.maxBitrate || 0);
     }
     const rules = groups.map((g) => ({ mode: (g.access && g.access.mode) || 'all', ids: new Set(((g.access && g.access.ids) || []).map(norm)) }));

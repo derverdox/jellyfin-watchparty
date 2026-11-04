@@ -61,7 +61,7 @@ test('Client folgt dem Raum und meldet eigene Aktionen', { skip: !hasFfmpeg() &&
   t.after(async () => {
     for (const c of clients) c.leave();
     for (const s of sessions) await s.destroy().catch(() => {});
-    for (const p of procs) p.kill();
+    await Promise.all(procs.map((p) => new Promise((r) => { if (p.exitCode !== null || p.signalCode) return r(); p.once('exit', r); p.kill(); })));
     jf.server.close();
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });

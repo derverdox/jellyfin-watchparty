@@ -37,7 +37,7 @@ test('Suche, Merkliste, Verlauf, Qualität', { timeout: 60000 }, async (t) => {
     spawn(process.execPath, [path.join(ROOT, 'agent', 'agent.js')], { env: { ...process.env, RELAY_URL: `ws://127.0.0.1:${port}/agent`, AGENT_TOKEN: token, JELLYFIN_URL: `http://127.0.0.1:${jf.port}`, JELLYFIN_API_KEY: 'k', DATA_DIR: path.join(tmp, 'a'), ADMIN_PORT: '0' }, stdio: 'ignore' }),
   ];
   let ws;
-  t.after(() => { try { ws && ws.close(); } catch { /* egal */ } for (const p of procs) p.kill(); jf.server.close(); fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
+  t.after(async () => { try { ws && ws.close(); } catch { /* egal */ } await Promise.all(procs.map((p) => new Promise((r) => { if (p.exitCode !== null || p.signalCode) return r(); p.once('exit', r); p.kill(); }))); jf.server.close(); fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 150; i++) { try { if ((await (await fetch(`${base}/healthz`)).json()).agent) break; } catch { /* startet */ } await sleep(100); }
   let cookie = '';

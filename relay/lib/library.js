@@ -56,11 +56,74 @@ class LibraryStore {
     if (!h) { h = { id: item.id }; e.history.unshift(h); }
     else { e.history = [h, ...e.history.filter((x) => x !== h)]; }
     Object.assign(h, { title: item.title, subtitle: item.subtitle || '', type: item.type, runtime: item.runtime || null, pos: Math.round(pos), at: Date.now() });
+    if (item.runtime && pos / item.runtime >= 0.9 && !this.isWatched(username, item.id)) this.watchedMap(username)[item.id] = Date.now();
     if (e.history.length > MAX_HISTORY) e.history.length = MAX_HISTORY;
     this.dirty = true;
   }
 
   history(username) { return this.entry(username).history; }
+
+  /* ---------- Gesehen ---------- */
+
+  watchedMap(username) {
+    const e = this.entry(username);
+    if (!e.watched) e.watched = {};
+    return e.watched;
+  }
+  isWatched(username, id) { return !!this.watchedMap(username)[id]; }
+  setWatched(username, ids, on) {
+    const w = this.watchedMap(username);
+    for (const id of ids) { if (on) w[id] = w[id] || Date.now(); else delete w[id]; }
+    this.flush(true);
+  }
+
+  /** Zeit pro Titel bzw. Serie und aktive Tage (fürs Profil). */
+  addTime(username, item, seconds) {
+    const e = this.entry(username);
+    if (!e.time) e.time = {};
+    const key = item.seriesId || item.id;
+    const t = e.time[key] || (e.time[key] = { title: item.seriesName || item.title, type: item.seriesId ? 'Series' : item.type, seconds: 0 });
+    t.seconds += seconds;
+    if (!e.days) e.days = {};
+    const d = new Date();
+    const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    e.days[k] = (e.days[k] || 0) + seconds;
+    this.dirty = true;
+  }
+  profileData(username) {
+    const e = this.entry(username);
+    return { time: e.time || {}, days: e.days || {}, watched: e.watched || {} };
+  }
+
+  /* ---------- Bewertungen (anonym: nur Schnitt + Anzahl nach außen) ---------- */
+
+  ratingsDb() {
+    const d = this.data;
+    if (!d.ratings) d.ratings = {};
+    return d.ratings;
+  }
+  rate(username, id, score) {
+    const r = this.ratingsDb();
+    const k = String(username).toLowerCase();
+    if (!r[id]) r[id] = {};
+    if (score == null) delete r[id][k];
+    else r[id][k] = Math.min(10, Math.max(1, Math.round(Number(score))));
+    if (!Object.keys(r[id]).length) delete r[id];
+    this.flush(true);
+    return this.rating(username, id);
+  }
+  rating(username, id) {
+    const r = this.ratingsDb()[id] || {};
+    const vals = Object.values(r);
+    const k = String(username || '').toLowerCase();
+    return { avg: vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10 : null, count: vals.length, mine: r[k] || null };
+  }
+  topRated(limit = 60) {
+    return Object.entries(this.ratingsDb()).map(([id, r]) => {
+      const v = Object.values(r);
+      return { id, avg: v.reduce((a, b) => a + b, 0) / v.length, count: v.length };
+    }).sort((a, b) => b.avg - a.avg || b.count - a.count).slice(0, limit);
+  }
 
   clearHistory(username, id) {
     const e = this.entry(username);

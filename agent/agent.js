@@ -15,7 +15,7 @@ const WebSocket = require('ws');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 const CFG = {
   relayUrl: process.env.RELAY_URL || '',
   token: process.env.AGENT_TOKEN || '',
@@ -80,6 +80,9 @@ function allowed(method, p) {
     new RegExp(`^/Videos/(${ID})/hls1/[A-Za-z0-9_]+/-?\\d+\\.(ts|mp4|m4s|aac|vtt)$`, 'i'),
     new RegExp(`^/Videos/(${ID})/stream$`, 'i'),
     new RegExp(`^/Videos/(${ID})/(${ID})/Subtitles/\\d{1,3}/Stream\\.vtt$`, 'i'),
+    // Intro/Abspann-Marker (Jellyfin Media Segments bzw. Intro-Skipper-Plugin), nur lesend
+    new RegExp(`^/MediaSegments/(${ID})$`, 'i'),
+    new RegExp(`^/Episode/(${ID})/IntroTimestamps(/v1)?$`, 'i'),
   ];
   return rules.some((r) => r.test(pathname));
 }
