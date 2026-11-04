@@ -158,10 +158,12 @@ test('Client folgt dem Raum und meldet eigene Aktionen', { skip: !hasFfmpeg() &&
   assert.ok(Math.abs(seekMsg.playback.position - 70) < 0.5, `Position ${seekMsg.playback.position}`);
 
   /* 7) Status-Meldungen: der Browser sieht den Client als „spielt“ mit kleiner Abweichung */
-  await sleep(2500);
-  const members = [...seen].reverse().find((m) => m.t === 'members');
-  const me = members.members.find((m) => m.id === session.you.clientId);
-  assert.strictEqual(me.status.state, 'playing');
+  // nach dem Sprung kurz „buffering“ ist normal → warten, bis „playing“ gemeldet wird
+  const me = await until(() => {
+    const members = [...seen].reverse().find((m) => m.t === 'members');
+    const x = members && members.members.find((m) => m.id === session.you.clientId);
+    return x && x.status && x.status.state === 'playing' ? x : null;
+  }, 8000, 'Status „spielt“ beim Browser');
   assert.ok(Math.abs(me.status.drift) < 0.5, `Drift laut Server ${me.status.drift}`);
 
   /* 8) Framegen einschalten → mpv bekommt die VapourSynth-Kette mit passenden Parametern */
