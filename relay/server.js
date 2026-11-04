@@ -562,11 +562,11 @@ function tunnelErr(e) {
 }
 
 /** Zwischengespeichertes Objekt (Segment, Bild, Untertitel) ausliefern. */
-async function serveCached(res, key, upstreamPath, { maxAge = 0, playlist = false } = {}) {
+async function serveCached(res, key, upstreamPath, { maxAge = 0, playlist = false, upstreamTimeout = 120000 } = {}) {
   let r;
   try {
     r = await cache.get(key, async () => {
-      const x = await tunnel.buffer(upstreamPath, { timeout: 120000 });
+      const x = await tunnel.buffer(upstreamPath, { timeout: upstreamTimeout });
       return { buf: x.buf, meta: { status: x.status, type: x.headers['content-type'] || 'application/octet-stream' }, cacheable: x.status === 200 && !playlist };
     });
   } catch (e) { throw tunnelErr(e); }
@@ -582,6 +582,25 @@ async function serveCached(res, key, upstreamPath, { maxAge = 0, playlist = fals
 }
 
 /* ---------- Direktwiedergabe: Datei in 4-MB-Stücken, geteilt & gecacht ---------- */
+
+/* Bilder: eine Bibliotheksseite erzeugt bis zu 60 Anfragen. Unbegrenzt durch
+   den Tunnel geschickt, verdrängen sie HLS-Segmente und API-Calls (Agent
+   antwortet dann mit 503). Deshalb serialisiert ein kleiner Queue. */
+class Queue {
+  constructor(max) { this.max = max; this.active = 0; this.q = []; }
+  add(fn) {
+    return new Promise((resolve, reject) => {
+      this.q.push(() => {
+        this.active++;
+        fn().then(resolve, reject).finally(() => { this.active--; this.next(); });
+      });
+      this.next();
+    });
+  }
+  next() { if (this.active < this.max && this.q.length) this.q.shift()(); }
+}
+const imgQueue = new Queue(5);
+
 const fileMeta = new Map(); // item|ms -> { total, type }
 const RELAY_DEV = 'watchparty-relay';
 
@@ -732,7 +751,7 @@ async function handle(req, res) {
     return res.end();
   }
   if (req.method === 'GET' && /^\/[a-z0-9_-]+\.(js|css|svg|png|ico|webmanifest)$/i.test(p)) {
-    return serveFile(res, path.join(PUBLIC_DIR, p.slice(1)));
+    return serveFile(res, path.join(PUBLIC_DIR, p.slice(1)), 'public, max-age=300');
   }
   if (p === '/healthz') return sendJson(res, 200, { ok: true, agent: tunnel.online });
 
@@ -1215,7 +1234,7 @@ async function handle(req, res) {
     await assertAccess(session, m[1]);
     const type = ['Primary', 'Backdrop', 'Thumb'].includes(url.searchParams.get('type')) ? url.searchParams.get('type') : 'Primary';
     const w = Math.min(Math.max(Math.round(toInt(url.searchParams.get('w'), 300) / 80) * 80, 80), 1920);
-    return serveCached(res, `img|${m[1]}|${type}|${w}`, `/Items/${m[1]}/Images/${type}?maxWidth=${w}&quality=85`, { maxAge: 86400 });
+    return imgQueue.add(() => serveCached(res, `img|${m[1]}|${type}|${w}`, `/Items/${m[1]}/Images/${type}?maxWidth=${w}&quality=85`, { maxAge: 86400, upstreamTimeout: 15000 }));
   }
 
   // --- Untertitel als WebVTT ---

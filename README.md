@@ -52,12 +52,17 @@ Filme & Serien vom Jellyfin deines Kumpels **synchron zusammen schauen**, mit Li
    cp .env.example .env
    nano .env    # RELAY_URL, AGENT_TOKEN (gleicher wie auf Hetzner!), JELLYFIN_API_KEY
    ```
+   Optional: `MAX_UPLOAD_MBPS=15` drosselt den Upload des Agenten zum Relay (siehe „Gut zu wissen“).
 3. Starten, **mit Docker**:
    ```bash
    docker compose up -d --build
    docker compose logs -f
    ```
-   **oder ohne Docker** (Node.js 18+, geht auch unter Windows):
+   **oder als fertige EXE ohne Docker/Node** (z. B. Windows-PC): unter
+   [Releases](../../releases) `watchparty-agent-win.exe` (bzw. `-linux`) herunterladen,
+   zusammen mit einer `.env` in einen Ordner legen und per Doppelklick starten.
+   Die EXE wird bei jedem Tag (`git tag v2.3.0 && git push --tags`) automatisch von GitHub gebaut.
+   **oder ohne Docker** selbst (Node.js 18+, geht auch unter Windows):
    ```bash
    npm install
    npm start
@@ -144,6 +149,7 @@ docker compose exec -e DOMAIN=example.com relay node server.js invite 48   # Ein
 ## Gut zu wissen
 
 - **Upload beim Kumpel:** Der Film muss einmal in Echtzeit vom Heimnetz zu Hetzner. Für 1080p reichen ca. 10–20 Mbit/s Upload, bei weniger stellt ihr unter ⚙ eine kleinere Qualität ein. Ab dann verteilt Hetzner an beliebig viele (20 TB Traffic/Monat sind bei Hetzner inklusive).
+- **Upload-Grenze setzen:** `MAX_UPLOAD_MBPS=15` in der `agent/.env` deckelt die gesamte Upload-Bandbreite, die der Agent zum Relay schickt (unabhängig von wie vielen Streams gleichzeitig). So bleibt der Heimanschluss für andere Dinge frei – z. B. TrueNAS-Syncs, Backups oder andere Mitbewohner. Die Drossel sitzt im Agent selbst und funktioniert deshalb überall gleich, auch im Docker-Container unter TrueNAS SCALE (nach Änderung: `docker compose up -d`). Wert weglassen oder `0` = ungedrosselt.
 - **Zurückspulen** ist sofort da, weil es schon im Cache liegt. Der Cache räumt automatisch die ältesten Stücke weg, sobald `CACHE_MAX_GB` erreicht ist.
 - **Fällt der Heimserver kurz aus**, läuft alles weiter, was schon im Cache liegt, und alle sehen einen Hinweis. Der Agent verbindet sich automatisch neu.
 - **Sicherheit:** Passwörter werden mit scrypt gehasht, es gibt Login-Bremsen gegen Durchprobieren, Sitzungs-Cookies sind HttpOnly/Secure, und die Website nutzt HTTPS über Caddy. Der Agent-Token ist der Schlüssel zum Tunnel, also geheim halten.
