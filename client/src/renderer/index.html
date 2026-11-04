@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' wpimg: data:; style-src 'self'; script-src 'self'">
+  <title>Watchparty</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="titlebar"><span class="brand small"><span class="logo">▶</span> Watchparty</span></div>
+
+  <!-- Anmeldung -->
+  <section id="view-login" class="view center" hidden>
+    <div class="auth-wrap">
+      <div class="hero-copy">
+        <div class="brand big"><span class="logo">▶</span> Watchparty</div>
+        <h1>Zusammen schauen.<br><span class="accent">Flüssiger als je zuvor.</span></h1>
+        <p class="muted">Der Desktop-Client spielt den Film in mpv ab, mit KI-Zwischenbildern (RIFE) und RTX Super Resolution, perfekt synchron mit allen anderen im Raum.</p>
+        <ul class="feature-list">
+          <li><span class="dot"></span>Originalqualität statt Browser-Stream</li>
+          <li><span class="dot"></span>Bis zu 8× mehr Bilder pro Sekunde</li>
+          <li><span class="dot"></span>Chat, Reaktionen und Steuerung wie im Browser</li>
+        </ul>
+      </div>
+      <form id="login-form" class="card auth" autocomplete="on">
+        <h2>Anmelden</h2>
+        <label>Server
+          <input name="server" placeholder="watchparty.example.com" autocomplete="url" spellcheck="false" required>
+        </label>
+        <label>Benutzername
+          <input name="username" maxlength="24" autocomplete="username" spellcheck="false" required>
+        </label>
+        <label>Passwort
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <label class="check"><input type="checkbox" name="remember" checked> Angemeldet bleiben</label>
+        <button class="btn primary" type="submit">Anmelden</button>
+        <p class="error" id="login-error" hidden></p>
+        <p class="tiny muted">Dasselbe Konto wie auf der Website. Noch keins? Lass dir vom Admin einen Einladungslink schicken.</p>
+      </form>
+    </div>
+  </section>
+
+  <!-- Einrichtung -->
+  <section id="view-setup" class="view center" hidden>
+    <div class="setup">
+      <div class="setup-head">
+        <h1>Player einrichten</h1>
+        <p class="muted">Einmalig: der Client lädt mpv und, wenn du willst, die KI-Zwischenbilder herunter. Alles landet in einem eigenen Ordner, an Windows wird nichts installiert.</p>
+      </div>
+      <div class="gpu-line" id="gpu-line"></div>
+
+      <div class="setup-grid">
+        <div class="card step" id="step-base">
+          <div class="step-top"><span class="step-n">1</span><span class="step-state" id="base-state"></span></div>
+          <h3>Player</h3>
+          <p class="muted">mpv, Python und VapourSynth. Damit spielst du in Originalqualität und mit RTX Super Resolution.</p>
+          <p class="size">ca. 70 MB</p>
+          <button class="btn primary" id="btn-install-base">Installieren</button>
+        </div>
+        <div class="card step" id="step-fg">
+          <div class="step-top"><span class="step-n">2</span><span class="step-state" id="fg-state"></span></div>
+          <h3>Framegen (RIFE)</h3>
+          <p class="muted">KI-Zwischenbilder über TensorRT. Nur für NVIDIA-Karten ab RTX 20.</p>
+          <label>Modell
+            <select id="setup-model"></select>
+          </label>
+          <p class="size">ca. 2,6 GB</p>
+          <button class="btn primary" id="btn-install-fg">Installieren</button>
+        </div>
+      </div>
+
+      <div class="card progress-card" id="progress-card" hidden>
+        <div class="progress-text"><span id="progress-step">…</span><button class="link" id="btn-cancel">Abbrechen</button></div>
+        <div class="bar"><div class="bar-fill" id="progress-fill"></div></div>
+        <p class="tiny muted" id="progress-detail"></p>
+      </div>
+      <p class="error" id="setup-error" hidden></p>
+
+      <div class="setup-foot">
+        <button class="link" id="btn-open-folder">Ordner öffnen</button>
+        <button class="btn" id="btn-setup-done">Weiter</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Lobby -->
+  <section id="view-lobby" class="view center" hidden>
+    <div class="card lobby">
+      <div class="brand big"><span class="logo">▶</span> Watchparty</div>
+      <p class="muted">Hi <strong id="lobby-name"></strong>! Mach einen Raum auf oder tritt einem bei.</p>
+      <button class="btn primary big" id="btn-create">Neuen Raum erstellen</button>
+      <div class="divider"><span>oder</span></div>
+      <form id="join-form" class="row">
+        <input name="code" maxlength="80" placeholder="Raum-Code oder Link" autocomplete="off" spellcheck="false" required>
+        <button class="btn" type="submit">Beitreten</button>
+      </form>
+      <p class="error" id="lobby-error" hidden></p>
+      <div class="chips" id="lobby-chips"></div>
+      <div class="lobby-foot">
+        <span class="muted tiny" id="lobby-server"></span>
+        <span>
+          <button class="link" id="btn-setup">Einrichtung</button>
+          <button class="link" id="btn-logout">Abmelden</button>
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Raum -->
+  <section id="view-room" class="view room" hidden>
+    <header class="room-head">
+      <button class="icon" id="btn-leave" title="Raum verlassen">←</button>
+      <div class="room-code">
+        <span class="muted tiny">Raum</span>
+        <button class="code-chip" id="btn-copy-link" title="Link kopieren"><code id="room-code"></code><span class="tiny">Link kopieren</span></button>
+      </div>
+      <div class="conn" id="conn"><span class="pulse"></span><span id="conn-text">Verbinde …</span></div>
+      <div class="spacer"></div>
+      <div class="avatars" id="avatars"></div>
+    </header>
+
+    <main class="room-main">
+      <div class="stage">
+        <div class="now" id="now">
+          <div class="now-bg" id="now-bg"></div>
+          <div class="now-inner">
+            <img class="poster" id="now-poster" alt="" hidden>
+            <div class="now-text">
+              <span class="eyebrow" id="now-eyebrow">Noch nichts ausgewählt</span>
+              <h2 id="now-title">Such euch was aus</h2>
+              <p class="muted" id="now-sub">Wer steuern darf, wählt über „Film auswählen“ etwas aus der Bibliothek.</p>
+              <div class="badges" id="now-badges"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="transport card">
+          <div class="seek-row">
+            <span class="time" id="t-cur">0:00</span>
+            <div class="seek" id="seek">
+              <div class="seek-track"><div class="seek-buffer" id="seek-buffer"></div><div class="seek-fill" id="seek-fill"></div><div class="seek-knob" id="seek-knob"></div></div>
+              <div class="seek-tip" id="seek-tip" hidden></div>
+            </div>
+            <span class="time" id="t-dur">0:00</span>
+          </div>
+          <div class="btn-row">
+            <button class="btn" id="btn-library">🎬 Film auswählen</button>
+            <div class="spacer"></div>
+            <button class="icon big" id="btn-back" title="10 s zurück">↺</button>
+            <button class="play" id="btn-play" title="Play/Pause">▶</button>
+            <button class="icon big" id="btn-fwd" title="10 s vor">↻</button>
+            <div class="spacer"></div>
+            <button class="btn" id="btn-player">⛶ Player öffnen</button>
+          </div>
+          <p class="tiny muted lock" id="lock-hint" hidden>🔒 Gerade steuert nur der Host.</p>
+        </div>
+
+        <div class="panels">
+          <div class="card panel" id="panel-picture">
+            <div class="panel-head"><h3>Bild</h3><span class="tiny muted" id="pic-live"></span></div>
+            <div class="toggle-row">
+              <div>
+                <strong>Framegen</strong> <span class="pill">RIFE</span>
+                <p class="tiny muted">KI-Zwischenbilder, F1 im Player</p>
+              </div>
+              <label class="switch"><input type="checkbox" id="fg-enabled"><span></span></label>
+            </div>
+            <div class="sub-grid" id="fg-options">
+              <label>Ziel
+                <select id="fg-target">
+                  <option value="display">Monitor-Hz (auto)</option>
+                  <option value="x2">2× (24 → 48)</option>
+                  <option value="x3">3×</option>
+                  <option value="x4">4×</option>
+                  <option value="x5">5× (24 → 120)</option>
+                  <option value="x6">6×</option>
+                </select>
+              </label>
+              <label>Modell
+                <select id="fg-model"></select>
+              </label>
+            </div>
+            <div class="fg-status" id="fg-status"></div>
+            <div class="toggle-row">
+              <div>
+                <strong>RTX Super Resolution</strong> <span class="pill">VSR</span>
+                <p class="tiny muted">Hochskalieren auf Bildschirmgröße, F2 im Player</p>
+              </div>
+              <label class="switch"><input type="checkbox" id="vsr-enabled"><span></span></label>
+            </div>
+            <div class="toggle-row slim">
+              <span>RTX Video HDR <span class="tiny muted">(nur mit HDR-Monitor)</span></span>
+              <label class="switch small"><input type="checkbox" id="vsr-hdr"><span></span></label>
+            </div>
+          </div>
+
+          <div class="card panel">
+            <div class="panel-head"><h3>Ton &amp; Untertitel</h3></div>
+            <label>Tonspur <select id="sel-audio"><option>–</option></select></label>
+            <label>Untertitel <select id="sel-sub"><option>–</option></select></label>
+            <label>Lautstärke
+              <input type="range" id="volume" min="0" max="130" step="1">
+            </label>
+          </div>
+
+          <div class="card panel">
+            <div class="panel-head"><h3>Wiedergabe</h3></div>
+            <label>Qualität
+              <select id="sel-quality">
+                <option value="direct">Original (empfohlen)</option>
+                <option value="40000000">40 Mbit/s</option>
+                <option value="20000000">20 Mbit/s (1080p)</option>
+                <option value="10000000">10 Mbit/s</option>
+                <option value="6000000">6 Mbit/s (720p)</option>
+              </select>
+            </label>
+            <label>Bildschirm <select id="sel-screen"></select></label>
+            <div class="toggle-row slim">
+              <span>Im Vollbild starten</span>
+              <label class="switch small"><input type="checkbox" id="opt-fullscreen"><span></span></label>
+            </div>
+            <div class="toggle-row slim">
+              <span>Chat im Bild einblenden <span class="tiny muted">(C)</span></span>
+              <label class="switch small"><input type="checkbox" id="opt-osdchat"><span></span></label>
+            </div>
+            <p class="tiny muted stats" id="stats"></p>
+          </div>
+        </div>
+      </div>
+
+      <aside class="side">
+        <div class="tabs">
+          <button class="tab active" data-tab="chat">Chat</button>
+          <button class="tab" data-tab="people">Leute <span class="count" id="people-count">0</span></button>
+        </div>
+        <div class="tab-body" id="tab-chat">
+          <div class="chat" id="chat"></div>
+          <div class="react-bar" id="react-bar"></div>
+          <form class="chat-form" id="chat-form">
+            <input name="text" maxlength="500" placeholder="Nachricht …" autocomplete="off">
+            <button class="icon send" type="submit" title="Senden">➤</button>
+          </form>
+        </div>
+        <div class="tab-body" id="tab-people" hidden>
+          <div class="members" id="members"></div>
+          <div class="host-box" id="host-box" hidden>
+            <div class="toggle-row slim">
+              <span>Alle dürfen steuern</span>
+              <label class="switch small"><input type="checkbox" id="chk-all-control"><span></span></label>
+            </div>
+          </div>
+          <button class="btn small" id="btn-invite" hidden>Freund einladen</button>
+        </div>
+      </aside>
+    </main>
+  </section>
+
+  <!-- Bibliothek -->
+  <div class="overlay" id="library" hidden>
+    <div class="library">
+      <div class="lib-head">
+        <div class="crumbs" id="crumbs"></div>
+        <input type="search" id="lib-search" placeholder="Suchen …" autocomplete="off" spellcheck="false">
+        <button class="icon" id="btn-lib-close" title="Schließen">✕</button>
+      </div>
+      <div class="lib-grid" id="lib-grid"></div>
+      <div class="lib-more"><button class="btn small" id="btn-lib-more" hidden>Mehr laden</button></div>
+    </div>
+    <div class="detail" id="detail" hidden>
+      <div class="detail-card">
+        <button class="icon detail-close" id="btn-detail-close">✕</button>
+        <div class="detail-bg" id="detail-bg"></div>
+        <div class="detail-body">
+          <h2 id="detail-title"></h2>
+          <p class="muted" id="detail-sub"></p>
+          <div class="badges" id="detail-badges"></div>
+          <p id="detail-overview"></p>
+          <div class="row">
+            <button class="btn primary" id="btn-detail-play">▶ Für alle abspielen</button>
+            <button class="btn" id="btn-detail-suggest">Vorschlagen</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
