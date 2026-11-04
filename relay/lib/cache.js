@@ -82,10 +82,10 @@ class DiskCache {
   async get(key, fetcher) {
     if (this.index.has(key)) {
       const hit = await this.read(key);
-      if (hit) { this.hits++; return hit; }
+      if (hit) { this.hits++; return { ...hit, hit: true }; }
     }
     const running = this.inflight.get(key);
-    if (running) { this.hits++; return running; }
+    if (running) { this.hits++; return { ...(await running), hit: true }; }
     this.misses++;
     const p = (async () => {
       const r = await fetcher();
@@ -93,7 +93,7 @@ class DiskCache {
       return { buf: r.buf, meta: r.meta };
     })();
     this.inflight.set(key, p);
-    try { return await p; } finally { this.inflight.delete(key); }
+    try { return { ...(await p), hit: false }; } finally { this.inflight.delete(key); }
   }
 
   stats() {

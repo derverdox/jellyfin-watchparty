@@ -1,0 +1,36 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { Telemetry } = require('../lib/telemetry');
+
+test('Watchtime, Rekorde, Zeitreihen und Speicherung', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-tel-'));
+  const t = new Telemetry(dir);
+  const item = { id: 'abc', title: 'Testfilm', type: 'Movie' };
+  const client = (name, state) => ({ session: { username: name, name }, status: { state } });
+  const rooms = new Map([['R1', { playing: true, item, clients: new Map([['a', client('Bob', 'playing')], ['b', client('Lea', 'buffering')]]) }]]);
+  t.last.t = Date.now() - 10000;
+  t.out(1000, false); t.out(3000, true);
+  const p = t.tick(rooms, { hits: 3, misses: 1 });
+  assert.strictEqual(p.viewers, 2);
+  assert.strictEqual(p.playing, 1);
+  assert.strictEqual(p.hit, 75);
+  const s = t.summary();
+  assert.strictEqual(s.topUsers[0].name, 'Bob');
+  assert.ok(s.topUsers[0].watchSeconds >= 9.9, 'nur wer spielt, sammelt Zeit');
+  assert.ok(!s.topUsers.find((u) => u.name === 'Lea'));
+  assert.strictEqual(s.topItems[0].title, 'Testfilm');
+  assert.strictEqual(s.peak.viewers, 2);
+  assert.strictEqual(t.traffic().saved, 75, '75 % aus dem Cache');
+  t.login('Bob', true); t.login('mallory', false, '1.2.3.4');
+  assert.strictEqual(s.days.length, 1);
+  t.save();
+  const t2 = new Telemetry(dir);
+  assert.ok(t2.summary().topUsers[0].watchSeconds >= 9.9, 'überlebt Neustart');
+  assert.strictEqual(t2.summary().days[0].failedLogins, 1);
+  assert.ok(t.readAudit(10).length >= 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

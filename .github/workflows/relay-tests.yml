@@ -1,0 +1,25 @@
+name: Relay-Tests
+
+on:
+  push:
+    branches: [main]
+    paths: ['relay/**', 'agent/**', '.github/workflows/relay-tests.yml']
+  pull_request:
+    paths: ['relay/**', 'agent/**', '.github/workflows/relay-tests.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Abhängigkeiten
+        run: |
+          npm install --prefix relay --omit=dev
+          npm install --prefix agent --omit=dev
+      - name: Tests (Relay + Agent + Test-Jellyfin)
+        working-directory: relay
+        run: node --test test/*.test.js
