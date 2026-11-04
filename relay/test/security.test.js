@@ -16,7 +16,7 @@ test('Sicherheit', { timeout: 60000 }, async (t) => {
     env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', AGENT_TOKEN: 's'.repeat(40), ADMIN_USER: 'chef', ADMIN_PASSWORD: 'geheim123', DATA_DIR: path.join(tmp, 'd'), CACHE_DIR: path.join(tmp, 'c') },
     stdio: 'ignore',
   });
-  t.after(() => { proc.kill(); fs.rmSync(tmp, { recursive: true, force: true }); });
+  t.after(() => { proc.kill(); fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 100; i++) { try { await fetch(`${base}/healthz`); break; } catch { await sleep(100); } }
 

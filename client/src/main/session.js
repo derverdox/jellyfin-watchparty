@@ -447,7 +447,8 @@ class Session extends EventEmitter {
     }
     if (ad > 0.25) this.correcting = true;
     if (this.correcting && ad < 0.05) this.correcting = false;
-    this.setSpeed(this.correcting ? 1 + Math.max(-0.06, Math.min(0.06, diff * 0.15)) : 1);
+    // Verstärkung 0,4: ein Player, der dauerhaft 5 % zu langsam läuft, bleibt so unter ~0,15 s Abweichung
+    this.setSpeed(this.correcting ? 1 + Math.max(-0.06, Math.min(0.06, diff * 0.4)) : 1);
   }
 
   playerStateName() {

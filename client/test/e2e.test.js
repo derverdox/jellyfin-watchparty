@@ -63,7 +63,7 @@ test('Client folgt dem Raum und meldet eigene Aktionen', { skip: !hasFfmpeg() &&
     for (const s of sessions) await s.destroy().catch(() => {});
     for (const p of procs) p.kill();
     jf.server.close();
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const base = `http://127.0.0.1:${port}`;
