@@ -3,6 +3,16 @@ package de.watchparty.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.graphics.drawable.Icon
+import android.os.Build
+import android.util.Rational
 import android.app.UiModeManager
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
@@ -50,6 +60,9 @@ class MainActivity : Activity() {
     private var lastBack = 0L
     private var isTv = false
     private var pendingCamera: PermissionRequest? = null
+    private var videoPlaying = false
+    private var videoAspect = Rational(16, 9)
+    private var pipReceiver: BroadcastReceiver? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -278,12 +291,70 @@ class MainActivity : Activity() {
         else req.deny()
     }
 
+    /* ---------------- Bild im Bild (Handy/Tablet) ---------------- */
+
+    private fun pipSupported() = !isTv && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+        packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
+    private fun pipParams(): PictureInPictureParams {
+        val b = PictureInPictureParams.Builder().setAspectRatio(videoAspect)
+        // Play/Pause im kleinen Fenster (gilt wie überall für den ganzen Raum)
+        val intent = Intent(ACTION_PIP).setPackage(packageName)
+        val pi = PendingIntent.getBroadcast(this, 1, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val icon = Icon.createWithResource(this, if (videoPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play)
+        val label = if (videoPlaying) "Pause" else "Play"
+        b.setActions(listOf(RemoteAction(icon, label, label, pi)))
+        // Android 12+: beim Wechsel in eine andere App von selbst ins kleine Fenster
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) b.setAutoEnterEnabled(videoPlaying).setSeamlessResizeEnabled(true)
+        return b.build()
+    }
+
+    private fun updatePip() {
+        if (!pipSupported()) return
+        try { setPictureInPictureParams(pipParams()) } catch (_: Exception) { /* egal */ }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Vor Android 12 muss die App selbst ins kleine Fenster wechseln
+        if (pipSupported() && videoPlaying && web != null && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            try { enterPictureInPictureMode(pipParams()) } catch (_: Exception) { /* egal */ }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        web?.evaluateJavascript("window.wpTv&&wpTv.pip&&wpTv.pip(${isInPictureInPictureMode})", null)
+        if (isInPictureInPictureMode && pipReceiver == null) {
+            val r = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    web?.evaluateJavascript("window.wpTv&&wpTv.media('playpause')", null)
+                }
+            }
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(r, IntentFilter(ACTION_PIP), Context.RECEIVER_NOT_EXPORTED)
+            else registerReceiver(r, IntentFilter(ACTION_PIP))
+            pipReceiver = r
+        } else if (!isInPictureInPictureMode) {
+            pipReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) { } }
+            pipReceiver = null
+        }
+    }
+
+    private fun inPip() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode
+
     /* ---------------- Lebenszyklus ---------------- */
 
     override fun onPause() {
         super.onPause()
-        web?.onPause()
+        // Im kleinen Fenster läuft das Video weiter
+        if (!inPip()) web?.onPause()
         CookieManager.getInstance().flush()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Kleines Fenster weggewischt oder App wirklich im Hintergrund → lokal anhalten (die anderen schauen weiter)
+        web?.onPause()
     }
 
     override fun onResume() {
@@ -292,6 +363,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        pipReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) { } }
+        pipReceiver = null
         destroyWeb()
         super.onDestroy()
     }
@@ -303,9 +376,20 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun keepAwake(on: Boolean) {
             runOnUiThread {
+                videoPlaying = on
                 if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                updatePip()
             }
+        }
+
+        /** Seitenverhältnis des Videos fürs kleine Fenster. */
+        @JavascriptInterface
+        fun videoAspect(w: Int, h: Int) {
+            if (w <= 0 || h <= 0) return
+            // Android erlaubt nur 1:2,39 bis 2,39:1
+            val r = (w.toDouble() / h).coerceIn(0.42, 2.39)
+            runOnUiThread { videoAspect = Rational((r * 1000).toInt(), 1000); updatePip() }
         }
 
         @JavascriptInterface
@@ -318,6 +402,7 @@ class MainActivity : Activity() {
     companion object {
         private const val KEY_SERVER = "server"
         private const val REQ_CAMERA = 42
+        private const val ACTION_PIP = "de.watchparty.app.PIP_PLAYPAUSE"
 
         /** „example.com“, „https://example.com/“ oder „192.168.1.5:8097“ → Basis-URL, sonst null. */
         fun normalize(input: String): String? {
