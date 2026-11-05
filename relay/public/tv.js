@@ -1,7 +1,9 @@
 'use strict';
 /**
- * TV-Modus: Bedienung mit der Fernbedienung (Fire TV / Android TV).
- * Läuft nur in der Watchparty-TV-App (User-Agent enthält „WatchpartyTV“), im Browser passiert nichts.
+ * App-Modus der Watchparty-Android-App.
+ * - Fernseher (User-Agent „WatchpartyTV“): voller TV-Modus mit Fernbedienung (siehe unten)
+ * - Handy/Tablet („WatchpartyApp“): nur Zurück-Taste, Bildschirm-an beim Video, „Server ändern“
+ * Im normalen Browser passiert nichts.
  *
  * - Pfeiltasten springen zum nächsten Knopf/Feld in der Richtung (räumliche Navigation)
  * - Im Raum ohne Fokus: ←/→ spulen, OK = Play/Pause, ↑ Leiste oben, ↓ Steuerleiste
@@ -10,12 +12,15 @@
  */
 (function tvMode() {
   const isTv = /WatchpartyTV/.test(navigator.userAgent) || new URLSearchParams(location.search).has('tv');
-  if (!isTv) return;
+  const isApp = isTv || /WatchpartyApp/.test(navigator.userAgent);
+  if (!isApp) return;
   const native = window.WatchpartyTV || null; // Brücke aus der App (fehlt beim Testen im Browser mit ?tv)
 
-  document.documentElement.classList.add('tv');
-  document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: '/tv.css' }));
-  document.body.classList.add('chat-hidden');
+  if (isTv) {
+    document.documentElement.classList.add('tv');
+    document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: '/tv.css' }));
+    document.body.classList.add('chat-hidden');
+  }
 
   const q = (s, r = document) => r.querySelector(s);
   const FOCUSABLE = 'a[href], button, input:not([type=hidden]):not([type=range]), select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -100,8 +105,8 @@
     document.body.classList.toggle('tv-fs', on);
     playerEl.classList.toggle('fs', on);
   }
-  q('#btn-fs').addEventListener('click', (e) => { e.stopImmediatePropagation(); setFs(!document.body.classList.contains('tv-fs')); }, true);
-  vid.addEventListener('playing', () => { setFs(true); if (native) native.keepAwake(true); });
+  if (isTv) q('#btn-fs').addEventListener('click', (e) => { e.stopImmediatePropagation(); setFs(!document.body.classList.contains('tv-fs')); }, true);
+  vid.addEventListener('playing', () => { if (isTv) setFs(true); if (native) native.keepAwake(true); });
   vid.addEventListener('pause', () => { if (native) native.keepAwake(false); });
   vid.addEventListener('emptied', () => { if (native) native.keepAwake(false); });
 
@@ -125,7 +130,7 @@
     return true;
   }
 
-  window.addEventListener('keydown', (e) => {
+  if (isTv) window.addEventListener('keydown', (e) => {
     const k = e.key;
     // Medientasten (kommen auch direkt von der App, siehe wpTv.media)
     if (k === 'MediaPlayPause' || k === 'MediaPlay' || k === 'MediaPause') { e.preventDefault(); e.stopImmediatePropagation(); media('playpause'); return; }
@@ -137,7 +142,16 @@
       if (playerKey(k)) { e.preventDefault(); e.stopImmediatePropagation(); }
       return;
     }
-    if (k === 'Enter') return; // OK auf Knopf/Feld: normal auslösen
+    if (k === 'Enter') {
+      // OK auf Knopf/Kachel/Link: selbst auslösen. Sonst schnappt sich app.js die Taste (Chat-Feld im Raum).
+      const t = e.target;
+      if (t && t !== document.body && t.matches && t.matches('button, a[href], [role=button], [tabindex]:not(input):not(select):not(textarea)')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        t.click();
+      }
+      return; // Textfelder/Auswahllisten: normal (Tastatur bzw. Auswahl öffnet sich)
+    }
     const t = e.target;
     const tag = (t.tagName || '').toLowerCase();
     // In Textfeldern bewegen ←/→ den Cursor, solange er nicht am Rand steht
@@ -195,7 +209,7 @@
     if (shown('#pw-form')) { q('#pw-form').hidden = true; return true; }
     if (!room.hidden) {
       const a = document.activeElement;
-      if (a && a !== document.body && room.contains(a)) { a.blur(); return true; }
+      if (isTv && a && a !== document.body && room.contains(a)) { a.blur(); return true; }
       if (document.body.classList.contains('tv-fs')) { setFs(false); return true; }
       if (Date.now() - leaveArmedAt < 2500) { leaveArmedAt = 0; q('#btn-leave').click(); return true; }
       leaveArmedAt = Date.now();
@@ -206,6 +220,7 @@
   }
 
   function restoreFocus() {
+    if (!isTv) return;
     setTimeout(() => {
       const a = document.activeElement;
       if (a && a !== document.body && visible(a)) return;
@@ -227,21 +242,23 @@
     const a = document.activeElement;
     if (a && a !== document.body && root.contains(a) && visible(a)) return;
     const list = candidates(root);
-    // Formulare: erstes leeres Feld; sonst Hauptknopf
-    const field = list.find((e) => (e.tagName === 'INPUT' && !e.value && e.type !== 'search'));
-    focusEl(field || list.find((e) => e.matches('.btn.primary')) || list[0]);
+    // Was zuerst kommt: ein leeres Eingabefeld (Login) oder der Hauptknopf (Lobby)
+    const first = list.find((e) => e.matches('.btn.primary') || (e.tagName === 'INPUT' && !e.value && e.type !== 'search'));
+    focusEl(first || list[0]);
   }
   let afTimer = null;
-  new MutationObserver(() => { clearTimeout(afTimer); afTimer = setTimeout(autofocus, 120); })
-    .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
-  setTimeout(autofocus, 300);
+  if (isTv) {
+    new MutationObserver(() => { clearTimeout(afTimer); afTimer = setTimeout(autofocus, 120); })
+      .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+    setTimeout(autofocus, 300);
+  }
 
   /* ---------------- App-spezifisches ---------------- */
 
   if (native && native.changeServer) {
     const links = q('#view-lobby .row-links');
     if (links) {
-      const b = Object.assign(document.createElement('button'), { className: 'link', type: 'button', textContent: 'Server ändern (TV-App)' });
+      const b = Object.assign(document.createElement('button'), { className: 'link', type: 'button', textContent: 'Server ändern (App)' });
       b.addEventListener('click', () => native.changeServer());
       links.append(b);
     }

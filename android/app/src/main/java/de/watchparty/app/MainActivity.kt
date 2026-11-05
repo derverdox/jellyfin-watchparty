@@ -1,8 +1,12 @@
-package de.watchparty.tv
+package de.watchparty.app
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.UiModeManager
 import android.content.SharedPreferences
+import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -27,10 +31,11 @@ import android.widget.TextView
 import android.widget.Toast
 
 /**
- * Watchparty für Fire TV / Android TV.
+ * Watchparty für Fire TV / Android TV, Handy und Tablet (eine App für alles).
  *
- * Lädt die Watchparty-Website in einer Vollbild-WebView. Die Seite erkennt die App am
- * User-Agent („WatchpartyTV“) und schaltet in den TV-Modus (Steuerung per Fernbedienung, tv.js).
+ * Lädt die Watchparty-Website in einer WebView. Die Seite erkennt die App am User-Agent:
+ *  - „WatchpartyTV“ auf Fernsehern → TV-Modus (Steuerung per Fernbedienung, tv.js)
+ *  - „WatchpartyApp“ auf Handy/Tablet → normale Touch-Oberfläche, Zurück-Taste schließt Fenster
  * Zurück-, Menü- und Medientasten fängt die App ab und reicht sie an die Seite weiter.
  */
 class MainActivity : Activity() {
@@ -42,9 +47,18 @@ class MainActivity : Activity() {
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     private var server: String? = null
     private var lastBack = 0L
+    private var isTv = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        isTv = detectTv()
+        if (isTv) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        } else {
+            window.statusBarColor = Color.parseColor("#0B0B0F")
+            window.navigationBarColor = Color.parseColor("#0B0B0F")
+        }
         prefs = getSharedPreferences("watchparty", MODE_PRIVATE)
         val saved = prefs.getString(KEY_SERVER, null)
         if (saved.isNullOrBlank()) showSetup(null) else showWeb(saved)
@@ -109,7 +123,8 @@ class MainActivity : Activity() {
             loadWithOverviewMode = true
             setSupportZoom(false)
             builtInZoomControls = false
-            userAgentString = "$userAgentString WatchpartyTV/${BuildConfigCompat.versionName(this@MainActivity)}"
+            val marker = if (isTv) "WatchpartyTV" else "WatchpartyApp"
+            userAgentString = "$userAgentString $marker/${BuildConfigCompat.versionName(this@MainActivity)}"
         }
         CookieManager.getInstance().setAcceptCookie(true)
         wv.addJavascriptInterface(Bridge(), "WatchpartyTV")
@@ -137,6 +152,11 @@ class MainActivity : Activity() {
                 fullscreenCallback = callback
                 root?.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
                 web?.visibility = View.GONE
+                if (!isTv) {
+                    // Handy/Tablet: Video im Querformat, ohne Status- und Navigationsleiste
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    setImmersive(true)
+                }
             }
 
             override fun onHideCustomView() { leaveFullscreen() }
@@ -162,6 +182,26 @@ class MainActivity : Activity() {
         fullscreenCallback = null
         web?.visibility = View.VISIBLE
         web?.requestFocus()
+        if (!isTv) {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            setImmersive(false)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setImmersive(on: Boolean) {
+        window.decorView.systemUiVisibility = if (on) {
+            View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+        } else View.SYSTEM_UI_FLAG_VISIBLE
+    }
+
+    private fun detectTv(): Boolean {
+        val ui = getSystemService(UI_MODE_SERVICE) as? UiModeManager
+        return ui?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+            packageManager.hasSystemFeature("amazon.hardware.fire_tv") ||
+            packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
     }
 
     private fun destroyWeb() {

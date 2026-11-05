@@ -10,5 +10,5 @@
     <string name="error_retry">Nochmal versuchen</string>
     <string name="error_change">Server ändern</string>
     <string name="exit_again">Nochmal Zurück drücken zum Beenden</string>
-    <string name="external_blocked">Externe Links gehen in der TV-App nicht.</string>
+    <string name="external_blocked">Externe Links gehen in der App nicht.</string>
 </resources>

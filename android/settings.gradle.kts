@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "watchparty-tv"
+rootProject.name = "watchparty-android"
 include(":app")
