@@ -24,7 +24,8 @@ test('Solo-Raum und Freundesliste', { timeout: 60000 }, async (t) => {
 
   // Das Admin-Konto wird beim Start angelegt; kurz warten, bis der Login klappt
   let first;
-  for (let i = 0; i < 50; i++) { first = await post('/api/login', { username: 'chef', password: 'geheim123' }); if (first.status === 200) break; await sleep(100); }
+  await sleep(500); // nicht hämmern: Fehlversuche würden die Brute-Force-Bremse auslösen
+  for (let i = 0; i < 10; i++) { first = await post('/api/login', { username: 'chef', password: 'geheim123' }); if (first.status === 200) break; await sleep(500); }
   const chef = cookieOf(first);
   assert.equal((await post('/api/admin/users', { username: 'bob', password: 'Sonne-Mond-7' }, chef)).status, 200);
   const bob = cookieOf(await post('/api/login', { username: 'bob', password: 'Sonne-Mond-7' }));
