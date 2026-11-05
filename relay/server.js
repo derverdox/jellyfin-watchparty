@@ -84,7 +84,8 @@ function libCatalog(libId, collectionType) {
       const items = data.Items || [];
       out.push(...items);
       start += items.length;
-      if (!items.length || start >= (data.TotalRecordCount || 0) || start > 50000) break;
+      // Bis eine leere Seite kommt: ältere Agents melden als Gesamtzahl nur die Größe der Seite
+      if (!items.length || start > 50000) break;
     }
     return out;
   })();
