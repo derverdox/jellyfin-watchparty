@@ -155,7 +155,7 @@ class MainActivity : Activity() {
                 if (!isTv) {
                     // Handy/Tablet: Video im Querformat, ohne Status- und Navigationsleiste
                     requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                    setImmersive(true)
+                    hideSystemBars(true)
                 }
             }
 
@@ -184,12 +184,12 @@ class MainActivity : Activity() {
         web?.requestFocus()
         if (!isTv) {
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            setImmersive(false)
+            hideSystemBars(false)
         }
     }
 
     @Suppress("DEPRECATION")
-    private fun setImmersive(on: Boolean) {
+    private fun hideSystemBars(on: Boolean) {
         window.decorView.systemUiVisibility = if (on) {
             View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
                 View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
