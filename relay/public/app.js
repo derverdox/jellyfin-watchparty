@@ -1376,6 +1376,9 @@ function openTile(it) {
 // Schnittstelle für extras.js (im Desktop-Client gibt es dieselbe mit IPC)
 window.WPX = {
   api, send, serverNow, closeLibrary, playSolo,
+  joinRoom: (code) => { history.pushState(null, '', `/r/${code}`); enterRoom(code); },
+  showLobby, goHome: () => route(),
+  openFolder: (it) => { openLibrary(); openTile(it); },
   img: (id, w, type) => `/img/${id}?w=${w}${type ? `&type=${type}` : ''}`,
   seek: (pos) => control('seek', pos),
   segments: () => (S.info && S.info.segments) || [],

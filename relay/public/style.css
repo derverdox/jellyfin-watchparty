@@ -593,6 +593,7 @@ html.tv #btn-pair-qr { display: none; } /* QR steht auf Fernsehern sowieso daneb
 
 /* Freunde (wie Discord) */
 .nf-friends-row h3 .nf-count { color: var(--ok); font-size: 13px; font-weight: 700; }
+.nf-friends-row .nf-empty { padding: 0; }
 .nf-friends { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 8px; }
 .nf-friends::-webkit-scrollbar { display: none; }
 .nf-friend {

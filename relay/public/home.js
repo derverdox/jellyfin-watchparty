@@ -5,8 +5,11 @@
  *
  * Abspielen geht ohne Raum: playSolo() öffnet den eigenen Raum, Freunde kommen per
  * Link oder über „Mitschauen“ dazu. „Zusammen schauen“ führt zur alten Lobby.
- * Nutzt die Helfer aus app.js ($, el, api, S, toast, route, playSolo, showLobby, colorFor …)
- * und WP.openDetail aus extras.js.
+ * Die Datei ist in relay/public und client/src/renderer identisch (Test prüft das).
+ * Gemeinsame Helfer beider Oberflächen: el, S, toast, colorFor, showView; WP.* aus extras.js.
+ * Was sich unterscheidet, kommt über window.WPX:
+ *   api(path, opts), img(id, w, type), playSolo(itemId, pos), joinRoom(code),
+ *   showLobby(), goHome(), openFolder(item)
  */
 (function home() {
   const q = (s) => document.querySelector(s);
@@ -16,6 +19,9 @@
   };
   const body = () => q('#nf-body');
   const isTv = () => document.documentElement.classList.contains('tv');
+  const env = window.WPX;
+  const api = (p, o) => env.api(p, o);
+  const playSolo = (id, pos) => env.playSolo(id, pos);
 
   /* ---------------- Daten (mit kurzem Cache) ---------------- */
 
@@ -40,7 +46,7 @@
 
   /* ---------------- Bausteine ---------------- */
 
-  const imgUrl = (id, w, type) => `/img/${id}?w=${w}${type ? `&type=${type}` : ''}`;
+  const imgUrl = (id, w, type) => env.img(id, w, type);
   const runtime = (s) => (s ? (s >= 3600 ? `${Math.floor(s / 3600)} Std. ${Math.round((s % 3600) / 60)} Min.` : `${Math.round(s / 60)} Min.`) : null);
   const epLabel = (it) => (it.type === 'Episode' && it.index != null ? `S${it.parentIndex ?? '?'}:F${it.index}` : null);
 
@@ -55,7 +61,7 @@
 
   function open(it) {
     if (it.playable || it.type === 'Series') { WP.openDetail(it); return; }
-    if (it.isFolder || it.type === 'BoxSet' || it.type === 'Season') { openLibrary(); openTile(it); }
+    if (it.isFolder || it.type === 'BoxSet' || it.type === 'Season') env.openFolder(it);
   }
 
   function card(it, opts = {}) {
@@ -149,8 +155,7 @@
   }
 
   function joinRoom(code) {
-    history.pushState(null, '', `/r/${code}`);
-    enterRoom(code);
+    env.joinRoom(code);
   }
 
   async function renderFriends(box) {
@@ -323,9 +328,9 @@
   }
 
   q('#nf-tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) setTab(b.dataset.tab); });
-  q('#nf-party').addEventListener('click', () => showLobby());
-  q('#nf-me').addEventListener('click', () => showLobby());
-  q('#btn-lobby-home').addEventListener('click', () => route());
+  q('#nf-party').addEventListener('click', () => env.showLobby());
+  q('#nf-me').addEventListener('click', () => env.showLobby());
+  q('#btn-lobby-home').addEventListener('click', () => env.goHome());
   q('#nf-search').addEventListener('input', (e) => {
     const t = e.target.value.trim();
     clearTimeout(H.searchTimer);

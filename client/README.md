@@ -8,6 +8,10 @@ Am Relay und am Agent muss dafür **nichts** geändert werden.
 
 Alles, was die Website kann: anmelden oder **per Einladungslink registrieren**, Räume erstellen und beitreten, Chat, Reaktionen, Vorschläge, **Merkliste und Zuletzt geschaut**, die neue **Suche**, **nächste Folge**, die **Serienansicht mit Gesehen-Markern**, **Bewertungen**, **Warteschlange**, **Abstimmung**, **Zufall**, **schwarzes Brett**, **Mein Jahr**, **Intro überspringen**, Host-Funktionen (Steuerung freigeben, Host weitergeben, rauswerfen), Freunde einladen, **Name und Passwort ändern**. Admins öffnen die **Verwaltung** direkt in einem eigenen Fenster und sehen den Client in Rot. Rechte aus den Gruppen gelten genauso wie im Browser.
 
+## Startseite
+
+Nach dem Anmelden landest du auf derselben Startseite wie auf der Website und in der Android-App: großes Titelbild, Reihen (Weiterschauen, Meine Liste, Top 10, Neu in …), Filme/Serien/Meine Liste, Suche und **Freunde**, also wer gerade was schaut, mit „Mitschauen“. **„▶ Abspielen“ startet alleine** in deinem eigenen Raum und öffnet gleich den Player. Freunde kommen per Link oder „Mitschauen“ dazu. Räume anlegen, mit Code beitreten, Einrichtung und Konto findest du unter **👥 Zusammen schauen**.
+
 ## Installieren
 
 1. Unter **Releases** die neueste `Watchparty-Setup-x.y.z.exe` herunterladen und starten (oder die `.zip` entpacken).

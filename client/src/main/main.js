@@ -147,6 +147,13 @@ app.whenReady().then(async () => {
     session.join(c);
     return { code: c };
   });
+  // Alleine schauen: eigener Raum (wird wiederverwendet), Freunde kommen per Link dazu
+  handle('room:solo', async () => {
+    const { code } = await relay.request('POST', '/api/rooms', { solo: true });
+    session.join(code);
+    return { code };
+  });
+  handle('room:private', (v) => session.send({ t: 'settings', private: !!v }));
   handle('room:leave', () => session.leave());
   handle('room:control', ({ action, position }) => session.control(action, position));
   handle('room:toggle', () => session.togglePlay());
@@ -177,7 +184,9 @@ app.whenReady().then(async () => {
   const API_ALLOW = [
     ['GET', new RegExp(`^/api/details/${ID}$`, 'i')],
     ['GET', new RegExp(`^/api/show/${ID}(\\?room=[A-Z0-9]{4,12})?$`, 'i')],
-    ['GET', /^\/api\/(top-rated|profile)$/],
+    ['GET', /^\/api\/(top-rated|profile|libraries|history|watchlist|activity)$/],
+    ['GET', /^\/api\/items\?[\w=&%.-]*$/],
+    ['GET', /^\/api\/search\?q=[^#]*$/],
     ['GET', /^\/api\/random(\?[\w=&%.-]*)?$/],
     ['GET', /^\/api\/wishes(\?[\w=&%.-]*)?$/],
     ['GET', /^\/api\/wishes\/check\?q=[^#]*$/],

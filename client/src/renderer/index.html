@@ -103,9 +103,28 @@
   </section>
 
   <!-- Lobby -->
+  <!-- Startseite im Streaming-Stil (home.js, identisch mit der Website) -->
+  <section id="view-home" class="view home" hidden>
+    <header class="nf-nav" id="nf-nav">
+      <div class="brand"><span class="logo">▶</span> <span class="hide-sm">Watchparty</span></div>
+      <nav class="nf-tabs" id="nf-tabs">
+        <button data-tab="start" class="on">Start</button>
+        <button data-tab="movies">Filme</button>
+        <button data-tab="series">Serien</button>
+        <button data-tab="list">Meine Liste</button>
+        <button data-tab="wishes">📌 Wünsche</button>
+      </nav>
+      <input class="nf-search" id="nf-search" type="search" placeholder="🔍 Suchen" autocomplete="off">
+      <button class="btn small nf-party" id="nf-party" title="Räume, Einrichtung, Konto">👥 <span class="hide-sm">Zusammen schauen</span></button>
+      <button class="nf-avatar" id="nf-me" aria-label="Konto">?</button>
+    </header>
+    <main class="nf-body" id="nf-body"></main>
+  </section>
+
   <section id="view-lobby" class="view center" hidden>
     <div class="card lobby">
-      <div class="brand big"><span class="logo">▶</span> Watchparty</div>
+      <button class="link lobby-back" id="btn-lobby-home">← Zur Startseite</button>
+      <div class="brand big"><span class="logo">▶</span> Zusammen schauen</div>
       <p class="muted">Hi <strong id="lobby-name"></strong>!<span class="admin-flag" id="admin-flag" hidden>Admin</span> <span id="lobby-hint">Mach einen Raum auf oder tritt einem bei.</span></p>
       <p class="motd" id="motd" hidden></p>
       <button class="btn primary big" id="btn-create">Neuen Raum erstellen</button>
@@ -115,6 +134,7 @@
         <button class="btn" type="submit">Beitreten</button>
       </form>
       <p class="error" id="lobby-error" hidden></p>
+      <div class="lobby-rooms" id="lobby-rooms" hidden></div>
       <div class="chips" id="lobby-chips"></div>
       <div class="lobby-actions">
         <button class="btn small" id="btn-admin" hidden>⚙ Verwaltung</button>
@@ -150,7 +170,7 @@
   <!-- Raum -->
   <section id="view-room" class="view room" hidden>
     <header class="room-head">
-      <button class="icon" id="btn-leave" title="Raum verlassen">←</button>
+      <button class="icon" id="btn-leave" title="Raum verlassen, zurück zur Startseite">←</button>
       <div class="room-code">
         <span class="muted tiny">Raum</span>
         <button class="code-chip" id="btn-copy-link" title="Link kopieren"><code id="room-code"></code><span class="tiny">Link kopieren</span></button>
@@ -289,6 +309,10 @@
               <span>Alle dürfen steuern</span>
               <label class="switch small"><input type="checkbox" id="chk-all-control"><span></span></label>
             </div>
+            <div class="toggle-row slim">
+              <span>Privat (nicht in der Freundesliste)</span>
+              <label class="switch small"><input type="checkbox" id="chk-private"><span></span></label>
+            </div>
           </div>
           <button class="btn small" id="btn-invite" hidden>Freund einladen</button>
         </div>
@@ -350,5 +374,6 @@
 
   <script src="app.js"></script>
   <script src="extras.js"></script>
+  <script src="home.js"></script>
 </body>
 </html>
