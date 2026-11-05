@@ -30,7 +30,7 @@ const A = {
 
 const TITLES = { overview: 'Übersicht', rooms: 'Räume', users: 'Benutzer', groups: 'Gruppen', invites: 'Einladungen', stats: 'Statistik', security: 'Sicherheit', audit: 'Protokoll', settings: 'Einstellungen' };
 const STATE = { playing: ['spielt', 'ok'], paused: ['pausiert', ''], buffering: ['lädt', 'warn'], idle: ['wartet', ''], blocked: ['blockiert', 'warn'], error: ['Fehler', 'bad'] };
-const KIND = { web: '🌐 Browser', desktop: '🖥️ Desktop', mobile: '📱 Mobil' };
+const KIND = { web: '🌐 Browser', desktop: '🖥️ Desktop', mobile: '📱 Mobil', tv: '📺 TV' };
 const BITRATE_LABEL = { 1500000: '1,5 Mbit/s (mobil)', 3000000: '3 Mbit/s', 6000000: '6 Mbit/s (720p)', 10000000: '10 Mbit/s', 20000000: '20 Mbit/s (1080p)', 40000000: '40 Mbit/s (max.)' };
 
 /* ---------------- Hilfen ---------------- */

@@ -1,0 +1,34 @@
+/* TV-Modus (nur in der Watchparty-TV-App geladen, siehe tv.js) */
+
+/* Deutlicher Fokusrahmen statt Mauszeiger */
+html.tv :focus { outline: none; }
+html.tv :focus-visible,
+html.tv button:focus,
+html.tv a:focus,
+html.tv select:focus,
+html.tv input:focus,
+html.tv textarea:focus,
+html.tv [tabindex]:focus {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px var(--accent-soft, #f2b54430);
+}
+html.tv .tile { transition: transform .12s ease; }
+html.tv .tile:focus { transform: scale(1.06); z-index: 2; position: relative; }
+html.tv .btn:focus, html.tv .icon:focus { transform: scale(1.06); }
+
+/* Keine Hover-Effekte, die ohne Maus hängen bleiben */
+html.tv * { cursor: none !important; }
+
+/* Der Lautstärke-Regler ist am Fernseher sinnlos (Lautstärke kommt von der Fernbedienung) */
+html.tv .volume input[type=range] { display: none; }
+
+/* Raum: Video so groß wie möglich */
+html.tv body.tv-fs #view-room .topbar { display: none; }
+html.tv body.tv-fs #view-room .side { display: none; }
+html.tv body.tv-fs #view-room .stage { height: 100vh; }
+html.tv .player video::cue { font-size: 1.25em; }
+
+/* Etwas größere Bedienelemente für Abstand vom Sofa */
+html.tv .controls .icon { min-width: 44px; min-height: 44px; font-size: 20px; }
+html.tv .controls .time { font-size: 16px; }
