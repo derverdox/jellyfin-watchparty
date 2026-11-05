@@ -28,6 +28,7 @@ test('Such-Bewertung', () => {
 
 test('Suche, Merkliste, Verlauf, Qualität', { timeout: 60000 }, async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-lib-'));
+  fakeJf.addMovies(1234); // mehr als zwei Seiten à 500
   const jf = await fakeJf.start();
   const { I } = jf;
   const port = 20000 + Math.floor(Math.random() * 20000);
@@ -62,7 +63,7 @@ test('Suche, Merkliste, Verlauf, Qualität', { timeout: 60000 }, async (t) => {
 
   /* Alle Titel A–Z (im Relay zwischengespeichert, mit Fingerabdruck) */
   const cat = (await req('GET', `/api/catalog?libs=${I.LIB_M},${I.LIB_K}`)).data;
-  assert.ok(cat.items.length >= 2, 'Filme aus beiden Film-Bibliotheken');
+  assert.ok(cat.items.length >= 1236, `alle Filme über mehrere Seiten (${cat.items.length})`);
   assert.ok(cat.items.every((x) => x.type === 'Movie'));
   const names = cat.items.map((x) => x.name);
   assert.deepStrictEqual(names, [...names].sort((x, y) => x.localeCompare(y, 'de', { numeric: true, sensitivity: 'base' })), 'alphabetisch');

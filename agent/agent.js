@@ -203,8 +203,10 @@ async function filterJson(id, res, mode) {
       if (!(lib && excluded.has(lib))) kept.push(it);
     }
   }
+  const removed = data.Items.length - kept.length;
   data.Items = kept;
-  if (typeof data.TotalRecordCount === 'number') data.TotalRecordCount = kept.length;
+  // Gesamtzahl der ganzen Liste (nicht nur dieser Seite) – sonst glaubt das Relay, nach einer Seite sei Schluss
+  if (typeof data.TotalRecordCount === 'number') data.TotalRecordCount = Math.max(kept.length, data.TotalRecordCount - removed);
   const buf = Buffer.from(JSON.stringify(data));
   send({ t: 'res', id, status: res.status, headers: { 'content-type': 'application/json', 'content-length': String(buf.length) } });
   if (buf.length && ws && ws.readyState === WebSocket.OPEN) ws.send(frame(id, buf));

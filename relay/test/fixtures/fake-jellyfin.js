@@ -72,7 +72,12 @@ function start(port = 0) {
         list = descendants(q.get('ParentId')).filter((x) => !types[0] || types.includes(x.Type));
       } else list = Object.values(ITEMS).filter((x) => x.ParentId === q.get('ParentId'));
       if (q.get('Years')) list = list.filter((x) => q.get('Years').split(',').includes(String(x.ProductionYear)));
-      return json({ Items: list, TotalRecordCount: list.length });
+      // Seiten wie bei Jellyfin (StartIndex/Limit); EXTRA_MOVIES hängt viele Filme an (Test für große Bibliotheken)
+      const total = list.length;
+      const st = Number(q.get('StartIndex') || 0);
+      const lim = Number(q.get('Limit') || 0);
+      if (st || lim) list = list.slice(st, lim ? st + lim : undefined);
+      return json({ Items: list, TotalRecordCount: total });
     }
     if ((m = p.match(new RegExp(`^/Users/${USER}/Items/([a-f0-9]{32})$`)))) {
       const it = ITEMS[m[1]];
@@ -100,4 +105,13 @@ function start(port = 0) {
   return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve({ server, port: server.address().port, I, MS, USER })));
 }
 
-module.exports = { start };
+/** Viele Filme in „Filme“ anhängen (Test für Bibliotheken mit mehr als einer Seite). */
+function addMovies(n) {
+  const crypto = require('crypto');
+  for (let i = 0; i < n; i++) {
+    const id = crypto.createHash('md5').update(`masse-${i}`).digest('hex');
+    ITEMS[id] = { Id: id, Name: `Massenfilm ${String(i).padStart(4, '0')}`, Type: 'Movie', ParentId: I.LIB_M, ProductionYear: 1950, RunTimeTicks: 5400e7, ImageTags: {} };
+  }
+}
+
+module.exports = { start, addMovies };
