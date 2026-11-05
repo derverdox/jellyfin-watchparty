@@ -15,7 +15,7 @@ const OBSERVED = [
   'time-pos', 'pause', 'paused-for-cache', 'seeking', 'duration', 'eof-reached',
   'video-params', 'track-list', 'speed', 'display-fps', 'display-width', 'display-height',
   'estimated-vf-fps', 'container-fps', 'fullscreen', 'volume', 'mute', 'idle-active',
-  'vf', 'hwdec-current', 'demuxer-cache-time',
+  'vf', 'hwdec-current', 'demuxer-cache-time', 'sid', 'aid',
 ];
 
 /** Umgebung zusammenführen; unter Windows heißt PATH oft „Path“, das darf nicht doppelt vorkommen. */

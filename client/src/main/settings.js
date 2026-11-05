@@ -6,7 +6,7 @@ const path = require('path');
 const DEFAULT_PREFS = {
   quality: 'direct',
   audioLang: '',
-  subLang: '',
+  subLang: 'off', // '' (alte Einstellungen) zählt ebenfalls als aus
   volume: 100,
   fullscreen: true,
   screen: 'auto',

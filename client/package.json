@@ -25,11 +25,13 @@
     "files": [
       "src/**/*",
       "vpy/**/*",
+      "mpv-ui/**/*",
       "build/icon.png",
       "package.json"
     ],
     "asarUnpack": [
       "vpy/**/*",
+      "mpv-ui/**/*",
       "node_modules/7zip-bin/**/*"
     ],
     "win": {
