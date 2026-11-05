@@ -98,7 +98,27 @@ async function afterLogin() {
   S.prefs = await call('prefs:get');
   await refreshSetup();
   if (!S.setup.setupDone && S.setup.platform === 'win32') return openSetup();
-  showLobby();
+  showHome();
+}
+
+/** Startseite (Streaming-Stil, home.js). Die alte Lobby heißt jetzt „Zusammen schauen“. */
+async function showHome() {
+  try { S.me = await call('auth:me'); } catch { /* offline: alten Stand nehmen */ }
+  if (window.WPHome) WPHome.show(); else showLobby();
+}
+
+/** Alleine abspielen: eigenen Raum öffnen, Titel starten, Player öffnen. */
+async function playSolo(itemId, position = 0) {
+  try {
+    if (S.code && S.you && !$('#view-room').hidden) {
+      if (canLoad()) call('room:send', { t: 'load', itemId, position, play: S.members && S.members.length === 1 });
+      else toast('Hier steuert gerade jemand anderes.', true);
+      return;
+    }
+    S.pendingPlay = { itemId, position };
+    const r = await call('room:solo');
+    enterRoom(r.code);
+  } catch (e) { S.pendingPlay = null; toast(e.message, true); }
 }
 
 /* ---------------- Login ---------------- */
@@ -223,7 +243,7 @@ $('#btn-open-folder').addEventListener('click', () => call('setup:openFolder'));
 $('#btn-setup-done').addEventListener('click', async () => {
   if (!S.setup.setupDone) await call('setup:skip');
   await refreshSetup();
-  if (S.code) showView('view-room'); else showLobby();
+  if (S.code) showView('view-room'); else showHome();
 });
 
 function onProgress(p) {
@@ -261,6 +281,7 @@ async function showLobby() {
   chips.append(el('span', { class: `chip ${st.base || st.platform !== 'win32' ? 'ok' : 'warn'}` }, st.base || st.platform !== 'win32' ? '✓ Player' : 'Player fehlt'));
   if (st.platform === 'win32') chips.append(el('span', { class: `chip ${st.framegen ? 'ok' : ''}` }, st.framegen ? '✓ Framegen' : 'Framegen aus'));
   if (window.WP) WP.lobby();
+  if (window.WPHome) WPHome.lobbyRooms();
   $('#join-form').code.focus();
 }
 
@@ -310,8 +331,8 @@ async function enterRoom(code) {
 
 $('#btn-leave').addEventListener('click', async () => {
   await call('room:leave');
-  S.code = null;
-  showLobby();
+  S.code = null; S.you = null; S.room = null;
+  showHome();
 });
 $('#btn-copy-link').addEventListener('click', async () => {
   const { url } = await call('room:link');
@@ -331,7 +352,7 @@ function onEvent(ch, p) {
     case 'setup:progress': onProgress(p); break;
     case 'sys:gpu': if (S.setup) { S.setup.gpu = p; renderSetup(); } break;
     case 'room:conn': setConn(p.state); break;
-    case 'room:fatal': toast(p.text, true); S.code = null; showLobby(); break;
+    case 'room:fatal': toast(p.text, true); S.code = null; showHome(); break;
     case 'room:welcome':
       setConn('open');
       S.you = p.you; S.room = p.room; S.members = p.members;
@@ -343,6 +364,15 @@ function onEvent(ch, p) {
       renderMembers(); renderControlState();
       if (p.serverNow) S.offset = p.serverNow - Date.now();
       if (window.WP) WP.onMessage({ ...p, t: 'welcome' });
+      if (S.pendingPlay) {
+        const pp = S.pendingPlay;
+        S.pendingPlay = null;
+        const same = p.playback && p.playback.item && p.playback.item.id === pp.itemId;
+        if (!same && canLoad()) call('room:send', { t: 'load', itemId: pp.itemId, position: pp.position || 0, play: true }).catch((e) => toast(e.message, true));
+        else if (same && canControl() && !p.playback.playing) call('room:control', { action: 'play', position: p.playback.position });
+        // Player gleich mit öffnen (sofern eingerichtet)
+        if (!(S.setup && S.setup.platform === 'win32' && !S.setup.base)) call('player:show').catch(() => {});
+      }
       break;
     case 'room:extra': if (window.WP) WP.onMessage(p); break;
     case 'room:playback':
@@ -366,7 +396,7 @@ function onEvent(ch, p) {
       break;
     case 'room:joined': enterRoom(p.code); break;
     case 'room:agent': if (S.me) { S.me.agentOnline = p.online; } if (!p.online) toast('Der Heimserver ist gerade offline.', true); break;
-    case 'room:kicked': toast(p.text || 'Du wurdest aus dem Raum entfernt.', true); S.code = null; showLobby(); break;
+    case 'room:kicked': toast(p.text || 'Du wurdest aus dem Raum entfernt.', true); S.code = null; showHome(); break;
     case 'player:state': {
       const q = S.player && S.player.quality;
       S.player = p; updateTransport(); renderStats();
@@ -455,6 +485,7 @@ function renderControlState() {
   $('#btn-library').disabled = false;
   $('#host-box').hidden = !isHost();
   $('#chk-all-control').checked = !!(S.room && S.room.allowAllControl);
+  $('#chk-private').checked = !!(S.room && S.room.private);
   $('#btn-invite').hidden = !(S.me && S.me.admin);
   updateTransport();
   renderNow();
@@ -719,6 +750,7 @@ function renderMembers() {
 }
 
 $('#chk-all-control').addEventListener('change', (e) => call('room:allowAll', e.target.checked));
+$('#chk-private').addEventListener('change', (e) => call('room:private', e.target.checked));
 $('#btn-invite').addEventListener('click', async () => {
   try {
     const r = await call('room:invite');
@@ -948,6 +980,11 @@ window.WPX = {
   serverNow: () => Date.now() + (S.offset || 0),
   closeLibrary: () => { $('#library').hidden = true; },
   img,
+  playSolo,
+  joinRoom: async (code) => { try { const r = await call('room:join', code); enterRoom(r.code); } catch (e) { toast(e.message, true); } },
+  showLobby: () => showLobby(),
+  goHome: () => showHome(),
+  openFolder: (it) => { openLibrary(); openTile(it); },
   seek: (pos) => call('room:control', { action: 'seek', position: pos }),
   segments: () => (S.item && S.item.segments) || [],
 };

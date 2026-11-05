@@ -41,6 +41,14 @@ test('Serveradresse normalisieren', () => {
   assert.strictEqual(normalizeServer('http://127.0.0.1:8097/'), 'http://127.0.0.1:8097');
 });
 
+test('home.js ist im Web und im Client identisch', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const a = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'home.js'), 'utf8');
+  const b = fs.readFileSync(path.join(__dirname, '..', '..', 'relay', 'public', 'home.js'), 'utf8');
+  assert.strictEqual(a, b, 'relay/public/home.js nach client/src/renderer/ kopieren');
+});
+
 test('extras.js ist im Web und im Client identisch', () => {
   const fs = require('fs');
   const path = require('path');

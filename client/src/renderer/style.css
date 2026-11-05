@@ -510,3 +510,153 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 14px; col
 .room-cards .skip-btn { position: static; }
 .tile .rate.ours { color: var(--accent-2); }
 .lib-sub #btn-random { margin-left: auto; }
+
+/* ================= Startseite im Streaming-Stil (home.js, wie relay/public/style.css) ================= */
+.view.home { height: 100%; overflow-y: auto; overflow-x: hidden; background: #0a0a0d; --card-w: 168px; --pad: 44px; scroll-behavior: smooth; }
+@media (max-width: 900px) { .view.home { --card-w: 128px; --pad: 18px; } }
+@media (max-width: 520px) { .view.home { --card-w: 108px; --pad: 14px; } }
+
+.nf-nav {
+  position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 18px; padding: 12px var(--pad);
+  background: linear-gradient(#000c, #0000); transition: background .25s;
+}
+.nf-nav.solid { background: #0a0a0dee; box-shadow: 0 1px 0 #ffffff12; }
+.nf-tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; flex: 1 1 auto; min-width: 0; }
+.nf-tabs::-webkit-scrollbar { display: none; }
+.nf-tabs button { background: none; border: 0; color: #d6d6dc; font: inherit; font-size: 14.5px; padding: 6px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+.nf-tabs button:hover { color: #fff; }
+.nf-tabs button.on { color: #fff; font-weight: 700; }
+.nf-nav .nf-search { flex: 0 0 200px; width: 200px; margin: 0; background: #000a; border: 1px solid #ffffff2e; color: #fff; border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 14px; }
+.nf-nav .nf-search:focus { flex-basis: 260px; width: 260px; border-color: var(--accent); outline: none; }
+.nf-avatar { width: 34px; height: 34px; border-radius: 8px; border: 0; font-weight: 800; color: #111; cursor: pointer; flex: none; }
+@media (max-width: 700px) {
+  .nf-nav { flex-wrap: wrap; gap: 8px 10px; }
+  .nf-tabs { order: 3; flex-basis: 100%; }
+  .nf-nav .nf-search { flex: 1 1 0; width: auto; min-width: 0; }
+  .nf-nav .nf-search:focus { flex-basis: 0; width: auto; }
+}
+
+/* Titelbild */
+.nf-hero { position: relative; margin-top: -62px; min-height: min(72vh, 640px); display: flex; align-items: flex-end; }
+.nf-hero-bg { position: absolute; inset: 0; overflow: hidden; }
+.nf-hero-bg .nf-pic { width: 100%; height: 100%; border-radius: 0; background: #111; }
+.nf-hero-bg img { object-position: center 25%; }
+.nf-hero-shade { position: absolute; inset: 0; background:
+  linear-gradient(90deg, #0a0a0df2 0%, #0a0a0db0 32%, #0a0a0d00 65%),
+  linear-gradient(0deg, #0a0a0d 0%, #0a0a0d00 38%); }
+.nf-hero-text { position: relative; padding: 0 var(--pad) 46px; max-width: 640px; display: grid; gap: 10px; }
+.nf-kicker { font-size: 12px; font-weight: 800; letter-spacing: .18em; color: var(--accent); }
+.nf-kicker span { color: #cfcfd6; letter-spacing: .02em; font-weight: 600; }
+.nf-hero h1 { margin: 0; font-size: clamp(30px, 5vw, 58px); line-height: 1.02; letter-spacing: -.02em; text-shadow: 0 2px 24px #000a; }
+.nf-meta { color: #e2e2e8; font-size: 14px; font-weight: 600; }
+.nf-overview { margin: 0; color: #e6e6ea; font-size: 15px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-shadow: 0 1px 8px #000; }
+.nf-hero-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.nf-hero-actions .btn { padding: 11px 22px; font-size: 16px; font-weight: 700; border-radius: 8px; }
+.nf-ghost { background: #6d6d7a99; color: #fff; border-color: transparent; backdrop-filter: blur(6px); }
+.nf-ghost:hover { background: #6d6d7acc; }
+.nf-hero-spacer { height: 30px; }
+@media (max-width: 700px) {
+  .nf-hero { margin-top: -96px; min-height: 64vh; }
+  .nf-hero-shade { background: linear-gradient(0deg, #0a0a0d 6%, #0a0a0d99 45%, #0a0a0d33 100%); }
+  .nf-hero-text { padding-bottom: 22px; }
+  .nf-overview { -webkit-line-clamp: 2; font-size: 14px; }
+}
+
+/* Reihen */
+.nf-body { padding-bottom: 60px; }
+.nf-row { padding: 0 var(--pad); margin: 22px 0 6px; }
+.nf-row h3 { margin: 0 0 10px; font-size: 19px; font-weight: 800; display: flex; align-items: baseline; gap: 10px; }
+.nf-more { background: none; border: 0; color: var(--accent); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; opacity: 0; transition: opacity .2s; }
+.nf-row:hover .nf-more, .nf-more:focus { opacity: 1; }
+.nf-rowwrap { position: relative; margin: 0 calc(var(--pad) * -1); }
+.nf-scroller {
+  display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+  padding: 10px var(--pad) 14px; scroll-padding: 0 var(--pad);
+}
+.nf-scroller::-webkit-scrollbar { display: none; }
+.nf-arrow {
+  position: absolute; top: 10px; bottom: 14px; width: calc(var(--pad) - 4px); z-index: 3; border: 0; background: #0a0a0dcc; color: #fff;
+  font-size: 34px; cursor: pointer; opacity: 0; transition: opacity .2s;
+}
+.nf-arrow.l { left: 0; } .nf-arrow.r { right: 0; }
+.nf-rowwrap:hover .nf-arrow { opacity: 1; }
+@media (hover: none) { .nf-arrow { display: none; } }
+
+/* Karten */
+.nf-card { flex: none; width: var(--card-w); scroll-snap-align: start; cursor: pointer; outline: none; position: relative; }
+.nf-card.wide { width: calc(var(--card-w) * 1.75); }
+.nf-art { position: relative; border-radius: 8px; overflow: hidden; background: #1b1b22; aspect-ratio: 2 / 3; transition: transform .18s ease, box-shadow .18s ease; }
+.nf-card.wide .nf-art { aspect-ratio: 16 / 9; }
+.nf-card:hover .nf-art, .nf-card:focus-visible .nf-art, html.tv .nf-card:focus .nf-art { transform: scale(1.06); box-shadow: 0 10px 30px #000c, 0 0 0 3px var(--accent); z-index: 2; }
+.nf-pic { position: relative; width: 100%; height: 100%; display: grid; place-items: center; text-align: center; background: linear-gradient(160deg, #23232c, #15151b); }
+.nf-pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .3s; }
+.nf-pic.ok img { opacity: 1; }
+.nf-pic-alt { padding: 10px; font-weight: 700; font-size: 13px; color: #c9c9d2; }
+.nf-pic.ok .nf-pic-alt { visibility: hidden; }
+.nf-cap { display: grid; gap: 1px; padding: 6px 2px 0; font-size: 13px; line-height: 1.3; }
+.nf-cap b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #e8e8ee; }
+.nf-cap span { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nf-card:not(.wide) .nf-cap { opacity: .0; transition: opacity .15s; }
+.nf-card:not(.wide):hover .nf-cap, .nf-card:not(.wide):focus .nf-cap, .nf-grid .nf-card .nf-cap { opacity: 1; }
+@media (hover: none) { .nf-card:not(.wide) .nf-cap { opacity: 1; } }
+.nf-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: #ffffff38; }
+.nf-progress i { display: block; height: 100%; background: var(--accent); }
+.nf-play { position: absolute; inset: 0; display: grid; place-items: center; font-size: 30px; color: #fff; text-shadow: 0 2px 12px #000; opacity: 0; transition: opacity .15s; background: #0004; }
+.nf-card:hover .nf-play, .nf-card:focus .nf-play { opacity: 1; }
+.nf-seen { position: absolute; top: 6px; right: 6px; background: #000a; color: var(--ok); border-radius: 99px; font-size: 12px; padding: 1px 6px; font-weight: 800; }
+
+/* Top 10 mit großen Zahlen */
+.top10 .nf-card { width: calc(var(--card-w) * 1.45); display: flex; align-items: flex-end; }
+.top10 .nf-card .nf-art { width: 69%; margin-left: auto; }
+.top10 .nf-card .nf-cap { display: none; }
+.nf-rank {
+  position: absolute; left: -4px; bottom: -14px; font-size: calc(var(--card-w) * 1.05); font-weight: 900; line-height: 1; letter-spacing: -.08em;
+  color: #0a0a0d; -webkit-text-stroke: 3px #8a8a96; z-index: 0; pointer-events: none;
+}
+
+/* Raster (Meine Liste, A–Z, Suche) */
+.nf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card-w), 1fr)); gap: 18px 10px; padding-top: 6px; }
+.nf-grid .nf-card { width: auto; }
+.nf-loadmore { display: grid; place-items: center; padding: 18px; }
+.nf-page-title { padding: 6px var(--pad) 0; }
+.nf-page-title h2 { margin: 6px 0 0; font-size: 28px; }
+.nf-empty { padding: 10px var(--pad); }
+.nf-loading { display: grid; place-items: center; padding: 120px 0; }
+
+/* Freunde (wie Discord) */
+.nf-friends-row h3 .nf-count { color: var(--ok); font-size: 13px; font-weight: 700; }
+.nf-friends-row .nf-empty { padding: 0; }
+.nf-friends { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 8px; }
+.nf-friends::-webkit-scrollbar { display: none; }
+.nf-friend {
+  flex: none; display: flex; align-items: center; gap: 10px; min-width: 220px; max-width: 320px;
+  padding: 10px 12px; border-radius: 12px; background: #17171d; border: 1px solid #ffffff12;
+}
+.nf-av { position: relative; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; color: #111; flex: none; }
+.nf-av .dot { position: absolute; right: -2px; bottom: -2px; width: 13px; height: 13px; border-radius: 50%; border: 3px solid #17171d; background: #6d6d7a; }
+.s-watching .nf-av .dot { background: var(--ok); }
+.s-paused .nf-av .dot, .s-room .nf-av .dot { background: #f2b544; }
+.s-private .nf-av .dot { background: #8a7cff; }
+.nf-fr-text { display: grid; min-width: 0; flex: 1; line-height: 1.3; }
+.nf-fr-text b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nf-kind { font-weight: 400; font-size: 12px; }
+.nf-fr-state { color: var(--muted); font-size: 12px; }
+.nf-fr-item { color: #e7e7ec; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-watching .nf-fr-item { color: var(--ok); }
+
+/* Lobby als „Zusammen schauen“ */
+.lobby-back { justify-self: start; }
+.lobby-rooms { display: grid; gap: 8px; }
+.lobby-rooms h4 { margin: 4px 0 0; font-size: 14px; }
+.lobby-room { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: #ffffff0a; }
+.lobby-room .grow { flex: 1; min-width: 0; display: grid; line-height: 1.3; }
+.lobby-room .grow span { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+
+/* Desktop: Startseite scrollt in der eigenen Ansicht unter der Titelleiste */
+.view.home { padding-top: var(--titlebar); }
+.view.home .nf-hero { margin-top: -62px; }
+.hide-sm { }
+@media (max-width: 700px) { .hide-sm { display: none; } }
+.spinner { width: 42px; height: 42px; border-radius: 50%; border: 4px solid #ffffff30; border-top-color: var(--accent); animation: nf-spin .9s linear infinite; }
+@keyframes nf-spin { to { transform: rotate(360deg); } }

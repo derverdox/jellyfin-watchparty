@@ -384,6 +384,8 @@ class Room {
     this.ratePrompted = false;
     this.advancing = 0;
     this.allowAllControl = true;
+    this.private = false;    // privat: nicht in der Freundesliste, Beitritt nur mit Code
+    this.soloOf = null;      // eigener Raum zum Alleine-Schauen (Benutzername)
     this.clients = new Map(); // clientId -> client
     this.chat = [];
     this.item = null;
@@ -890,16 +892,69 @@ async function handle(req, res) {
   }
 
   if (p === '/api/rooms' && req.method === 'POST') {
+    const body = await readJson(req).catch(() => ({}));
+    // Alleine schauen: eigener Raum, wird wiederverwendet; geht auch ohne das Recht „Räume erstellen“
+    if (body && body.solo) {
+      const owner = session.username.toLowerCase();
+      for (const r of rooms.values()) {
+        if (r.soloOf === owner) { if (r.clients.size === 0) r.hostSid = session.id; return sendJson(res, 200, { code: r.code, solo: true }); }
+      }
+      const code = newRoomCode();
+      const room = new Room(code, session.id, session.username);
+      room.soloOf = owner;
+      rooms.set(code, room);
+      return sendJson(res, 200, { code, solo: true });
+    }
     if (!accessOf(session).perms.createRoom) throw new HttpError(403, 'Du darfst keine Räume erstellen. Lass dir einen Raum-Link schicken.');
     const max = groups.settings.maxRoomsPerUser;
     if (!session.admin && max) {
-      const mine = [...rooms.values()].filter((r) => r.createdBy && r.createdBy.toLowerCase() === session.username.toLowerCase()).length;
+      const mine = [...rooms.values()].filter((r) => !r.soloOf && r.createdBy && r.createdBy.toLowerCase() === session.username.toLowerCase()).length;
       if (mine >= max) throw new HttpError(429, `Du hast schon ${mine} offene Räume (Maximum ${max}).`);
     }
     const code = newRoomCode();
     rooms.set(code, new Room(code, session.id, session.username));
     telemetry.roomCreated(code, session.name);
     return sendJson(res, 200, { code });
+  }
+
+  // --- Freunde: wer ist online, wer schaut was (wie bei Discord) ---
+  if (p === '/api/activity') {
+    const now = Date.now();
+    const meName = session.username.toLowerCase();
+    const people = new Map();
+    const roomList = [];
+    for (const room of rooms.values()) {
+      if (!room.clients.size) continue;
+      const mineToo = [...room.clients.values()].some((c) => c.session.username.toLowerCase() === meName);
+      const hidden = room.private && !mineToo;
+      let item = null;
+      if (room.item && !hidden) {
+        item = (await canAccess(session, room.item.id).catch(() => false))
+          ? { id: room.item.id, title: room.item.title, subtitle: room.item.subtitle || null, type: room.item.type, seriesId: room.item.seriesId || null, position: Math.round(room.positionAt(now)), runtime: room.item.runtime || null }
+          : { hidden: true };
+      }
+      const names = [];
+      for (const c of room.clients.values()) {
+        const u = c.session.username.toLowerCase();
+        names.push(c.session.name);
+        if (people.has(u) && people.get(u).room) continue;
+        people.set(u, {
+          name: c.session.name, username: c.session.username, kind: c.kind || 'web',
+          state: hidden ? 'private' : room.item ? (room.playing ? 'watching' : 'paused') : 'room',
+          item, room: hidden ? null : { code: room.code, members: room.clients.size, solo: !!room.soloOf },
+        });
+      }
+      if (!hidden) roomList.push({ code: room.code, members: names, item, playing: !!room.playing, solo: !!room.soloOf, mine: mineToo });
+    }
+    for (const s of Object.values(sessions.map)) {
+      if (now - (s.lastSeen || 0) > 3 * 60 * 1000) continue;
+      const u = String(s.username).toLowerCase();
+      if (!people.has(u) && users.find(s.username)) people.set(u, { name: s.name || s.username, username: s.username, state: 'online', item: null, room: null });
+    }
+    const order = { watching: 0, paused: 1, room: 2, private: 3, online: 4 };
+    const friends = [...people.values()].filter((x) => x.username.toLowerCase() !== meName)
+      .sort((a, b) => order[a.state] - order[b.state] || a.name.localeCompare(b.name, 'de'));
+    return sendJson(res, 200, { friends, rooms: roomList });
   }
 
   if (p.startsWith('/api/admin/')) {
@@ -1533,7 +1588,8 @@ function onConnection(ws, session, room, req) {
           if (!ID_RE.test(String(msg.itemId || ''))) break;
           if (!rateOk(client.ctrlTimes, 12, 3000)) break;
           if (!(await canAccess(session, msg.itemId))) { send({ t: 'error', text: 'Darauf hast du keinen Zugriff.' }); break; }
-          const ok = await startItem(room, msg.itemId, session.name, { position: Number(msg.position) || 0 });
+          // play: sofort los (Alleine-Schauen); sonst wie bisher pausiert laden, damit alle bereit sind
+          const ok = await startItem(room, msg.itemId, session.name, { position: Number(msg.position) || 0, play: msg.play === true && room.clients.size === 1 });
           if (!ok) send({ t: 'error', text: 'Das kann man nicht abspielen.' });
           break;
         }
@@ -1626,6 +1682,10 @@ function onConnection(ws, session, room, req) {
           if (typeof msg.allowAllControl === 'boolean' && msg.allowAllControl !== room.allowAllControl) {
             room.allowAllControl = msg.allowAllControl;
             room.system(msg.allowAllControl ? 'Jetzt dürfen alle steuern' : 'Jetzt steuert nur noch der Host');
+          }
+          if (typeof msg.private === 'boolean' && msg.private !== room.private) {
+            room.private = msg.private;
+            room.system(msg.private ? 'Raum ist jetzt privat (nicht in der Freundesliste)' : 'Raum ist jetzt für Freunde sichtbar');
           }
           room.broadcast({ t: 'room', room: publicRoom(room), members: room.members() });
           break;
@@ -1798,7 +1858,7 @@ async function notifyNoAccess(room, item) {
 }
 
 function publicRoom(room) {
-  return { code: room.code, host: room.hostSid.slice(0, 12), allowAllControl: room.allowAllControl };
+  return { code: room.code, host: room.hostSid.slice(0, 12), allowAllControl: room.allowAllControl, private: !!room.private, solo: !!room.soloOf };
 }
 
 setInterval(() => {

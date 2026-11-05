@@ -268,8 +268,11 @@
   }
   let afTimer = null;
   if (isTv) {
-    new MutationObserver(() => { clearTimeout(afTimer); afTimer = setTimeout(autofocus, 120); })
-      .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+    const kick = () => { clearTimeout(afTimer); afTimer = setTimeout(autofocus, 120); };
+    new MutationObserver(kick).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+    // Fenster, deren Inhalt erst nachlädt (Detailansicht): Fokus auf den Hauptknopf, sobald er da ist
+    const xbox = q('#xbox');
+    if (xbox) new MutationObserver(() => { if (shown('#xmodal')) { const a = document.activeElement; if (!a || !xbox.contains(a) || a.matches('.xd-close')) { clearTimeout(afTimer); afTimer = setTimeout(() => { const p = xbox.querySelector('.xd-actions .btn.primary'); if (p) focusEl(p); else autofocus(); }, 120); } } }).observe(xbox, { childList: true, subtree: true });
     setTimeout(autofocus, 300);
   }
 
