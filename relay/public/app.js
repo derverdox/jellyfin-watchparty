@@ -136,6 +136,9 @@ function codeFromUrl() {
 
 async function init() {
   window.addEventListener('popstate', () => location.reload());
+  // ?ext=… (z. B. vom Desktop-Client): YouTube/Twitch-Link nach dem Beitreten starten
+  const ext = new URLSearchParams(location.search).get('ext');
+  if (ext) S.pendingExt = ext.slice(0, 500);
   try { S.me = await api('/api/me'); } catch { S.me = null; }
   route();
 }
@@ -402,6 +405,11 @@ function onMessage(msg) {
       if (S.me) { S.me.agentOnline = msg.agentOnline; S.me.server = msg.server; }
       renderAgentStatus(msg.agentOnline, msg.server);
       setPlayback(msg.playback);
+      if (S.pendingExt) {
+        const url = S.pendingExt;
+        S.pendingExt = null;
+        if (canLoad()) send({ t: 'load-ext', url });
+      }
       if (S.pendingPlay) {
         const pp = S.pendingPlay;
         S.pendingPlay = null;
@@ -467,11 +475,25 @@ function setPlayback(pb) {
   renderNowPlaying();
   if (!pb.item) {
     teardownPlayer();
+    if (window.WPExt) WPExt.unload();
     $('#overlay-noaccess').hidden = true;
     $('#overlay-empty').hidden = false;
     return;
   }
   $('#overlay-empty').hidden = true;
+  // YouTube/Twitch: eingebetteter Player statt <video>
+  if (pb.item.ext && window.WPExt) {
+    if (pb.item.id !== S.loadedId) {
+      teardownPlayer();
+      S.loadedId = pb.item.id;
+      S.info = null;
+      $('#overlay-noaccess').hidden = true;
+      WPExt.load(pb.item);
+    } else WPExt.sync(true);
+    updateControls();
+    return;
+  }
+  if (window.WPExt && WPExt.active()) WPExt.unload();
   if (pb.item.id !== S.loadedId) {
     $('#overlay-noaccess').hidden = true;
     loadItem(pb.item.id);
@@ -697,6 +719,7 @@ setInterval(() => syncTick(false), 300);
 
 function reportStatus(forceState) {
   if (!S.playback || !S.playback.item) return send({ t: 'status', pos: 0, state: 'idle' });
+  if (window.WPExt && WPExt.active()) return send(WPExt.status());
   let state = forceState;
   if (!state) {
     if (S.blocked) state = 'blocked';
@@ -731,6 +754,7 @@ video.addEventListener('error', () => {
 /* ------------------------------------------------------------------ */
 
 function duration() {
+  if (window.WPExt && WPExt.active()) return WPExt.duration();
   const d = (S.playback && S.playback.item && S.playback.item.runtime) || video.duration;
   return Number.isFinite(d) && d > 0 ? d : 0;
 }
@@ -738,9 +762,10 @@ function duration() {
 function updateControls() {
   const pb = S.playback;
   const dur = duration();
-  const cur = S.seeking ? Number(D.seek.value) / 1000 * dur : (S.loadedKey ? video.currentTime : expectedPos());
-  D.tCur.textContent = fmt(cur);
-  D.tDur.textContent = fmt(dur);
+  const ext = window.WPExt && WPExt.active();
+  const cur = S.seeking ? Number(D.seek.value) / 1000 * dur : ext ? WPExt.time() : (S.loadedKey ? video.currentTime : expectedPos());
+  D.tCur.textContent = ext && WPExt.live() ? 'LIVE' : fmt(cur);
+  D.tDur.textContent = ext && WPExt.live() ? (WPExt.latency() != null ? `${String(Math.round(WPExt.latency() * 10) / 10).replace('.', ',')} s hinter live` : '') : fmt(dur);
   D.btnPlay.textContent = pb && pb.playing ? '❚❚' : '▶';
   if (!S.seeking) {
     D.seek.value = dur ? Math.round((cur / dur) * 1000) : 0;
@@ -773,6 +798,7 @@ function control(action, position) {
   const pb = { ...S.playback, position, updatedAt: serverNow(), playing: action === 'play' ? true : action === 'pause' ? false : S.playback.playing };
   S.playback = pb;
   syncTick(true);
+  if (window.WPExt && WPExt.active()) WPExt.sync(true);
   updateControls();
   send({ t: 'control', action, position });
 }
@@ -780,11 +806,12 @@ function control(action, position) {
 function togglePlay() {
   if (!S.playback || !S.playback.item) return;
   if (S.blocked) { $('#btn-unblock').click(); return; }
-  const pos = S.loadedKey && video.readyState >= 1 ? video.currentTime : expectedPos();
+  const pos = window.WPExt && WPExt.active() ? WPExt.time() : S.loadedKey && video.readyState >= 1 ? video.currentTime : expectedPos();
   control(S.playback.playing ? 'pause' : 'play', pos);
 }
 function seekBy(d) {
   if (!S.playback || !S.playback.item) return;
+  if (window.WPExt && WPExt.live()) return; // live: nicht spulbar
   const dur = duration();
   control('seek', Math.max(0, Math.min(dur || Infinity, expectedPos() + d)));
 }
@@ -967,6 +994,9 @@ function addChat(m, silent) {
       el('span', { class: 'who', style: `color:${colorFor(m.from)}` }, m.from),
       el('span', { class: 'txt' }, m.text),
       el('span', { class: 'ts' }, time));
+    // YouTube/Twitch-Link im Chat → mit einem Klick für alle starten
+    const link = /(https?:\/\/)?((www\.|m\.)?(youtube\.com|youtu\.be)|(www\.)?twitch\.tv|clips\.twitch\.tv)\/\S+/i.exec(m.text || '');
+    if (link) li.append(el('button', { class: 'btn small primary play-suggest', onclick: () => send({ t: 'load-ext', url: link[0] }) }, '▶ Zusammen schauen'));
   }
   $('#chat').append(li);
   while ($('#chat').children.length > 300) $('#chat').firstElementChild.remove();
@@ -1101,6 +1131,7 @@ $('#btn-leave').addEventListener('click', () => {
   teardownPlayer();
   if (S.ws) S.ws.close();
   S.playback = null;
+  if (window.WPExt) WPExt.unload();
   S.code = null; S.you = null; S.room = null;
   document.title = 'Watchparty';
   $('#agent-banner').hidden = true;
@@ -1108,6 +1139,21 @@ $('#btn-leave').addEventListener('click', () => {
   route();
 });
 $('#btn-home').addEventListener('click', () => $('#btn-leave').click());
+
+/** YouTube/Twitch-Link zusammen schauen: im aktuellen Raum, sonst im eigenen Raum. */
+async function playExt(url) {
+  try {
+    if (S.code && S.you && !$('#view-room').hidden) {
+      if (canLoad()) send({ t: 'load-ext', url });
+      else toast('Hier steuert gerade jemand anderes.');
+      return;
+    }
+    const { code } = await api('/api/rooms', { method: 'POST', body: { solo: true } });
+    S.pendingExt = url;
+    history.pushState(null, '', `/r/${code}`);
+    enterRoom(code);
+  } catch (ex) { toast(ex.message); }
+}
 
 /** Alleine abspielen: eigenen (wiederverwendeten) Raum öffnen und den Titel starten. Freunde kommen per Link dazu. */
 async function playSolo(itemId, position = 0) {
@@ -1376,7 +1422,7 @@ function openTile(it) {
 
 // Schnittstelle für extras.js (im Desktop-Client gibt es dieselbe mit IPC)
 window.WPX = {
-  api, send, serverNow, closeLibrary, playSolo,
+  api, send, serverNow, closeLibrary, playSolo, playExt,
   joinRoom: (code) => { history.pushState(null, '', `/r/${code}`); enterRoom(code); },
   showLobby, goHome: () => route(),
   openFolder: (it) => { openLibrary(); openTile(it); },
@@ -1385,5 +1431,19 @@ window.WPX = {
   segments: () => (S.info && S.info.segments) || [],
 };
 video.addEventListener('timeupdate', () => { if (window.WP) WP.tick(video.currentTime); });
+
+/* YouTube/Twitch-Link im Raum */
+$('#btn-ext').addEventListener('click', () => { $('#ext-modal').hidden = false; setTimeout(() => $('#ext-form').url.focus(), 50); });
+$('#ext-close').addEventListener('click', () => { $('#ext-modal').hidden = true; });
+$('#ext-modal').addEventListener('click', (e) => { if (e.target.id === 'ext-modal') $('#ext-modal').hidden = true; });
+$('#ext-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const url = e.target.url.value.trim();
+  if (!url) return;
+  $('#ext-modal').hidden = true;
+  e.target.reset();
+  playExt(url);
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#ext-modal').hidden) { e.stopPropagation(); $('#ext-modal').hidden = true; } }, true);
 
 init();

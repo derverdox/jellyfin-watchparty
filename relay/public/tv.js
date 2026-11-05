@@ -54,6 +54,8 @@
 
   /** Der Bereich, in dem gerade navigiert wird: oberstes offenes Fenster, sonst die aktuelle Ansicht. */
   function scope() {
+    if (shown('#ext-modal')) return q('#ext-modal');
+    if (shown('#scan-modal')) return q('#scan-modal');
     if (shown('#xmodal')) return q('#xmodal');
     if (shown('#library')) return q('#library');
     if (!room.hidden && shown('#settings-menu')) return q('#settings-menu');
@@ -224,6 +226,7 @@
   let leaveArmedAt = 0;
   /** Gibt true zurück, wenn die Seite die Taste verarbeitet hat. Sonst entscheidet die App (zweimal = beenden). */
   function back() {
+    if (shown('#ext-modal')) { q('#ext-modal').hidden = true; return true; }
     // Fenster schließen wie mit Escape (extras.js und die Bibliothek hören darauf)
     if (shown('#xmodal') || shown('#library')) {
       const which = shown('#xmodal') ? '#xmodal' : '#library';

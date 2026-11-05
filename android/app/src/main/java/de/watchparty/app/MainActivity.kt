@@ -142,6 +142,8 @@ class MainActivity : Activity() {
             userAgentString = "$userAgentString $marker/${BuildConfigCompat.versionName(this@MainActivity)}"
         }
         CookieManager.getInstance().setAcceptCookie(true)
+        // YouTube/Twitch-Player sind eingebettet: deren Anmeldung (Premium/Turbo = keine Werbung) braucht ihre Cookies
+        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
         wv.addJavascriptInterface(Bridge(), "WatchpartyTV")
 
         wv.webViewClient = object : WebViewClient() {

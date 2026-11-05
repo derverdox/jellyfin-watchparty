@@ -395,6 +395,11 @@ function onEvent(ch, p) {
       $('#now-sub').textContent = `„${p.title}“ ist für dein Konto nicht freigegeben. Frag den Admin oder schlagt was anderes vor.`;
       break;
     case 'room:joined': enterRoom(p.code); break;
+    case 'room:ext':
+      S.ext = p.item;
+      renderNow();
+      toast(`„${p.item.title}“ (${p.item.subtitle}) läuft. Öffne es im Fenster, um mitzuschauen.`);
+      break;
     case 'room:agent': if (S.me) { S.me.agentOnline = p.online; } if (!p.online) toast('Der Heimserver ist gerade offline.', true); break;
     case 'room:kicked': toast(p.text || 'Du wurdest aus dem Raum entfernt.', true); S.code = null; showHome(); break;
     case 'player:state': {
@@ -432,6 +437,14 @@ function renderNow() {
   $('#now-eyebrow').textContent = pb.playing ? 'Läuft gerade' : 'Pausiert';
   $('#now-title').textContent = it.title;
   $('#now-sub').textContent = it.subtitle || '';
+  if (it.ext) {
+    // YouTube/Twitch laufen nicht in mpv, sondern im Fenster mit der Website
+    $('#now-sub').append(' · ', el('button', { class: 'btn small primary', onclick: () => call('ext:window', { code: S.code }).catch((e) => toast(e.message, true)) }, '▶ Im Fenster öffnen'));
+    $('#now-poster').hidden = true;
+    $('#now-bg').style.backgroundImage = it.ext.kind === 'youtube' ? `url("https://i.ytimg.com/vi/${it.ext.id}/hqdefault.jpg")` : '';
+    $('#now-badges').innerHTML = '';
+    return;
+  }
   const poster = $('#now-poster');
   poster.onerror = () => { poster.hidden = true; };
   if (poster.dataset.id !== it.id) { poster.dataset.id = it.id; poster.src = img(it.id, 300); }
@@ -981,6 +994,7 @@ window.WPX = {
   closeLibrary: () => { $('#library').hidden = true; },
   img,
   playSolo,
+  playExt: (url) => call('ext:window', { url }).catch((e) => toast(e.message, true)),
   joinRoom: async (code) => { try { const r = await call('room:join', code); enterRoom(r.code); } catch (e) { toast(e.message, true); } },
   showLobby: () => showLobby(),
   goHome: () => showHome(),
