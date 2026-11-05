@@ -149,3 +149,36 @@ test('Untertitel-Wechsel im uosc-Menü wird gemerkt, eigene Auswahl nicht', asyn
   s.onProp('sid', false);
   assert.equal(s.settings.prefs.subLang, 'off');
 });
+
+test('Bild/Ton-Versatz: einmal ein Hinweis mit Empfehlung, Einstellungen bleiben', async () => {
+  const s = fakeSession({ framegen: { enabled: true, model: 'v4_26', target: 'display' }, vsr: { enabled: true } });
+  const events = [];
+  s.on('ui', (ch, p) => events.push({ ch, p }));
+  const osd = [];
+  s.mpv = { running: true, props: { pause: false }, get: async (k) => ({ avsync: 0.42, 'frame-drop-count': 0, 'decoder-frame-drop-count': 0 })[k], osd: (t) => osd.push(t) };
+  s.fileReady = true;
+  s.av = { bad: 0, hinted: false, drops: null };
+  for (let i = 0; i < 5; i++) await s.checkAv();
+  const hints = events.filter((e) => e.ch === 'player:hint');
+  assert.strictEqual(hints.length, 1, 'nur einmal pro Datei');
+  assert.match(hints[0].p.text, /0,4 s neben dem Ton/);
+  assert.strictEqual(hints[0].p.recommendation, 'Framegen-Modell „RIFE 4.25 Lite“');
+  assert.match(osd[0], /Empfohlen/);
+  assert.strictEqual(s.settings.prefs.framegen.model, 'v4_26', 'keine automatische Änderung');
+
+  // Stufen der Empfehlung
+  const r = (p) => fakeSession(p).recommendation();
+  assert.strictEqual(r({ framegen: { enabled: true, model: 'v4_25_lite', target: 'display' } }), 'Framegen-Ziel „2×“ statt Monitor-Hz');
+  assert.strictEqual(r({ framegen: { enabled: true, model: 'v4_25_lite', target: 'x2' } }), 'Framegen-Modell „RIFE 4.22 Lite“');
+  assert.strictEqual(r({ framegen: { enabled: false }, vsr: { enabled: true } }), 'Upscaling aus (F2)');
+  assert.strictEqual(r({ framegen: { enabled: false }, vsr: { enabled: false } }), null);
+
+  // Kurze Aussetzer (unter 6 s) lösen nichts aus
+  const t = fakeSession({ framegen: { enabled: true } });
+  let n = 0; t.on('ui', (ch) => { if (ch === 'player:hint') n++; });
+  let av = 0.5;
+  t.mpv = { running: true, props: {}, get: async (k) => (k === 'avsync' ? av : 0), osd() {} };
+  t.fileReady = true; t.av = { bad: 0, hinted: false, drops: null };
+  await t.checkAv(); await t.checkAv(); av = 0.01; await t.checkAv(); av = 0.5; await t.checkAv();
+  assert.strictEqual(n, 0);
+});

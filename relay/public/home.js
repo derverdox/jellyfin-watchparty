@@ -118,7 +118,9 @@
       } catch (e) { toast(e.message); }
     } }, listed ? '✓ Meine Liste' : '＋ Meine Liste');
     return el('section', { class: 'nf-hero' },
-      el('div', { class: 'nf-hero-bg' }, picture(imgUrl(it.id, 1600, 'Backdrop'), '', 'bg')),
+      el('div', { class: 'nf-hero-bg' }, picture(imgUrl(it.id, 1600, it.hasBackdrop ? 'Backdrop' : undefined), '', 'bg')),
+      // Handy: großes Poster in der Mitte (wie bei Streaming-Apps), auf großen Bildschirmen ausgeblendet
+      el('div', { class: 'nf-hero-poster' }, picture(imgUrl(it.id, 480), it.name)),
       el('div', { class: 'nf-hero-shade' }),
       el('div', { class: 'nf-hero-text' },
         el('div', { class: 'nf-kicker' }, isSeries ? 'SERIE' : 'FILM', el('span', {}, ' · Neu bei euch')),
@@ -226,7 +228,9 @@
     const newest = await Promise.all([...movieLibs(libs), ...showLibs(libs)].map((l) => libItems(l, 'added', 20).then((r) => ({ lib: l, items: r.items || [] })).catch(() => ({ lib: l, items: [] }))));
     const out = [];
     // Titelbild: zufällig aus den Neuesten mit Hintergrundbild
-    const pool = newest.flatMap((n) => n.items.slice(0, 8)).filter((it) => it.hasBackdrop);
+    const recentAll = newest.flatMap((n) => n.items.slice(0, 8));
+    const withBg = recentAll.filter((it) => it.hasBackdrop);
+    const pool = withBg.length ? withBg : recentAll.filter((it) => it.hasImage);
     if (!H.hero || !pool.some((p) => p.id === H.hero.id)) H.hero = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
     if (H.hero) out.push(hero(H.hero, list.some((x) => x.id === H.hero.id)));
     else out.push(el('div', { class: 'nf-hero-spacer' }));

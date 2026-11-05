@@ -78,7 +78,7 @@ function libCatalog(libId, collectionType) {
   const promise = (async () => {
     const out = [];
     for (let start = 0; ;) {
-      const q = new URLSearchParams({ ParentId: libId, Fields: ITEM_FIELDS, EnableImageTypes: 'Primary', ImageTypeLimit: '1', SortBy: 'SortName', Limit: '500', StartIndex: String(start) });
+      const q = new URLSearchParams({ ParentId: libId, Fields: ITEM_FIELDS, EnableImageTypes: 'Primary,Backdrop', ImageTypeLimit: '1', SortBy: 'SortName', Limit: '500', StartIndex: String(start) });
       if (collectionType === 'movies') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Movie'); }
       if (collectionType === 'tvshows') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Series'); }
       const data = await jf(`/Users/${uid()}/Items?${q}`);
@@ -1036,7 +1036,7 @@ async function handle(req, res) {
   if (p === '/api/items') {
     const q = new URLSearchParams();
     q.set('Fields', ITEM_FIELDS);
-    q.set('EnableImageTypes', 'Primary');
+    q.set('EnableImageTypes', 'Primary,Backdrop'); // Backdrop: sonst fehlt BackdropImageTags → kein Titelbild auf der Startseite
     q.set('ImageTypeLimit', '1');
     q.set('Limit', String(Math.min(toInt(url.searchParams.get('limit'), 60), 200)));
     q.set('StartIndex', String(Math.max(toInt(url.searchParams.get('start'), 0), 0)));

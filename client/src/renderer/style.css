@@ -679,3 +679,5 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 14px; col
 .nf-ext-form input:focus { border-color: var(--accent); outline: none; }
 .nf-ext-hints { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
 .nf-ext-recent { display: flex; flex-wrap: wrap; gap: 8px; }
+.nf-tabs .ic, .nf-tabs .lb-short { display: none; }
+.nf-hero-poster { display: none; }
