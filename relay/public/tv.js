@@ -1,8 +1,10 @@
 'use strict';
 /**
- * App-Modus der Watchparty-Android-App.
- * - Fernseher (User-Agent „WatchpartyTV“): voller TV-Modus mit Fernbedienung (siehe unten)
- * - Handy/Tablet („WatchpartyApp“): nur Zurück-Taste, Bildschirm-an beim Video, „Server ändern“
+ * TV-Modus und App-Modus.
+ * - Fernseher: Watchparty-App (User-Agent „WatchpartyTV“) oder Browser eines Smart-TVs
+ *   (Samsung/Tizen, LG/webOS, Fire TV Silk …, oder einmal ?tv=1 aufrufen, ?tv=0 schaltet ab):
+ *   voller TV-Modus mit Fernbedienung (siehe unten)
+ * - Handy/Tablet-App („WatchpartyApp“): nur Zurück-Taste, Bildschirm-an beim Video, „Server ändern“
  * Im normalen Browser passiert nichts.
  *
  * - Pfeiltasten springen zum nächsten Knopf/Feld in der Richtung (räumliche Navigation)
@@ -11,8 +13,19 @@
  * - Menü-Taste: Chat ein/aus, Medientasten: Play/Pause und Spulen
  */
 (function tvMode() {
-  const isTv = /WatchpartyTV/.test(navigator.userAgent) || new URLSearchParams(location.search).has('tv');
-  const isApp = isTv || /WatchpartyApp/.test(navigator.userAgent);
+  const UA = navigator.userAgent;
+  // ?tv=1 / ?tv=0 schaltet den TV-Modus dauerhaft für diesen Browser an/aus
+  const forced = new URLSearchParams(location.search).get('tv');
+  try {
+    if (forced === '0') localStorage.removeItem('wp_tv');
+    else if (forced !== null) localStorage.setItem('wp_tv', '1');
+  } catch { /* egal */ }
+  let remembered = false;
+  try { remembered = localStorage.getItem('wp_tv') === '1'; } catch { /* egal */ }
+  // Fernseher-Browser: Samsung (Tizen), LG (webOS), Fire TV (Silk), Android/Google TV, Sony, Hisense/Vidaa, Philips …
+  const tvBrowser = /Tizen|Web0S|webOS|NetCast|SMART-TV|SmartTV|HbbTV|AFT[A-Z]|Android TV|GoogleTV|BRAVIA|VIDAA|Philips|NETTV|CrKey/i.test(UA);
+  const isTv = forced !== '0' && (/WatchpartyTV/.test(UA) || tvBrowser || remembered || forced !== null);
+  const isApp = isTv || /WatchpartyApp/.test(UA);
   if (!isApp) return;
   const native = window.WatchpartyTV || null; // Brücke aus der App (fehlt beim Testen im Browser mit ?tv)
 
@@ -132,6 +145,13 @@
 
   if (isTv) window.addEventListener('keydown', (e) => {
     const k = e.key;
+    // Zurück-Taste im Fernseher-Browser: Samsung 10009 (XF86Back), LG 461 (GoBack)
+    if (!native && (e.keyCode === 10009 || e.keyCode === 461 || k === 'XF86Back' || k === 'GoBack' || k === 'BrowserBack')) {
+      if (back()) { e.preventDefault(); e.stopImmediatePropagation(); }
+      return;
+    }
+    // Play/Pause-Tasten der Fernseher-Browser (Samsung 10252, LG 415 Play / 19 Pause)
+    if (!native && (e.keyCode === 10252 || e.keyCode === 415 || e.keyCode === 19)) { e.preventDefault(); e.stopImmediatePropagation(); media('playpause'); return; }
     // Medientasten (kommen auch direkt von der App, siehe wpTv.media)
     if (k === 'MediaPlayPause' || k === 'MediaPlay' || k === 'MediaPause') { e.preventDefault(); e.stopImmediatePropagation(); media('playpause'); return; }
     if (k === 'MediaFastForward') { e.preventDefault(); e.stopImmediatePropagation(); media('ff'); return; }

@@ -20,6 +20,7 @@ const { handleAdmin } = require('./lib/admin');
 const { Guard } = require('./lib/guard');
 const { LibraryStore, variants, parseQuery, score, fold } = require('./lib/library');
 const { WishStore } = require('./lib/wishes');
+const { Pairing } = require('./lib/pair');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -52,6 +53,7 @@ const groups = new GroupStore(CONFIG.dataDir);
 const telemetry = new Telemetry(CONFIG.dataDir);
 const library = new LibraryStore(CONFIG.dataDir);
 const wishes = new WishStore(CONFIG.dataDir);
+const pairing = new Pairing();
 const guard = new Guard(CONFIG.dataDir, (ip, b) => {
   telemetry.audit({ type: 'ip-ban', ip, reason: b.reason, by: b.by === 'auto' ? undefined : b.by });
   telemetry.event('security', `IP ${ip} gesperrt: ${b.reason}`, { level: 'warn' });
@@ -532,7 +534,7 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'SAMEORIGIN',
   'Content-Security-Policy': "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'",
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(), payment=(), usb=()', // Kamera: QR-Code scannen
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Resource-Policy': 'same-origin',
 };
@@ -739,7 +741,7 @@ async function handle(req, res) {
   }
 
   // --- statische Dateien ---
-  if (req.method === 'GET' && (p === '/' || /^\/(r|invite)\/[A-Za-z0-9_-]{4,40}\/?$/.test(p))) {
+  if (req.method === 'GET' && (p === '/' || /^\/(r|invite|pair)\/[A-Za-z0-9_-]{4,40}\/?$/.test(p))) {
     return serveFile(res, path.join(PUBLIC_DIR, 'index.html'));
   }
   if (req.method === 'GET' && (p === '/admin' || p === '/admin/')) {
@@ -804,7 +806,51 @@ async function handle(req, res) {
     }
   }
 
+  // --- Anmelden per QR-Code: Gerät ohne Konto (start/poll) ---
+  if (p === '/api/pair/start' && req.method === 'POST') {
+    if (!guard.limit(`pair|${ip}`, 20, 10 * 60 * 1000)) throw new HttpError(429, 'Zu viele QR-Codes – kurz warten.');
+    let r;
+    try { r = pairing.start({ ip, ua: req.headers['user-agent'] }); } catch (e) { throw new HttpError(503, e.message); }
+    return sendJson(res, 200, { code: r.code, token: r.token, expiresIn: r.expiresIn, path: `/pair/${r.code}` });
+  }
+  if (p === '/api/pair/poll' && req.method === 'POST') {
+    if (!guard.limit(`pairpoll|${ip}`, 200, 60 * 1000)) throw new HttpError(429, 'Zu viele Anfragen');
+    const body = await readJson(req);
+    const pr = pairing.poll(body.token);
+    if (!pr || pr.state === 'done') return sendJson(res, 200, { state: 'expired' });
+    if (pr.state !== 'approved') return sendJson(res, 200, { state: pr.state });
+    pairing.consume(pr);
+    const user = users.find(pr.username);
+    if (!user || !users.usable(user) || (groups.settings.maintenance && !user.admin)) return sendJson(res, 200, { state: 'denied' });
+    users.touchLogin(user.username);
+    telemetry.login(user.username, true, ip);
+    telemetry.audit({ type: 'pair-login', user: user.username, ip, device: pr.device });
+    const s = sessions.create(user, { ua: req.headers['user-agent'], ip });
+    s.admin = !!user.admin;
+    return sendJson(res, 200, { state: 'ok', me: me(s) }, { 'Set-Cookie': sessionCookie(req, s.token) });
+  }
+
   const session = getSession(req);
+
+  // --- Anmelden per QR-Code: angemeldetes Handy bestätigt ---
+  if ((m = p.match(/^\/api\/pair\/([A-Za-z0-9-]{4,20})$/))) {
+    if (!session) throw new HttpError(401, 'Bitte zuerst anmelden');
+    if (!guard.limit(`pairok|${session.username.toLowerCase()}`, 30, 10 * 60 * 1000)) throw new HttpError(429, 'Zu viele Versuche – kurz warten.');
+    const pr = pairing.get(m[1]);
+    if (!pr || pr.state === 'done') throw new HttpError(404, 'Diesen Code gibt es nicht (mehr). Am Fernseher steht vielleicht schon ein neuer.');
+    if (req.method === 'GET') {
+      return sendJson(res, 200, { code: pr.code, device: pr.device, state: pr.state, ageSec: Math.round((Date.now() - pr.created) / 1000), sameNetwork: pr.ip === ip, as: session.name || session.username });
+    }
+    if (req.method === 'POST') {
+      const body = await readJson(req);
+      if (body.approve) {
+        try { pairing.approve(pr, session.username); } catch (e) { throw new HttpError(409, e.message); }
+        telemetry.audit({ type: 'pair-approve', user: session.username, ip, device: pr.device, deviceIp: pr.ip });
+      } else pairing.deny(pr);
+      return sendJson(res, 200, { ok: true, state: pr.state });
+    }
+  }
+
   if (p === '/api/me') {
     if (!session) return sendJson(res, 401, { error: 'Nicht angemeldet' });
     return sendJson(res, 200, me(session));

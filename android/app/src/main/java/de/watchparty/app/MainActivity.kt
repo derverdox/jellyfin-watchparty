@@ -1,5 +1,6 @@
 package de.watchparty.app
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.UiModeManager
@@ -48,6 +49,7 @@ class MainActivity : Activity() {
     private var server: String? = null
     private var lastBack = 0L
     private var isTv = false
+    private var pendingCamera: PermissionRequest? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -161,7 +163,23 @@ class MainActivity : Activity() {
 
             override fun onHideCustomView() { leaveFullscreen() }
 
-            override fun onPermissionRequest(request: PermissionRequest) { request.deny() }
+            // Kamera nur für die eigene Seite (QR-Code scannen), alles andere ablehnen
+            override fun onPermissionRequest(request: PermissionRequest) {
+                runOnUiThread {
+                    val own = request.origin?.host == host
+                    val camera = request.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                    when {
+                        !own || !camera -> request.deny()
+                        checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED ->
+                            request.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
+                        else -> {
+                            pendingCamera?.deny()
+                            pendingCamera = request
+                            requestPermissions(arrayOf(Manifest.permission.CAMERA), REQ_CAMERA)
+                        }
+                    }
+                }
+            }
         }
 
         val frame = FrameLayout(this)
@@ -251,6 +269,15 @@ class MainActivity : Activity() {
         }
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_CAMERA) return
+        val req = pendingCamera ?: return
+        pendingCamera = null
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) req.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
+        else req.deny()
+    }
+
     /* ---------------- Lebenszyklus ---------------- */
 
     override fun onPause() {
@@ -290,6 +317,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val KEY_SERVER = "server"
+        private const val REQ_CAMERA = 42
 
         /** „example.com“, „https://example.com/“ oder „192.168.1.5:8097“ → Basis-URL, sonst null. */
         fun normalize(input: String): String? {

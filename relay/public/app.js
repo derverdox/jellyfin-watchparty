@@ -140,6 +140,11 @@ async function init() {
   route();
 }
 
+function pairFromUrl() {
+  const m = location.pathname.match(/^\/pair\/([A-Za-z0-9-]{4,20})\/?$/);
+  return m ? m[1].toUpperCase() : null;
+}
+
 function inviteFromUrl() {
   const m = location.pathname.match(/^\/invite\/([A-Za-z0-9_-]{8,40})/);
   return m ? m[1] : null;
@@ -157,6 +162,13 @@ async function route() {
     history.replaceState(null, '', '/');
   }
   const code = codeFromUrl();
+  const pair = pairFromUrl();
+  if (pair && !S.me) {
+    showLogin(null);
+    $('#login-hint').textContent = 'Melde dich an, um das andere Gerät freizugeben.';
+    return;
+  }
+  if (pair && window.WPPair) return WPPair.confirm(pair);
   if (!S.me) return showLogin(code);
   if (code) {
     $('#join-code').textContent = code;
@@ -230,6 +242,7 @@ function showLogin(code) {
   try { f.username.value = localStorage.getItem('wp_name') || ''; } catch { /* egal */ }
   showView('view-login');
   (f.username.value ? f.password : f.username).focus();
+  if (window.WPPair) WPPair.loginShown();
 }
 
 $('#login-form').addEventListener('submit', async (e) => {

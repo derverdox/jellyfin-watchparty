@@ -22,7 +22,34 @@
       </label>
       <button class="btn primary" type="submit">Weiter</button>
       <p class="error" id="login-error" hidden></p>
+      <button class="link" type="button" id="btn-pair-qr">📱 Mit dem Handy anmelden (QR-Code)</button>
     </form>
+    <!-- Anmelden per QR-Code: wird auf Fernsehern automatisch gezeigt -->
+    <div class="card pair-box" id="pair-box" hidden>
+      <div class="brand"><span class="logo">▶</span> Mit dem Handy anmelden</div>
+      <div class="pair-qr" id="pair-qr"></div>
+      <ol class="pair-steps">
+        <li>Am Handy in der Watchparty <b>📷 Gerät anmelden</b> öffnen und den Code scannen (oder mit der Kamera-App).</li>
+        <li>Oder dort diesen Code eintippen:</li>
+      </ol>
+      <div class="pair-code" id="pair-code-show">········</div>
+      <p class="muted tiny" id="pair-status">Code wird erstellt …</p>
+    </div>
+  </section>
+
+  <!-- Gerät per QR-Code freigeben (auf dem Handy) -->
+  <section id="view-pair" class="view center" hidden>
+    <div class="card auth">
+      <div class="brand big"><span class="logo">▶</span> Watchparty</div>
+      <h2 class="pair-title">Gerät anmelden?</h2>
+      <p>Angefragt von: <strong id="pair-device"></strong> <span class="muted" id="pair-age"></span></p>
+      <div class="pair-code" id="pair-code-confirm"></div>
+      <p class="muted">Steht <b>genau dieser Code</b> gerade auf deinem Fernseher? Dann bestätigen, das Gerät wird als <strong id="pair-as"></strong> angemeldet. Codes, die dir jemand anderes schickt, nie bestätigen.</p>
+      <p class="pair-warn" id="pair-net" hidden>⚠ Das Gerät ist nicht in deinem Netzwerk. Nur bestätigen, wenn du weißt, dass es deins ist (z. B. Handy im Mobilfunk).</p>
+      <button class="btn primary" id="btn-pair-ok">✓ Anmelden</button>
+      <button class="link" id="btn-pair-no">Abbrechen</button>
+      <p class="error" id="pair-error" hidden></p>
+    </div>
   </section>
 
   <!-- Registrierung per Einladung -->
@@ -68,6 +95,7 @@
       <div class="lobby-extras">
         <button class="btn small" id="btn-board">📌 Schwarzes Brett</button>
         <button class="btn small" id="btn-profile">📊 Mein Jahr</button>
+        <button class="btn small" id="btn-pair-scan">📷 Gerät anmelden</button>
       </div>
       <div class="row-links">
         <button class="link" id="btn-pw">Passwort ändern</button>
@@ -226,12 +254,28 @@
     </div>
   </div>
 
+  <!-- QR-Code scannen (Gerät anmelden) -->
+  <div class="modal" id="scan-modal" hidden>
+    <div class="modal-box scan-box">
+      <div class="lib-head"><b>📷 Gerät anmelden</b><div class="grow"></div><button class="icon" id="scan-close" aria-label="Schließen">✕</button></div>
+      <p class="muted tiny">Den QR-Code vom Fernseher (oder einem anderen Gerät) in den Rahmen halten.</p>
+      <div class="scan-view" id="scan-view"><video id="scan-video" playsinline muted></video><div class="scan-frame"></div></div>
+      <p class="muted tiny" id="scan-status"></p>
+      <form id="scan-form" class="row">
+        <input name="code" maxlength="40" placeholder="oder Code eintippen" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase">
+        <button class="btn" type="submit">Weiter</button>
+      </form>
+    </div>
+  </div>
+
   <div class="modal xmodal" id="xmodal" hidden><div class="xbox" id="xbox"></div></div>
   <div class="toast" id="toast" hidden></div>
 
   <script src="/vendor/hls.min.js"></script>
   <script src="/app.js"></script>
   <script src="/extras.js"></script>
+  <script src="/qrcode.js"></script>
+  <script src="/pair.js"></script>
   <script src="/tv.js"></script>
 </body>
 </html>
