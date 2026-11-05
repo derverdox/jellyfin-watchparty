@@ -15,6 +15,9 @@
   const send = (m) => env.send(m);
   const serverNow = () => env.serverNow();
   const closeLibrary = () => env.closeLibrary();
+  // Außerhalb eines Raums alleine abspielen (Web: eigener Solo-Raum), falls die Oberfläche das kann
+  const solo = () => !inRoom() && typeof env.playSolo === 'function';
+  const mayPlay = () => canLoad() || solo();
   const X = { detail: null, show: null, season: 0, pollDraft: [], queue: [], poll: null, round: null, rated: null, board: { sort: 'votes', status: '', tag: '' } };
 
   const img = (id, w, type) => env.img(id, w, type);
@@ -109,14 +112,14 @@
     const actions = el('div', { class: 'xd-actions' });
     if (isSeries) {
       if (show && show.next) {
-        actions.append(el('button', { class: 'btn primary', disabled: !canLoad() && !perm('suggest'), onclick: () => playOrSuggest({ id: show.next.id, name: `${d.name} ${show.next.label}` }) },
+        actions.append(el('button', { class: 'btn primary', disabled: !mayPlay() && !perm('suggest'), onclick: () => playOrSuggest({ id: show.next.id, name: `${d.name} ${show.next.label}` }) },
           `▶ ${show.watchedCount ? 'Weiter mit' : 'Los geht\'s mit'} ${show.next.label}`, el('span', { class: 'sub' }, show.next.name)));
       }
     } else {
       if (d.resume > 30 && d.progress < 92) {
-        actions.append(el('button', { class: 'btn primary', disabled: !canLoad(), onclick: () => play(d, d.resume) }, `▶ Weiter ab ${fmt(d.resume)}`));
-        actions.append(el('button', { class: 'btn', disabled: !canLoad(), onclick: () => play(d, 0) }, 'Von vorn'));
-      } else if (canLoad()) actions.append(el('button', { class: 'btn primary', onclick: () => play(d, 0) }, '▶ Für alle abspielen'));
+        actions.append(el('button', { class: 'btn primary', disabled: !mayPlay(), onclick: () => play(d, d.resume) }, `▶ Weiter ab ${fmt(d.resume)}`));
+        actions.append(el('button', { class: 'btn', disabled: !mayPlay(), onclick: () => play(d, 0) }, 'Von vorn'));
+      } else if (mayPlay()) actions.append(el('button', { class: 'btn primary', onclick: () => play(d, 0) }, solo() ? '▶ Abspielen' : '▶ Für alle abspielen'));
       if (!canLoad() && perm('suggest') && inRoom()) actions.append(el('button', { class: 'btn primary', onclick: () => suggest(d) }, '💡 Vorschlagen'));
       if (inRoom() && (canLoad() || perm('suggest'))) actions.append(el('button', { class: 'btn', onclick: () => queueAdd([d.id], d.name) }, '＋ Liste'));
       if (inRoom() && canLoad()) actions.append(el('button', { class: 'btn', onclick: () => addToPoll(d) }, '🗳 Abstimmung'));
@@ -212,6 +215,7 @@
   }
 
   function play(d, position) {
+    if (solo()) { closeModal(); closeLibrary(); env.playSolo(d.id, position || 0, d.name); return; }
     if (!inRoom()) { toast('Erst einen Raum öffnen.'); return; }
     send({ t: 'load', itemId: d.id, position: position || 0 });
     toast(`„${d.name}“ wird geladen…`);
@@ -225,6 +229,7 @@
     closeLibrary();
   }
   function playOrSuggest(e) {
+    if (solo()) { play(e, 0); return; }
     if (!inRoom()) { toast('Erst einen Raum öffnen.'); return; }
     if (canLoad()) play(e, 0);
     else if (perm('suggest')) suggest(e);

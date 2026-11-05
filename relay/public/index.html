@@ -71,10 +71,29 @@
     </form>
   </section>
 
-  <!-- Lobby -->
+  <!-- Startseite (Streaming-Stil, home.js) -->
+  <section id="view-home" class="view home" hidden>
+    <header class="nf-nav" id="nf-nav">
+      <div class="brand"><span class="logo">▶</span> <span class="hide-sm">Watchparty</span></div>
+      <nav class="nf-tabs" id="nf-tabs">
+        <button data-tab="start" class="on">Start</button>
+        <button data-tab="movies">Filme</button>
+        <button data-tab="series">Serien</button>
+        <button data-tab="list">Meine Liste</button>
+        <button data-tab="wishes">📌 Wünsche</button>
+      </nav>
+      <input class="nf-search" id="nf-search" type="search" placeholder="🔍 Suchen" autocomplete="off">
+      <button class="btn small nf-party" id="nf-party" title="Räume, Einladungen, Konto">👥 <span class="hide-sm">Zusammen schauen</span></button>
+      <button class="nf-avatar" id="nf-me" aria-label="Konto">?</button>
+    </header>
+    <main class="nf-body" id="nf-body"></main>
+  </section>
+
+  <!-- Lobby: Zusammen schauen + Konto -->
   <section id="view-lobby" class="view center" hidden>
     <div class="card auth">
-      <div class="brand big"><span class="logo">▶</span> Watchparty</div>
+      <button class="link lobby-back" id="btn-lobby-home">← Zur Startseite</button>
+      <div class="brand big"><span class="logo">▶</span> Zusammen schauen</div>
       <p class="muted">Hi <strong id="lobby-name"></strong>! <span class="admin-flag" id="admin-flag" hidden>Admin</span> <span id="lobby-hint">Mach einen Raum auf und schick deinem Kumpel den Link.</span></p>
       <button class="btn primary" id="btn-create">Neuen Raum erstellen</button>
       <div class="divider" id="lobby-or"><span>oder</span></div>
@@ -83,6 +102,7 @@
         <button class="btn" type="submit">Beitreten</button>
       </form>
       <p class="error" id="lobby-error" hidden></p>
+      <div class="lobby-rooms" id="lobby-rooms" hidden></div>
       <div class="agent-status" id="lobby-agent"></div>
       <p class="motd" id="motd" hidden></p>
       <p class="muted tiny" id="no-create" hidden>Du kannst selbst keine Räume erstellen. Lass dir einen Raum-Code oder Link schicken.</p>
@@ -123,6 +143,7 @@
   <!-- Raum -->
   <section id="view-room" class="view room" hidden>
     <header class="topbar">
+      <button class="btn small" id="btn-home" title="Zurück zur Startseite">←<span class="hide-sm"> Start</span></button>
       <div class="brand"><span class="logo">▶</span> <span class="hide-sm">Watchparty</span></div>
       <div class="now" id="now-playing"><span class="muted">Noch nichts ausgewählt</span></div>
       <div class="actions">
@@ -213,6 +234,7 @@
           <ul class="people" id="people"></ul>
           <div class="host-panel" id="host-panel" hidden>
             <label class="switch"><input type="checkbox" id="chk-all-control"> <span>Alle dürfen steuern</span></label>
+            <label class="switch"><input type="checkbox" id="chk-private"> <span>Privat (nicht in der Freundesliste)</span></label>
           </div>
           <div class="me-panel">
             <button class="link" id="btn-rename">Namen ändern</button> ·
@@ -276,6 +298,7 @@
   <script src="/extras.js"></script>
   <script src="/qrcode.js"></script>
   <script src="/pair.js"></script>
+  <script src="/home.js"></script>
   <script src="/tv.js"></script>
 </body>
 </html>

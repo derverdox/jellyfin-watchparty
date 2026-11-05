@@ -150,6 +150,9 @@ function inviteFromUrl() {
   return m ? m[1] : null;
 }
 
+/** „Zusammen schauen“: Räume erstellen/beitreten, Konto, Verwaltung (früher die Startseite). */
+function showLobby() { S.showLobby = true; route(); }
+
 async function route() {
   const invite = inviteFromUrl();
   if (invite && !S.me) {
@@ -175,6 +178,8 @@ async function route() {
     $('#join-name').textContent = S.me.name;
     return showView('view-join');
   }
+  if (!S.showLobby && window.WPHome) { renderAgentStatus(S.me.agentOnline, S.me.server); return WPHome.show(); }
+  S.showLobby = false;
   $('#lobby-name').textContent = S.me.name;
   renderAgentStatus(S.me.agentOnline, S.me.server);
   $('#admin-box').hidden = !(S.me.admin || (perm('invite') && S.me.invitesEnabled));
@@ -189,6 +194,7 @@ async function route() {
   motd.textContent = S.me.motd || '';
   showView('view-lobby');
   if (window.WP && WP.lobby) WP.lobby();
+  if (window.WPHome) WPHome.lobbyRooms();
 }
 
 function renderAgentStatus(online, server) {
@@ -396,6 +402,13 @@ function onMessage(msg) {
       if (S.me) { S.me.agentOnline = msg.agentOnline; S.me.server = msg.server; }
       renderAgentStatus(msg.agentOnline, msg.server);
       setPlayback(msg.playback);
+      if (S.pendingPlay) {
+        const pp = S.pendingPlay;
+        S.pendingPlay = null;
+        const same = msg.playback && msg.playback.item && msg.playback.item.id === pp.itemId;
+        if (!same && canLoad()) send({ t: 'load', itemId: pp.itemId, position: pp.position || 0, play: true });
+        else if (same && canControl() && !msg.playback.playing) send({ t: 'control', action: 'play', position: msg.playback.position });
+      }
       break;
     case 'agent':
       if (S.me) { S.me.agentOnline = msg.online; S.me.server = msg.server; }
@@ -748,6 +761,7 @@ function renderControlState() {
   $('#lock-hint').hidden = ok;
   $('#host-panel').hidden = !isHost();
   $('#chk-all-control').checked = !!(S.room && S.room.allowAllControl);
+  $('#chk-private').checked = !!(S.room && S.room.private);
   updateControls();
   renderChatActions();
 }
@@ -1047,6 +1061,7 @@ function confirmKick(name) {
 }
 
 $('#chk-all-control').addEventListener('change', (e) => send({ t: 'settings', allowAllControl: e.target.checked }));
+$('#chk-private').addEventListener('change', (e) => send({ t: 'settings', private: e.target.checked }));
 
 for (const tab of $$('.tab')) {
   tab.addEventListener('click', () => {
@@ -1085,10 +1100,28 @@ $('#btn-leave').addEventListener('click', () => {
   teardownPlayer();
   if (S.ws) S.ws.close();
   S.playback = null;
+  S.code = null; S.you = null; S.room = null;
+  document.title = 'Watchparty';
   $('#agent-banner').hidden = true;
   history.pushState(null, '', '/');
   route();
 });
+$('#btn-home').addEventListener('click', () => $('#btn-leave').click());
+
+/** Alleine abspielen: eigenen (wiederverwendeten) Raum öffnen und den Titel starten. Freunde kommen per Link dazu. */
+async function playSolo(itemId, position = 0) {
+  try {
+    if (S.code && S.you && !$('#view-room').hidden) {
+      if (canLoad()) send({ t: 'load', itemId, position, play: S.members && S.members.length === 1 });
+      else toast('Hier steuert gerade jemand anderes.');
+      return;
+    }
+    const { code } = await api('/api/rooms', { method: 'POST', body: { solo: true } });
+    S.pendingPlay = { itemId, position };
+    history.pushState(null, '', `/r/${code}`);
+    enterRoom(code);
+  } catch (ex) { toast(ex.message); }
+}
 
 window.addEventListener('pagehide', stopTranscode);
 
@@ -1342,7 +1375,7 @@ function openTile(it) {
 
 // Schnittstelle für extras.js (im Desktop-Client gibt es dieselbe mit IPC)
 window.WPX = {
-  api, send, serverNow, closeLibrary,
+  api, send, serverNow, closeLibrary, playSolo,
   img: (id, w, type) => `/img/${id}?w=${w}${type ? `&type=${type}` : ''}`,
   seek: (pos) => control('seek', pos),
   segments: () => (S.info && S.info.segments) || [],
