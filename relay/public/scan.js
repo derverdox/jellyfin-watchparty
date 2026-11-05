@@ -173,7 +173,7 @@ function render(d) {
       card.append(el('p', { class: 'tiny muted' }, 'Auf diesem Server ist keine Produktquelle konfiguriert. Such den Titel trotzdem in der Bibliothek:'));
     }
     if (!d.product) {
-      card.append(el('a', { class: 'btn small', href: '/?q=' + encodeURIComponent($('#code').value) }, '🔍 In Bibliothek suchen'));
+      card.append(el('button', { class: 'btn small', onclick: () => { $('#title').focus(); $('#title').scrollIntoView({ block: 'center' }); } }, '🔍 Nach Titel suchen'));
     }
   }
 
@@ -196,6 +196,29 @@ async function doScan() {
     box.replaceChildren(el('p', { class: 'error' }, e.message));
   }
 }
+
+/* ---------- Titel-Suche (nutzt die normale Bibliothekssuche) ---------- */
+
+let titleTimer;
+async function titleSearch() {
+  const q = $('#title').value.trim();
+  const box = $('#title-hits');
+  if (q.length < 2) { box.replaceChildren(); return; }
+  let d;
+  try { d = await api('/api/search?q=' + encodeURIComponent(q)); } catch { box.replaceChildren(); return; }
+  if ($('#title').value.trim() !== q) return; // Eingabe hat sich schon geändert
+  const rows = [
+    ...d.movies.slice(0, 4).map((x) => ({ ...x, kind: 'Film' })),
+    ...d.series.slice(0, 3).map((x) => ({ ...x, kind: x.type === 'BoxSet' ? 'Box' : 'Serie' })),
+    ...d.episodes.slice(0, 2).map((x) => ({ ...x, kind: 'Folge' })),
+  ].slice(0, 8);
+  if (!rows.length) { box.replaceChildren(el('div', { class: 'empty' }, 'Nichts gefunden.')); return; }
+  box.replaceChildren(...rows.map((x) => el('a', { href: `/?open=${x.id}` },
+    el('span', {}, x.name + (x.year ? ` (${x.year})` : '')),
+    el('span', { class: 'kind' }, x.kind))));
+}
+$('#title').addEventListener('input', () => { clearTimeout(titleTimer); titleTimer = setTimeout(titleSearch, 250); });
+$('#title').addEventListener('search', titleSearch);
 
 /* ---------- Boot ---------- */
 

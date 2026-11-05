@@ -145,6 +145,8 @@ Im Bibliothek-Fenster auf **„📷 Scannen“** (oder direkt `/scan`): Barcode 
 - **„Nicht in unserer Bibliothek“** – ein Klick setzt den Titel auf die **Wunschliste**.
 - Zweifelhafte Treffer: aus den Kandidaten das richtige Item bestätigen („Meintest du …?“) – der Barcode wird dann fest mit ihm verknüpft und künftige Scans erkennen ihn ohne Netzabfrage.
 
+Unter der Barcode-Eingabe gibt es zusätzlich eine **freie Titel-Suche** (wie die Bibliothekssuche: Umlaute, Tippfehler, Jahr) mit Live-Vorschlägen – praktisch, wenn ein Barcode unbekannt ist oder die Hülle gerade nicht greifbar ist.
+
 Jeder gescannte Code wird lokal gecacht (`barcodes.json`): Wiedererkennungen brauchen keine externen Abfragen. **Als App:** Die Seite ist eine PWA – „Zum Startbildschirm hinzufügen“ legt Watchparty (inkl. Scannen) wie eine App aufs Handy.
 
 ## Sicherheit
