@@ -32,7 +32,7 @@
     if (lib.collectionType === 'movies' || lib.collectionType === 'tvshows') p.set('collectionType', lib.collectionType);
     return api(`/api/items?${p}`);
   });
-  const history = () => cached('history', 15e3, async () => (await api('/api/history')).items || []);
+  const loadHistory = () => cached('history', 15e3, async () => (await api('/api/history')).items || []);
   const watchlist = () => cached('watchlist', 15e3, async () => (await api('/api/watchlist')).items || []);
   const topRated = () => cached('top', 5 * 60e3, async () => (await api('/api/top-rated')).items || []).catch(() => []);
   const movieLibs = (libs) => libs.filter((l) => l.collectionType === 'movies');
@@ -195,7 +195,7 @@
 
   async function renderStart() {
     const libs = await libraries();
-    const [hist, list, top] = await Promise.all([history().catch(() => []), watchlist().catch(() => []), topRated()]);
+    const [hist, list, top] = await Promise.all([loadHistory().catch(() => []), watchlist().catch(() => []), topRated()]);
     const newest = await Promise.all([...movieLibs(libs), ...showLibs(libs)].map((l) => libItems(l, 'added', 20).then((r) => ({ lib: l, items: r.items || [] })).catch(() => ({ lib: l, items: [] }))));
     const out = [];
     // Titelbild: zufällig aus den Neuesten mit Hintergrundbild

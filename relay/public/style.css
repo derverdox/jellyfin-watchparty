@@ -622,3 +622,7 @@ html.tv #btn-pair-qr { display: none; } /* QR steht auf Fernsehern sowieso daneb
 /* Fernseher */
 html.tv .view.home { --card-w: 150px; --pad: 40px; }
 html.tv .nf-friend:focus-within { box-shadow: 0 0 0 3px var(--accent); }
+html.tv .nf-card:focus { outline: none; box-shadow: none; transform: none; }
+html.tv .nf-nav .brand > span:not(.logo) { display: none; }
+html.tv .nf-nav .nf-search { flex-basis: 150px; width: 150px; }
+html.tv .nf-nav .nf-search:focus { flex-basis: 220px; width: 220px; }
