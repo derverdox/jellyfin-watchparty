@@ -137,7 +137,7 @@ docker compose exec -e DOMAIN=example.com relay node server.js invite 48   # Ein
 
 ## Scannen per ISBN/EAN (`/scan`)
 
-Im Bibliothek-Fenster auf **„📷 Scannen“** (oder direkt `/scan`): Barcode **mit der Handy-Kamera scannen** (Android nativ, iOS über mitgelieferten Decoder) oder ISBN/EAN eintippen. Der Relay fragt Produktquellen ab (ean-search.org, Google Custom Search, Discogs – alle optional per `.env`), erkennt anhand des Titels, ob **Film, Serie oder Box-Set** gemeint ist, und vergleicht mit der Jellyfin-Bibliothek:
+Im Bibliothek-Fenster auf **„📷 Scannen“** (oder direkt `/scan`): Barcode **mit der Handy-Kamera scannen** (Android nativ, iOS über mitgelieferten Decoder) oder ISBN/EAN eintippen. Der Relay fragt gezielte Produkt-Datenbanken ab (nicht Websuche): **ean-search.org** (EAN/GS1-Datenbank, API-Schlüssel), **Open Library** (ISBN-Datenbank, gratis, für 978er-Codes), **Google Books** (reine ISBN-Datenbank, nur mit eigenem optionalen Schlüssel aktiv) und **Discogs** als Fallback. Erkannt wird anhand des Titels, ob **Film, Serie oder Box-Set** gemeint ist, und vergleicht mit der Jellyfin-Bibliothek:
 
 - **„Haben wir!“** – Treffer, direkt zur Detailseite.
 - **„Haben wir – aber anderes Format“** – wir haben ihn nur als DVD (576p), gescannt als Blu-ray (1080p) oder 4K-UHD (2160p)? Die Auflösung in Jellyfin verrät es.

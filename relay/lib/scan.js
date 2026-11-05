@@ -2,12 +2,13 @@
 /*
  * ISBN/EAN-Scan: Barcode → Produkt (extern) → Abgleich mit der Jellyfin-Bibliothek.
  *
- * Produktquellen (nur wenn ein Key gesetzt ist, in dieser Reihenfolge):
- *   1. ean-search.org  – gute Abdeckung deutscher Medien-EANs (günstiger API-Key)
- *   2. Google Custom Search – gratis 100 Abfragen/Tag, Titel von Shop-Seiten
- *   3. Discogs – barcode-Suche, schlägt bei Tonträgern/Ostings an
- * Ohne jede Quelle bleibt die manuelle Suche; einmal bestätigte Barcodes
- * werden lokal gemerkt (barcodes.json) und brauchen nie wieder eine Abfrage.
+ * Produktquellen – gezielte EAN-/ISBN-Datenbanken, keine Websuche:
+ *   1. ean-search.org        – EAN/GS1-Datenbank, gute deutsche Medien-Abdeckung (API nötig)
+ *   2. Open Library          – ISBN-Datenbank, gratis & ohne Key (nur 978er-Codes)
+ *   3. Google Books          – reine ISBN-Datenbank, gratis mit eigenem API-Schlüssel (nur 978er)
+ *   4. Discogs             – Barcode-Suche in der Tonträger-Datenbank (Fallback)
+ * Bestätigte Barcodes werden lokal gemerkt (barcodes.json) und brauchen nie
+ * wieder eine externe Abfrage.
  *
  * Format-Vergleich: Jellyfin pflegt kein Format-Feld, aber die Videohöhe ist
  * eindeutig: ≤576 = DVD (PAL; NTSC 480), ≥1080 = Blu-ray, ≥2160 = 4K-UHD.
@@ -113,21 +114,33 @@ async function queryEanSearch(code, cfg) {
   }));
 }
 
-/** Google Custom Search JSON API: Barcode googeln, Titel vom Shop nehmen. */
-async function queryGoogleCse(code, cfg) {
-  const d = await httpJson(`${cfg.cseUrl}/customsearch/v1?key=${encodeURIComponent(cfg.cse)}&cx=${encodeURIComponent(cfg.cseCx)}&q=${encodeURIComponent(`"${code}"`)}&num=5`);
-  const items = (d && d.items) || [];
-  const rank = { 'amazon.de': 0, 'amazon.com': 0, 'futurimedia.de': 1, 'medienfire.de': 1, 'thalia.de': 2, 'bol.de': 2 };
-  return items
-    .map((it) => ({
-      title: String(it.title || '').replace(/\s*[-–|:]\s*(Amazon.*|eBay.*|iBood.*|Media[^\s]*Markt|Otto\.de).*$/i, '').trim(),
-      brand: it.displayLink || '',
-      year: (/\[?((?:19|20)\d{2})\]?/.exec(it.title || '') || [])[1] || null,
-      formats: [], source: 'google-cse',
-      text: `${it.title} ${it.snippet || ''}`,
-    }))
-    .filter((x) => x.title.length > 2)
-    .sort((a, b) => (rank[a.brand] ?? 9) - (rank[b.brand] ?? 9));
+/** Open Library: ISBN-Datenbank, gratis ohne Key. Nur bei 978er-Codes sinnvoll. */
+async function queryOpenLibrary(code, cfg) {
+  const d = await httpJson(`${cfg.openLibraryUrl}/api/books?bibkeys=${encodeURIComponent('ISBN:' + code)}&format=json&jscmd=data`);
+  const entry = d && d['ISBN:' + code];
+  if (!entry || !entry.title) return [];
+  return [{
+    title: entry.title,
+    brand: ((entry.publishers || [])[0] || {}).name || '',
+    year: entry.publish_date ? ((/(19|20)\d{2}/.exec(entry.publish_date) || [])[0] || null) : null,
+    formats: [], source: 'openlibrary',
+    text: `${entry.title} ${entry.publishers ? entry.publishers.map((p) => p.name).join(' ') : ''}`,
+  }];
+}
+
+/** Google Books (reine ISBN-Datenbank, kein Websuchen; nur mit eigenem Schlüssel). */
+async function queryGoogleBooks(code, cfg) {
+  const d = await httpJson(`${cfg.booksUrl}/books/v1/volumes?q=${encodeURIComponent('isbn:' + code)}&maxResults=3&key=${encodeURIComponent(cfg.books)}`);
+  return ((d && d.items) || []).map((v) => {
+    const vi = v.volumeInfo || {};
+    return {
+      title: vi.title || '',
+      brand: (vi.authors || [])[0] || (vi.publisher || ''),
+      year: vi.publishedDate ? ((/(19|20)\d{2}/.exec(vi.publishedDate) || [])[0] || null) : null,
+      formats: [], source: 'google-books',
+      text: `${vi.title || ''} ${(vi.description || '').slice(0, 200)}`,
+    };
+  }).filter((x) => x.title.length > 2);
 }
 
 /** Discogs: barcode-Suche (Tonträger/Ostings, manchmal auch Film-Physicals). */
@@ -149,9 +162,11 @@ async function queryDiscogs(code, cfg) {
  * Liefert das erste Produkt mit brauchbarem Titel, mit Klassifikation.
  */
 async function lookupProduct(code, cfg) {
+  const isbn = /^(978|979)/.test(code);
   const enabled = [];
   if (cfg.eanSearch) enabled.push((c) => queryEanSearch(c, cfg));
-  if (cfg.cse && cfg.cseCx) enabled.push((c) => queryGoogleCse(c, cfg));
+  if (isbn) enabled.push((c) => queryOpenLibrary(c, cfg));
+  if (isbn && cfg.books) enabled.push((c) => queryGoogleBooks(c, cfg));
   enabled.push((c) => queryDiscogs(c, cfg));
   for (const q of enabled) {
     const hits = await q(code);

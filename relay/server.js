@@ -37,9 +37,9 @@ const CONFIG = {
   // nur die manuelle Suche bzw. die lokal gespeicherte Barcode-Zuordnung).
   scanEanSearch: process.env.SCAN_EANSEARCH || '',
   scanEanSearchUrl: process.env.SCAN_EANSEARCH_URL || 'https://api.ean-search.org',
-  scanCse: process.env.SCAN_GOOGLE_CSE || '',
-  scanCseCx: process.env.SCAN_GOOGLE_CSE_CX || '',
-  scanCseUrl: process.env.SCAN_GOOGLE_CSE_URL || 'https://www.googleapis.com',
+  scanBooks: process.env.SCAN_GOOGLE_BOOKS || '',
+  scanBooksUrl: process.env.SCAN_GOOGLE_BOOKS_URL || 'https://www.googleapis.com',
+  scanOpenLibraryUrl: process.env.SCAN_OPENLIBRARY_URL || 'https://openlibrary.org',
   scanDiscogs: process.env.SCAN_DISCOGS || '',
   scanDiscogsUrl: process.env.SCAN_DISCOGS_URL || 'https://api.discogs.com',
 };
@@ -995,12 +995,13 @@ async function handle(req, res) {
     if (!product) {
       product = await scanLib.lookupProduct(code, {
         eanSearch: CONFIG.scanEanSearch, eanSearchUrl: CONFIG.scanEanSearchUrl,
-        cse: CONFIG.scanCse, cseCx: CONFIG.scanCseCx, cseUrl: CONFIG.scanCseUrl,
+        books: CONFIG.scanBooks, booksUrl: CONFIG.scanBooksUrl,
+        openLibraryUrl: CONFIG.scanOpenLibraryUrl,
         discogs: CONFIG.scanDiscogs, discogsUrl: CONFIG.scanDiscogsUrl,
       });
       if (product) { scans.remember(code, product); fresh = true; }
     }
-    const lookupConfigured = !!(CONFIG.scanEanSearch || (CONFIG.scanCse && CONFIG.scanCseCx) || CONFIG.scanDiscogs);
+    const lookupConfigured = !!(CONFIG.scanEanSearch || CONFIG.scanBooks || CONFIG.scanDiscogs);
     if (!product) {
       return sendJson(res, 200, { code, product: null, verdict: 'unknown', candidates: [], lookupConfigured });
     }
