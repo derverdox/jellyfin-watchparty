@@ -22,7 +22,10 @@ test('Solo-Raum und Freundesliste', { timeout: 60000 }, async (t) => {
   const post = (p, body, headers = {}) => fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
   const cookieOf = (r) => ({ Cookie: /wp_sid=[a-f0-9]+/.exec(r.headers.get('set-cookie'))[0] });
 
-  const chef = cookieOf(await post('/api/login', { username: 'chef', password: 'geheim123' }));
+  // Das Admin-Konto wird beim Start angelegt; kurz warten, bis der Login klappt
+  let first;
+  for (let i = 0; i < 50; i++) { first = await post('/api/login', { username: 'chef', password: 'geheim123' }); if (first.status === 200) break; await sleep(100); }
+  const chef = cookieOf(first);
   assert.equal((await post('/api/admin/users', { username: 'bob', password: 'Sonne-Mond-7' }, chef)).status, 200);
   const bob = cookieOf(await post('/api/login', { username: 'bob', password: 'Sonne-Mond-7' }));
 
