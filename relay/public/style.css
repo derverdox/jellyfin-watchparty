@@ -633,3 +633,13 @@ body.pip #view-room .topbar, body.pip #view-room .side, body.pip .controls, body
 body.pip .toasts-layer, body.pip .reactions-layer, body.pip #btn-skip, body.pip .banner, body.pip .toast { display: none !important; }
 body.pip #view-room .player { position: fixed; inset: 0; z-index: 200; }
 body.pip .player video::cue { font-size: .8em; }
+
+/* A–Z: komplette Liste mit Buchstabenleiste */
+.nf-az-status { font-size: 13px; font-weight: 600; }
+.nf-az-bar { position: sticky; top: 58px; z-index: 5; display: flex; flex-wrap: wrap; gap: 2px; padding: 6px 0 8px; background: linear-gradient(#0a0a0d 75%, #0a0a0d00); }
+.nf-az-bar button { min-width: 28px; padding: 4px 6px; border: 0; border-radius: 6px; background: #ffffff12; color: #e8e8ee; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.nf-az-bar button:hover, .nf-az-bar button:focus { background: var(--accent); color: var(--accent-ink); }
+.nf-az-bar button.off { opacity: .25; cursor: default; }
+.nf-az-group { scroll-margin-top: 110px; }
+.nf-az-letter { font-size: 22px; font-weight: 900; color: var(--accent); margin: 14px 0 4px; }
+@media (max-width: 700px) { .nf-az-bar { top: 96px; } .nf-az-bar button { min-width: 24px; padding: 3px 4px; font-size: 12px; } }

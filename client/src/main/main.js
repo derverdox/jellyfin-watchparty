@@ -186,6 +186,7 @@ app.whenReady().then(async () => {
     ['GET', new RegExp(`^/api/show/${ID}(\\?room=[A-Z0-9]{4,12})?$`, 'i')],
     ['GET', /^\/api\/(top-rated|profile|libraries|history|watchlist|activity)$/],
     ['GET', /^\/api\/items\?[\w=&%.-]*$/],
+    ['GET', /^\/api\/catalog\?[\w=&%.,-]*$/],
     ['GET', /^\/api\/search\?q=[^#]*$/],
     ['GET', /^\/api\/random(\?[\w=&%.-]*)?$/],
     ['GET', /^\/api\/wishes(\?[\w=&%.-]*)?$/],

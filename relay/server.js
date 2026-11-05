@@ -65,6 +65,41 @@ const guard = new Guard(CONFIG.dataDir, (ip, b) => {
   tunnel.onData = (buf) => { telemetry.in(buf.length); return onData(buf); };
 }
 const jsonCache = new TtlCache(60 * 1000);
+
+/* Komplette Titellisten je Bibliothek (für „Alle A–Z“), 10 Minuten im Relay gehalten,
+   damit Jellyfin/der Heimanschluss nicht für jeden Zuschauer einzeln gefragt werden. */
+const CATALOG_TTL = 10 * 60 * 1000;
+const catalogs = new Map(); // Bibliothek → { t, promise }
+function libCatalog(libId, collectionType) {
+  const key = norm(libId);
+  const hit = catalogs.get(key);
+  if (hit && Date.now() - hit.t < CATALOG_TTL) return hit.promise;
+  const promise = (async () => {
+    const out = [];
+    for (let start = 0; ;) {
+      const q = new URLSearchParams({ ParentId: libId, Fields: ITEM_FIELDS, EnableImageTypes: 'Primary', ImageTypeLimit: '1', SortBy: 'SortName', Limit: '500', StartIndex: String(start) });
+      if (collectionType === 'movies') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Movie'); }
+      if (collectionType === 'tvshows') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Series'); }
+      const data = await jf(`/Users/${uid()}/Items?${q}`);
+      const items = data.Items || [];
+      out.push(...items);
+      start += items.length;
+      if (!items.length || start >= (data.TotalRecordCount || 0) || start > 50000) break;
+    }
+    return out;
+  })();
+  catalogs.set(key, { t: Date.now(), promise });
+  promise.catch(() => catalogs.delete(key));
+  return promise;
+}
+const CATALOG_FIELDS = ['id', 'name', 'type', 'year', 'rating', 'played', 'isFolder', 'playable', 'seriesId', 'hasBackdrop', 'runtime', 'collectionType', 'officialRating'];
+function slimItem(it) {
+  const m = mapItem(it);
+  const o = {};
+  for (const k of CATALOG_FIELDS) if (m[k] != null && m[k] !== false) o[k] = m[k];
+  if (m.overview) o.overview = m.overview.slice(0, 220);
+  return o;
+}
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const REACTIONS = ['😂', '😮', '❤️', '👍', '🔥', '😱', '👏', '💀'];
 const ID_RE = /^[a-f0-9]{32}$|^[a-f0-9-]{36}$/i;
@@ -1028,6 +1063,25 @@ async function handle(req, res) {
     return sendJson(res, 200, { items: kept.map(mapItem), total: Math.max(0, (data.TotalRecordCount || 0) - (all.length - kept.length)) });
   }
 
+  // --- Alle Titel einer oder mehrerer Bibliotheken, alphabetisch (A–Z), mit Fingerabdruck ---
+  if (p === '/api/catalog') {
+    const ids = [...new Set(String(url.searchParams.get('libs') || '').split(',').filter((x) => ID_RE.test(x)))].slice(0, 12);
+    if (!ids.length) throw new HttpError(400, 'libs fehlt');
+    const views = ((await jsonCache.get('views', () => jf(`/Users/${uid()}/Views`))).Items) || [];
+    const byId = new Map();
+    for (const id of ids) {
+      await assertAccess(session, id);
+      const v = views.find((x) => norm(x.Id) === norm(id));
+      for (const it of await libCatalog(id, String((v && v.CollectionType) || '').toLowerCase())) byId.set(it.Id, it);
+    }
+    const allowed = await filterAllowed(session, [...byId.values()]);
+    const key = (n) => fold(String(n || ''));
+    const items = allowed.map(slimItem).sort((a, b) => key(a.name).localeCompare(key(b.name), 'de', { numeric: true }));
+    const etag = crypto.createHash('sha1').update(JSON.stringify(items)).digest('hex').slice(0, 20);
+    if (url.searchParams.get('etag') === etag) return sendJson(res, 200, { etag, unchanged: true, count: items.length });
+    return sendJson(res, 200, { etag, items });
+  }
+
   // --- Suche: gruppiert, nach Relevanz, tolerant bei Umlauten/ß, mit Jahr ---
   if (p === '/api/search') {
     const raw = String(url.searchParams.get('q') || '').trim().slice(0, 100);
@@ -1930,6 +1984,7 @@ function rateOk(times, max, windowMs) {
 // Status des Heimservers an alle Räume melden
 tunnel.on('change', (online) => {
   jsonCache.clear();
+  catalogs.clear();
   for (const room of rooms.values()) room.broadcast({ t: 'agent', online, server: online ? tunnel.info.serverName : null });
 });
 

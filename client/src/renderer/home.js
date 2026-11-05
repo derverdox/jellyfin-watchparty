@@ -265,25 +265,78 @@
       out.push(row(`${pre}Am besten bewertet`, rating.filter((x) => x.rating)));
       out.push(row(`${pre}Neueste Erscheinungen`, year));
     }
-    // Alles A–Z mit „Mehr laden“
-    const lib = mine[0];
-    const state = { lib, start: 0, items: [] };
-    H.gridState = state;
-    const moreBtn = el('button', { class: 'btn', onclick: () => loadMore() }, 'Mehr laden');
-    const sec = grid(`Alle ${label} A–Z${mine.length > 1 ? ` (${lib.name})` : ''}`, [], moreBtn);
-    out.push(sec);
+    // Alles A–Z: komplette Liste, auf dem Gerät gespeichert, mit Buchstabenleiste
+    out.push(azSection(kind, label, mine));
     body().replaceChildren(...out.filter(Boolean));
-    async function loadMore() {
-      moreBtn.disabled = true;
-      try {
-        const r = await libItems(state.lib, 'name', 60, state.start);
-        const items = r.items || [];
-        state.start += items.length;
-        sec.querySelector('.nf-grid').append(...items.map((it) => card(it)));
-        moreBtn.hidden = !items.length || state.start >= (r.total || 0);
-      } catch (e) { toast(e.message); } finally { moreBtn.disabled = false; }
-    }
-    loadMore();
+  }
+
+  /* ---------------- A–Z (alle Titel, lokal gespeichert) ---------------- */
+
+  const azKey = (kind, libs) => `wp_az_${kind}_${libs.map((l) => l.id).join('_')}`;
+  const sortName = (n) => String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const letterOf = (n) => { const c = sortName(n).trim().charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : '#'; };
+
+  function azLoad(key) {
+    try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v && Array.isArray(v.items) ? v : null; } catch { return null; }
+  }
+  function azSave(key, data) {
+    try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), etag: data.etag, items: data.items })); } catch { /* Speicher voll: dann eben ohne */ }
+  }
+
+  /** Komplette Liste vom Relay (dort zwischengespeichert). Mit Fingerabdruck: unverändert → nichts laden. */
+  async function azFetch(libs, etag) {
+    const p = new URLSearchParams({ libs: libs.map((l) => l.id).join(',') });
+    if (etag) p.set('etag', etag);
+    return api(`/api/catalog?${p}`);
+  }
+
+  function azSection(kind, label, libs) {
+    const key = azKey(kind, libs);
+    const status = el('span', { class: 'nf-az-status muted' });
+    const bar = el('nav', { class: 'nf-az-bar' });
+    const box = el('div', { class: 'nf-az' });
+    const sec = el('section', { class: 'nf-row nf-az-row' }, el('h3', {}, `Alle ${label} A–Z `, status), bar, box);
+    let shownSig = null;
+
+    const paint = (items) => {
+      const sig = items.map((x) => `${x.id}:${x.played ? 1 : 0}`).join(',');
+      if (sig === shownSig) return; // nichts geändert → nichts neu zeichnen
+      shownSig = sig;
+      const groups = new Map();
+      for (const it of items) { const L = letterOf(it.name); if (!groups.has(L)) groups.set(L, []); groups.get(L).push(it); }
+      const letters = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+      bar.replaceChildren(...letters.map((L) => el('button', {
+        class: groups.has(L) ? '' : 'off', disabled: !groups.has(L), tabindex: groups.has(L) ? 0 : -1,
+        onclick: () => { const t = box.querySelector(`[data-letter="${L}"]`); if (t) { t.scrollIntoView({ block: 'start', behavior: 'smooth' }); const c = t.querySelector('.nf-card'); if (c) setTimeout(() => c.focus({ preventScroll: true }), 350); } },
+      }, L)));
+      // Abschnitte nacheinander aufbauen, damit auch schwache Geräte flüssig bleiben
+      const order = letters.filter((L) => groups.has(L));
+      box.replaceChildren();
+      let i = 0;
+      const step = () => {
+        const t0 = performance.now();
+        while (i < order.length && performance.now() - t0 < 40) {
+          const L = order[i++];
+          box.append(el('div', { class: 'nf-az-group', 'data-letter': L }, el('div', { class: 'nf-az-letter' }, L), el('div', { class: 'nf-grid' }, groups.get(L).map((it) => card(it)))));
+        }
+        if (i < order.length && box.isConnected) setTimeout(step, 0);
+      };
+      step();
+      status.textContent = `${items.length} Titel`;
+    };
+
+    const cached = azLoad(key);
+    if (cached) paint(cached.items);
+    else { status.textContent = 'lädt …'; box.append(el('div', { class: 'nf-loading' }, el('div', { class: 'spinner' }))); }
+    // Beim Relay nachfragen; geändert → neu speichern und (nur dann) neu zeichnen
+    azFetch(libs, cached && cached.etag)
+      .then((r) => {
+        if (r.unchanged) return;
+        azSave(key, r);
+        if (sec.isConnected) paint(r.items);
+      })
+      .catch((e) => { if (!cached) box.replaceChildren(el('p', { class: 'error' }, e.message)); });
+    return sec;
   }
 
   async function renderList() {

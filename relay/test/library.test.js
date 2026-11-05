@@ -60,6 +60,18 @@ test('Suche, Merkliste, Verlauf, Qualität', { timeout: 60000 }, async (t) => {
   const s5 = (await req('GET', '/api/search?q=2012')).data;
   assert.deepStrictEqual(s5.movies.map((x) => x.name), ['Ritter der Nacht'], 'nur Jahr');
 
+  /* Alle Titel A–Z (im Relay zwischengespeichert, mit Fingerabdruck) */
+  const cat = (await req('GET', `/api/catalog?libs=${I.LIB_M},${I.LIB_K}`)).data;
+  assert.ok(cat.items.length >= 2, 'Filme aus beiden Film-Bibliotheken');
+  assert.ok(cat.items.every((x) => x.type === 'Movie'));
+  const names = cat.items.map((x) => x.name);
+  assert.deepStrictEqual(names, [...names].sort((x, y) => x.localeCompare(y, 'de', { numeric: true, sensitivity: 'base' })), 'alphabetisch');
+  assert.ok(cat.etag);
+  const same = (await req('GET', `/api/catalog?libs=${I.LIB_M},${I.LIB_K}&etag=${cat.etag}`)).data;
+  assert.strictEqual(same.unchanged, true, 'unverändert → keine Liste');
+  assert.strictEqual(same.items, undefined);
+  assert.strictEqual((await req('GET', '/api/catalog?libs=kaputt')).status, 400);
+
   /* Qualitätsstufen aus der Quelle */
   const q4k = (await req('GET', `/api/item/${I.M_RUECK}`)).data;
   assert.strictEqual(q4k.qualities[0].label, 'Original · 4K HDR · 60 Mbit/s');
