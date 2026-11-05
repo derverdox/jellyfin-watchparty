@@ -122,6 +122,13 @@
   vid.addEventListener('playing', () => { if (isTv) setFs(true); if (native) native.keepAwake(true); });
   vid.addEventListener('pause', () => { if (native) native.keepAwake(false); });
   vid.addEventListener('emptied', () => { if (native) native.keepAwake(false); });
+  vid.addEventListener('loadedmetadata', () => { if (native && native.videoAspect && vid.videoWidth) native.videoAspect(vid.videoWidth, vid.videoHeight); });
+
+  /** Bild im Bild (Android): nur das Video zeigen, solange das kleine Fenster offen ist. */
+  function pip(on) {
+    document.body.classList.toggle('pip', !!on);
+    if (on && document.activeElement) document.activeElement.blur();
+  }
 
   /* ---------------- Tasten ---------------- */
 
@@ -300,5 +307,5 @@
     }
   }
 
-  window.wpTv = { back, media, menu, move };
+  window.wpTv = { back, media, menu, move, pip };
 })();

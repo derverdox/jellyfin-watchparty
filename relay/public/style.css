@@ -627,3 +627,9 @@ html.tv .nf-card:focus { outline: none; box-shadow: none; transform: none; }
 html.tv .nf-nav .brand > span:not(.logo) { display: none; }
 html.tv .nf-nav .nf-search { flex-basis: 150px; width: 150px; }
 html.tv .nf-nav .nf-search:focus { flex-basis: 220px; width: 220px; }
+
+/* Bild im Bild (Android-App): nur das Video */
+body.pip #view-room .topbar, body.pip #view-room .side, body.pip .controls, body.pip .player-cards,
+body.pip .toasts-layer, body.pip .reactions-layer, body.pip #btn-skip, body.pip .banner, body.pip .toast { display: none !important; }
+body.pip #view-room .player { position: fixed; inset: 0; z-index: 200; }
+body.pip .player video::cue { font-size: .8em; }

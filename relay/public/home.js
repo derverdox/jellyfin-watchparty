@@ -145,7 +145,7 @@
     if (f.room && f.room.members > 1) line += ` · ${f.room.members} im Raum`;
     const join = f.room ? el('button', { class: 'btn small primary', onclick: (e) => { e.stopPropagation(); joinRoom(f.room.code); } }, f.state === 'watching' || f.state === 'paused' ? 'Mitschauen' : 'Beitreten') : null;
     const kind = { tv: '📺', mobile: '📱', desktop: '🖥️' }[f.kind] || '';
-    return el('div', { class: `nf-friend s-${f.state}` },
+    return el('div', { class: `nf-friend s-${f.state}`, 'data-user': f.username },
       el('div', { class: 'nf-av', style: `background:${color}` }, f.name.slice(0, 1).toUpperCase(), el('i', { class: 'dot' })),
       el('div', { class: 'nf-fr-text' },
         el('b', {}, f.name, kind ? el('span', { class: 'nf-kind' }, ` ${kind}`) : null),
@@ -155,29 +155,50 @@
   }
 
   function joinRoom(code) {
+    stopFriends();
     env.joinRoom(code);
   }
 
-  async function renderFriends(box) {
+  async function renderFriends(box, force) {
     let data;
     try { data = await api('/api/activity'); } catch { return; }
     if (!box.isConnected) return;
     const friends = data.friends || [];
+    // Nur neu zeichnen, wenn sich etwas geändert hat (sonst flackert es und der Fokus springt weg)
+    const sig = JSON.stringify(friends.map((f) => [f.username, f.state, f.item && (f.item.id || 'x'), f.room && f.room.code, f.room && f.room.members]));
+    if (!force && box.dataset.sig === sig) return;
+    box.dataset.sig = sig;
+    const focused = box.contains(document.activeElement) ? document.activeElement.closest('[data-user]') : null;
+    const keepUser = focused && focused.dataset.user;
     const head = el('h3', {}, 'Freunde ', el('span', { class: 'nf-count' }, friends.length ? `${friends.length} online` : ''));
     const list = friends.length
       ? el('div', { class: 'nf-friends' }, friends.map(friendCard))
       : el('p', { class: 'muted nf-empty' }, 'Gerade ist sonst niemand da. Lade jemanden ein über 👥 Zusammen schauen.');
     box.replaceChildren(head, list);
+    if (keepUser) {
+      const again = box.querySelector(`[data-user="${CSS.escape(keepUser)}"] button`);
+      if (again) again.focus({ preventScroll: true });
+    }
   }
 
   function startFriends(box) {
     stopFriends();
-    renderFriends(box);
+    renderFriends(box, true);
+    H.friendsBox = box;
     H.friendsTimer = setInterval(() => {
       if (q('#view-home').hidden || document.hidden) return;
       renderFriends(box);
-    }, 15000);
+    }, 5000);
   }
+  // Zurück in den Tab/die App: sofort aktualisieren
+  const freshen = () => {
+    if (document.hidden) return;
+    if (!q('#view-home').hidden && H.friendsBox && H.friendsBox.isConnected) renderFriends(H.friendsBox);
+    if (!q('#view-lobby').hidden) lobbyRooms();
+  };
+  document.addEventListener('visibilitychange', freshen);
+  window.addEventListener('focus', freshen);
+  setInterval(() => { if (!document.hidden && !q('#view-lobby').hidden) lobbyRooms(); }, 5000);
   function stopFriends() { clearInterval(H.friendsTimer); H.friendsTimer = null; }
 
   /** Raum-Browser in „Zusammen schauen“: offene Räume ohne Code betreten. */
