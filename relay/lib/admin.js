@@ -15,7 +15,7 @@ function genPassword() {
 function sessionView(s, onlineSids) {
   return {
     id: s.id.slice(0, 16), created: s.created, lastSeen: s.lastSeen, ua: s.ua || '', ip: s.ip || null,
-    client: /watchparty-desktop/i.test(s.ua || '') ? 'desktop' : /Mobi|Android|iPhone|iPad/i.test(s.ua || '') ? 'mobile' : 'web',
+    client: /watchparty-desktop/i.test(s.ua || '') ? 'desktop' : /WatchpartyTV/i.test(s.ua || '') ? 'tv' : /Mobi|Android|iPhone|iPad/i.test(s.ua || '') ? 'mobile' : 'web',
     online: onlineSids.has(s.id),
   };
 }

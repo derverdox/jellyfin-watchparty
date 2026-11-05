@@ -1,0 +1,72 @@
+name: Fire-TV-App
+
+# Baut die Android-TV-/Fire-TV-App (tv/) als signiertes APK.
+# Auf main wird sie unter dem festen Release „tv-latest“ veröffentlicht:
+#   https://github.com/<owner>/<repo>/releases/download/tv-latest/watchparty-tv.apk
+# Das Relay leitet https://deine-domain/tv dorthin weiter (zum Eintippen in „Downloader“).
+
+on:
+  push:
+    branches: [main]
+    paths: ['tv/**', 'relay/public/tv.*', '.github/workflows/tv.yml']
+  pull_request:
+    paths: ['tv/**', 'relay/public/tv.*', '.github/workflows/tv.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: APK bauen
+        working-directory: tv
+        env:
+          TV_KEYSTORE_B64: ${{ secrets.TV_KEYSTORE_B64 }}
+          TV_KEYSTORE_PASSWORD: ${{ secrets.TV_KEYSTORE_PASSWORD }}
+        run: |
+          # Fester Schlüssel aus den Repo-Secrets, damit Updates über die alte Version passen.
+          # Ohne Secret (z. B. PRs aus Forks) gibt es ein Debug-signiertes APK.
+          if [ -n "$TV_KEYSTORE_B64" ]; then
+            echo "$TV_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/tv.jks"
+            export TV_KEYSTORE="$RUNNER_TEMP/tv.jks"
+          else
+            echo "::warning::Kein TV_KEYSTORE_B64-Secret: APK wird mit Debug-Schlüssel signiert"
+          fi
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk watchparty-tv.apk
+          rm -f "$RUNNER_TEMP/tv.jks"
+          ls -la watchparty-tv.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: watchparty-tv
+          path: tv/watchparty-tv.apk
+
+      - name: Als „tv-latest“ veröffentlichen
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="Watchparty für Fire TV / Android TV · Build ${GITHUB_RUN_NUMBER} · ${GITHUB_SHA::7}
+
+          Installation: siehe tv/README.md. Auf dem Fire TV in der App „Downloader“ einfach https://deine-domain/tv eintippen."
+          if gh release view tv-latest >/dev/null 2>&1; then
+            gh release upload tv-latest tv/watchparty-tv.apk --clobber
+            gh release edit tv-latest --notes "$NOTES"
+          else
+            gh release create tv-latest tv/watchparty-tv.apk --target "$GITHUB_SHA" --prerelease \
+              --title "Fire-TV-App (aktuell)" --notes "$NOTES"
+          fi

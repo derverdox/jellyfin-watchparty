@@ -67,6 +67,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const REACTIONS = ['😂', '😮', '❤️', '👍', '🔥', '😱', '👏', '💀'];
 const ID_RE = /^[a-f0-9]{32}$|^[a-f0-9-]{36}$/i;
 const CHUNK = 4 * 1024 * 1024;
+const TV_APK_URL = process.env.TV_APK_URL || 'https://github.com/PlatzZuDemHalter/jellyfin-watchparty/releases/download/tv-latest/watchparty-tv.apk';
 const ROUND_MS = Math.max(5, Number(process.env.ROUND_SECONDS) || 120) * 1000; // Dauer der Bewertungsrunde nach dem Film
 
 // Erstes Admin-Konto aus der Umgebung anlegen, falls noch keins existiert
@@ -754,6 +755,11 @@ async function handle(req, res) {
     return serveFile(res, path.join(PUBLIC_DIR, p.slice(1)), 'public, max-age=300');
   }
   if (p === '/healthz') return sendJson(res, 200, { ok: true, agent: tunnel.online });
+  // Kurzer Link für die Fire-TV-App (zum Eintippen in „Downloader“): https://deine-domain/tv
+  if (req.method === 'GET' && (p === '/tv' || p === '/tv/' || p === '/tv.apk')) {
+    res.writeHead(302, { Location: TV_APK_URL, 'Cache-Control': 'no-store' });
+    return res.end();
+  }
 
   // --- Login / Registrierung ---
   if (p === '/api/login' && req.method === 'POST') {
@@ -1371,7 +1377,7 @@ function onConnection(ws, session, room, req) {
     id: crypto.randomBytes(6).toString('hex'),
     ws,
     session,
-    kind: /watchparty-desktop/i.test(ua) ? 'desktop' : /Mobi|Android|iPhone|iPad/i.test(ua) ? 'mobile' : 'web',
+    kind: /watchparty-desktop/i.test(ua) ? 'desktop' : /WatchpartyTV/i.test(ua) ? 'tv' : /Mobi|Android|iPhone|iPad/i.test(ua) ? 'mobile' : 'web',
     ua: ua.slice(0, 200),
     ip: req ? clientIp(req) : null,
     joinedAt: Date.now(),
