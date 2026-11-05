@@ -56,8 +56,8 @@ const S = {
 /* ------------------------------------------------------------------ */
 
 function loadPrefs() {
-  try { return { quality: 'auto', audioLang: '', subLang: '', volume: 1, muted: false, ...JSON.parse(localStorage.getItem('wp_prefs') || '{}') }; }
-  catch { return { quality: 'auto', audioLang: '', subLang: '', volume: 1, muted: false }; }
+  try { return { quality: 'auto', audioLang: '', subLang: 'off', volume: 1, muted: false, ...JSON.parse(localStorage.getItem('wp_prefs') || '{}') }; }
+  catch { return { quality: 'auto', audioLang: '', subLang: 'off', volume: 1, muted: false }; }
 }
 function savePrefs() { try { localStorage.setItem('wp_prefs', JSON.stringify(S.prefs)); } catch { /* egal */ } }
 
@@ -491,12 +491,13 @@ function chooseTracks() {
   // Untertitel
   const sl = S.prefs.subLang;
   let s = -1;
-  if (sl === 'off') s = -1;
-  else if (sl) {
+  // Ohne eigene Wahl bleiben Untertitel aus, auch wenn die Datei eine Spur als Standard markiert
+  if (!sl || sl === 'off') s = -1;
+  else {
     const cand = info.subs.filter((x) => x.lang === sl);
     const pick = cand.find((x) => !x.isForced && x.isText) || cand.find((x) => !x.isForced) || cand[0];
     if (pick) s = pick.index;
-  } else if (info.defaultSubIndex >= 0) s = info.defaultSubIndex;
+  }
   S.sel.sub = s;
 }
 

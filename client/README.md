@@ -46,6 +46,12 @@ Voraussetzung: im NVIDIA-Treiber unter *RTX Video Enhancement* ist Super Resolut
 
 Framegen und VSR lassen sich kombinieren: erst die Zwischenbilder, dann das Hochskalieren.
 
+## Bedienleiste
+
+Die Leiste im Player kommt von [uosc](https://github.com/tomasklaen/uosc) (5.9.2, liegt unter `mpv-ui/` bei, LGPL-2.1) und ist in den Watchparty-Farben gehalten. Unten links sind Menü, Untertitel, Tonspur und Kapitel, unten rechts die Knöpfe für **Framegen** und **Upscaling (RTX VSR)**. Ist ein Knopf aktiv, leuchtet er. Beim Drüberfahren steht da, was gerade passiert (z. B. „23,98 → 143,86 fps“), und am Framegen-Knopf hängt der Faktor. Geschwindigkeit, Playlist und Vor/Zurück fehlen absichtlich, die würden am Raum vorbei steuern.
+
+**Untertitel** sind standardmäßig aus, auch wenn die Datei eine Spur als „Standard“ markiert. Wer einmal eine Sprache auswählt (im Fenster oder im uosc-Menü), bekommt sie ab dann automatisch.
+
 ## Tasten im Player
 
 | Taste | Aktion |
@@ -60,8 +66,9 @@ Framegen und VSR lassen sich kombinieren: erst die Zwischenbilder, dann das Hoch
 | C | Chat im Bild an/aus |
 | I | Statistik |
 | Q | Player schließen (du bleibst im Raum) |
+| Menü-Taste | uosc-Menü |
 
-Auch Klicks und Ziehen in der mpv-Leiste werden an alle weitergegeben. Wenn nur der Host steuern darf, springt mpv zurück.
+Auch Klicks und Ziehen in der Leiste werden an alle weitergegeben. Wenn nur der Host steuern darf, springt mpv zurück.
 
 ## Wie die Synchronisation funktioniert
 

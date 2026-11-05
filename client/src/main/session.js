@@ -16,7 +16,32 @@ const SYNC_MS = 250;
 const STATUS_MS = 2000;
 const BITRATES = new Set(['40000000', '20000000', '10000000', '6000000', '3000000', '1500000']);
 
+/** Oberfläche für mpv (uosc + Schriften + Einstellungen), wird bei jedem Start in den Config-Ordner kopiert. */
+const UI_DIR = path.join(__dirname, '..', '..', 'mpv-ui').replace('app.asar', 'app.asar.unpacked');
+
+const MPV_CONF = `# wird vom Watchparty-Client verwaltet
+# Die Bedienleiste kommt von uosc (scripts/uosc), die eingebaute bleibt aus
+osc=no
+osd-bar=no
+`;
+
+// Zeilen mit „#!“ landen im Menü von uosc (Menü-Knopf links unten oder Kontextmenü-Taste).
+// Zeilen, die mit „#“ anfangen, sind reine Menüeinträge ohne eigene Taste.
 const INPUT_CONF = `# Watchparty: Steuerung läuft über den Raum
+MENU script-binding uosc/menu
+# script-binding uosc/subtitles #! Untertitel
+# script-binding uosc/audio #! Tonspur
+# script-binding uosc/chapters #! Kapitel
+# ignore #! ---
+F1 script-message wp framegen #! Framegen an/aus
+F2 script-message wp vsr #! Upscaling (RTX VSR) an/aus
+# ignore #! ---
+s script-message wp skip #! Intro/Abspann überspringen
+S script-message wp skip
+c script-message wp osdchat #! Chat im Bild an/aus
+i script-binding stats/display-stats-toggle #! Statistik
+f cycle fullscreen #! Vollbild
+q script-message wp close #! Player schließen
 SPACE script-message wp toggle
 p script-message wp toggle
 MBTN_RIGHT script-message wp toggle
@@ -38,18 +63,10 @@ PGDWN script-message wp seek -600
 BS ignore
 . ignore
 , ignore
-q script-message wp close
 Q script-message wp close
 CLOSE_WIN script-message wp close
 ESC set fullscreen no
-f cycle fullscreen
 MBTN_LEFT_DBL cycle fullscreen
-F1 script-message wp framegen
-F2 script-message wp vsr
-c script-message wp osdchat
-s script-message wp skip
-S script-message wp skip
-i script-binding stats/display-stats-toggle
 `;
 
 class Session extends EventEmitter {
@@ -68,7 +85,7 @@ class Session extends EventEmitter {
     relay.on('conn', (c) => this.ui('room:conn', c));
     relay.on('fatal', (f) => { this.ui('room:fatal', f); this.stopPlayer(); });
 
-    framegen.on('status', (s) => this.ui('fg:engine', s));
+    framegen.on('status', (s) => { this.ui('fg:engine', s); this.updateButtons(); });
 
     this.syncTimer = setInterval(() => this.syncTick(false), SYNC_MS);
     this.statusTimer = setInterval(() => this.reportStatus(), STATUS_MS);
@@ -93,6 +110,8 @@ class Session extends EventEmitter {
     this.userSeek = false;
     this.planInfo = null;
     this.lastPlanKey = null;
+    this.trackSel = null;     // Spurwahl nach selectTracks(); spätere Änderungen kamen vom Nutzer
+    this.lastButtons = {};
   }
 
   ui(channel, payload) { this.emit('ui', channel, payload); }
@@ -301,6 +320,7 @@ class Session extends EventEmitter {
     this.loadedKey = src.key;
     this.source = src;
     this.fileReady = false;
+    this.trackSel = null;
     this.lastPlanKey = null;
     const mpv = this.mpv;
     const start = this.expectedPos();
@@ -356,12 +376,31 @@ class Session extends EventEmitter {
       const a = tl.find((t) => t.type === 'audio' && (t.lang || '').toLowerCase() === audioLang);
       if (a) await mpv.set('aid', a.id).catch(() => {});
     }
-    if (subLang === 'off') await mpv.set('sid', 'no').catch(() => {});
-    else if (subLang) {
+    // Untertitel nur, wenn man sich mal eine Sprache ausgesucht hat. Sonst aus,
+    // auch wenn die Datei eine Spur als „Standard“ markiert.
+    let sid = 'no';
+    if (subLang && subLang !== 'off') {
       const c = tl.filter((t) => t.type === 'sub' && (t.lang || '').toLowerCase() === subLang);
       const s = c.find((t) => !t.forced) || c[0];
-      if (s) await mpv.set('sid', s.id).catch(() => {});
+      if (s) sid = s.id;
     }
+    await mpv.set('sid', sid).catch(() => {});
+    const [aidNow, sidNow] = await Promise.all([mpv.get('aid').catch(() => null), mpv.get('sid').catch(() => null)]);
+    this.trackSel = { aid: aidNow, sid: sidNow };
+    this.ui('player:tracks', this.tracks());
+  }
+
+  /** Spur wurde in mpv selbst gewechselt (Menü von uosc o. Ä.) → als Vorliebe merken. */
+  onTrackProp(name, value) {
+    if (!this.trackSel || !this.fileReady) return;
+    if (JSON.stringify(this.trackSel[name]) === JSON.stringify(value)) return;
+    this.trackSel[name] = value;
+    const list = (this.mpv && this.mpv.props['track-list']) || [];
+    const type = name === 'sid' ? 'sub' : 'audio';
+    const t = list.find((x) => x.type === type && x.id === value);
+    if (name === 'sid') this.settings.setPrefs({ subLang: !value || value === 'no' ? 'off' : ((t && t.lang) || '').toLowerCase() });
+    else if (this.source && this.source.direct && t) this.settings.setPrefs({ audioLang: (t.lang || '').toLowerCase() });
+    this.ui('prefs', this.settings.prefs);
     this.ui('player:tracks', this.tracks());
   }
 
@@ -396,6 +435,7 @@ class Session extends EventEmitter {
     const key = JSON.stringify(vf);
     this.planInfo = info;
     this.ui('player:filters', info);
+    this.updateButtons();
 
     if (info.framegen && info.framegen.state === 'needs-engine') {
       this.buildEngineFor(prefs.framegen.model, params);
@@ -435,8 +475,51 @@ class Session extends EventEmitter {
     const prefs = this.settings.setPrefs(patch);
     if (patch.quality && patch.quality !== before.quality && this.info) { this.loadedKey = null; await this.openSource(); }
     if (patch.volume != null && this.mpv) this.mpv.set('volume', Number(patch.volume)).catch(() => {});
-    if (patch.framegen || patch.vsr) this.applyFilters();
+    if (patch.framegen || patch.vsr) { this.updateButtons(); this.applyFilters(); }
     return prefs;
+  }
+
+  /* ---------- Knöpfe in der uosc-Leiste ---------- */
+
+  buttonData() {
+    const prefs = this.settings.prefs;
+    const status = this.installer.status();
+    const plan = this.planInfo || {};
+    const fgOn = !!(prefs.framegen && prefs.framegen.enabled);
+    const vsrOn = !!(prefs.vsr && prefs.vsr.enabled);
+
+    let fgTip = 'Framegen aus · F1';
+    let badge;
+    if (fgOn) {
+      const f = plan.framegen;
+      if (!status.framegen) fgTip = 'Framegen an, aber noch nicht installiert (Lobby → Player einrichten) · F1';
+      else if (f && f.state === 'on') { fgTip = `Framegen an: ${fmtFps(f.from)} → ${fmtFps(f.to)} fps · F1`; badge = f.multi; }
+      else if (this.framegen.building || (f && f.state === 'needs-engine')) { fgTip = 'Framegen wird vorbereitet (TensorRT-Engine) · F1'; badge = '…'; }
+      else fgTip = `Framegen an${plan.notes && plan.notes.length ? `: ${plan.notes[0]}` : ''} · F1`;
+    }
+
+    let vsrTip = 'Upscaling (RTX Super Resolution) aus · F2';
+    if (vsrOn) {
+      if (process.platform !== 'win32') vsrTip = 'Upscaling gibt es nur unter Windows · F2';
+      else if (plan.vsr) vsrTip = `Upscaling an: ${plan.vsr.from}p → ${plan.vsr.to}p · F2`;
+      else vsrTip = 'Upscaling an (Video ist schon bildschirmgroß) · F2';
+    }
+
+    return {
+      wp_framegen: { icon: 'animation', active: fgOn, badge, tooltip: fgTip, command: 'script-message wp framegen' },
+      wp_vsr: { icon: 'hd', active: vsrOn, tooltip: vsrTip, command: 'script-message wp vsr' },
+    };
+  }
+
+  updateButtons(force = false) {
+    const mpv = this.mpv;
+    if (!mpv || !mpv.running) return;
+    for (const [name, data] of Object.entries(this.buttonData())) {
+      const json = JSON.stringify(data);
+      if (!force && this.lastButtons[name] === json) continue;
+      this.lastButtons[name] = json;
+      mpv.command('script-message-to', 'uosc', 'set-button', name, json).catch(() => {});
+    }
   }
 
   /* ---------- Sync ---------- */
@@ -588,8 +671,9 @@ class Session extends EventEmitter {
     const bin = this.mpvBinary();
     if (!bin) throw new Error('mpv ist noch nicht installiert. Richte den Player in der Lobby ein.');
     fs.mkdirSync(this.configDir, { recursive: true });
+    installUi(this.configDir);
     fs.writeFileSync(path.join(this.configDir, 'input.conf'), INPUT_CONF);
-    fs.writeFileSync(path.join(this.configDir, 'mpv.conf'), '# wird vom Watchparty-Client verwaltet\n');
+    fs.writeFileSync(path.join(this.configDir, 'mpv.conf'), MPV_CONF);
     const prefs = this.settings.prefs;
     const args = [
       `--config-dir=${this.configDir}`,
@@ -612,7 +696,7 @@ class Session extends EventEmitter {
       '--save-position-on-quit=no',
       '--osd-font-size=36',
       '--osd-duration=2500',
-      '--osd-on-seek=msg-bar',
+      '--osd-on-seek=no', // uosc blendet beim Springen selbst die Leiste ein
       `--volume=${Number(prefs.volume) || 100}`,
       '--target-colorspace-hint=yes',
     ];
@@ -637,6 +721,9 @@ class Session extends EventEmitter {
       this.ui('player:closed', info);
     });
     await mpv.start();
+    this.lastButtons = {};
+    // uosc lädt asynchron; was vorher geschickt wird, geht verloren
+    for (const ms of [800, 2500]) setTimeout(() => { if (this.mpv === mpv) this.updateButtons(true); }, ms);
     this.ui('player:opened', {});
     return mpv;
   }
@@ -665,6 +752,8 @@ class Session extends EventEmitter {
       // Pause/Play kam aus mpv selbst (Mausklick auf die Leiste o. Ä.)
       this.ourPause = value;
       this.control(value ? 'pause' : 'play', this.mpv.props['time-pos']);
+    } else if (name === 'sid' || name === 'aid') {
+      this.onTrackProp(name, value);
     } else if (name === 'track-list') {
       this.ui('player:tracks', this.tracks());
     } else if (name === 'display-fps' || name === 'display-height') {
@@ -752,6 +841,14 @@ class Session extends EventEmitter {
   }
 }
 
+/** uosc, Schriften und script-opts in den mpv-Config-Ordner legen (alte uosc-Version vorher weg). */
+function installUi(configDir, from = UI_DIR) {
+  if (!fs.existsSync(from)) return false;
+  fs.rmSync(path.join(configDir, 'scripts', 'uosc'), { recursive: true, force: true });
+  fs.cpSync(from, configDir, { recursive: true, force: true });
+  return true;
+}
+
 function fmtFps(f) { return Number.isFinite(f) ? (Math.round(f * 100) / 100).toString().replace('.', ',') : '?'; }
 
-module.exports = { Session, INPUT_CONF };
+module.exports = { Session, INPUT_CONF, MPV_CONF, installUi };
