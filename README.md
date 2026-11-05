@@ -135,6 +135,18 @@ docker compose exec -e DOMAIN=example.com relay node server.js invite 48   # Ein
 - **📌 Schwarzes Brett:** Wunschliste für neue Medien. Jeder trägt Titel ein (mit Jahr, Notiz, Tags), stimmt ab und taggt. Beim Eintippen prüft es, ob der Titel schon da oder schon gewünscht ist. Admins setzen den Status (offen, in Arbeit, verfügbar, abgelehnt). Taucht ein Wunsch in Jellyfin auf, wird er von selbst „verfügbar“ und der Wünschende sieht es in der Lobby. Wer wünschen darf, steuert das Recht „Wünsche“ in den Gruppen.
 - **📊 Mein Jahr:** persönliche Statistik mit geschauten Stunden, aktiven Tagen, längster Serie am Stück, Top-Titeln, Lieblings-Genres und Wochentagen.
 
+## Scannen per ISBN/EAN (`/scan`)
+
+Im Bibliothek-Fenster auf **„📷 Scannen“** (oder direkt `/scan`): Barcode **mit der Handy-Kamera scannen** (Android nativ, iOS über mitgelieferten Decoder) oder ISBN/EAN eintippen. Der Relay fragt Produktquellen ab (ean-search.org, Google Custom Search, Discogs – alle optional per `.env`), erkennt anhand des Titels, ob **Film, Serie oder Box-Set** gemeint ist, und vergleicht mit der Jellyfin-Bibliothek:
+
+- **„Haben wir!“** – Treffer, direkt zur Detailseite.
+- **„Haben wir – aber anderes Format“** – wir haben ihn nur als DVD (576p), gescannt als Blu-ray (1080p) oder 4K-UHD (2160p)? Die Auflösung in Jellyfin verrät es.
+- **„Serie vorhanden, aber mit Lücken“** – gescannte Complete-Box enthält Staffeln, die bei uns fehlen (z. B. „Uns fehlen: Staffel 3“).
+- **„Nicht in unserer Bibliothek“** – ein Klick setzt den Titel auf die **Wunschliste**.
+- Zweifelhafte Treffer: aus den Kandidaten das richtige Item bestätigen („Meintest du …?“) – der Barcode wird dann fest mit ihm verknüpft und künftige Scans erkennen ihn ohne Netzabfrage.
+
+Jeder gescannte Code wird lokal gecacht (`barcodes.json`): Wiedererkennungen brauchen keine externen Abfragen. **Als App:** Die Seite ist eine PWA – „Zum Startbildschirm hinzufügen“ legt Watchparty (inkl. Scannen) wie eine App aufs Handy.
+
 ## Sicherheit
 
 - **Brute-Force-Schutz:** Nach 5 Fehlversuchen pro IP wächst die Wartezeit (2 s, 4 s, 8 s … bis 15 min). Ab 30 Fehlversuchen pro Stunde wird die IP für 1 h gesperrt, ab 100 am Tag für 24 h. Pro Konto werden Versuche ab 20 Fehlern gebremst, aber nicht hart gesperrt, damit niemand fremde Konten aussperren kann. Sperren überleben Neustarts und sind in der Verwaltung unter **Sicherheit** einsehbar.

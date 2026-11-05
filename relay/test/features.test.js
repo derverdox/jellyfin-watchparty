@@ -120,9 +120,9 @@ test('Neue Funktionen', { timeout: 120000 }, async (t) => {
 
   /* ---------- Zufall ---------- */
   const rnd = (await lea.req('GET', `/api/random?parentId=${I.LIB_M}&maxMinutes=5`)).data;
-  assert.ok(['Metropolis', 'Neuer Film', 'Die Rückkehr der Ritter', 'Ritter der Nacht'].includes(rnd.pick.name));
+  assert.ok(['Metropolis', 'Neuer Film', 'Die Rückkehr der Ritter', 'Ritter der Nacht', 'Alter Schinken'].includes(rnd.pick.name));
   await lea.req('POST', '/api/watched', { ids: [I.M_METRO, I.M_NEU, I.M_RUECK] });
-  assert.strictEqual((await lea.req('GET', `/api/random?parentId=${I.LIB_M}&unwatched=1`)).data.pick.name, 'Ritter der Nacht', 'nur Ungesehenes');
+  assert.ok(['Ritter der Nacht', 'Alter Schinken'].includes((await lea.req('GET', `/api/random?parentId=${I.LIB_M}&unwatched=1`)).data.pick.name), 'nur Ungesehenes');
 
   /* ---------- Raum: Warteschlange, Abstimmung, Bewertungsrunde ---------- */
   const { code } = (await chef.req('POST', '/api/rooms')).data;

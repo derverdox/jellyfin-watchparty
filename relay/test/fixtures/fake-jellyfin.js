@@ -15,7 +15,7 @@ const I = {
   LIB_M: id('lib-filme'), LIB_S: id('lib-serien'), LIB_K: id('lib-kinder'), ROOT: id('root'),
   F_KLASSIK: id('klassiker'), M_METRO: id('metropolis'), M_NEU: id('neu'),
   SERIES: id('serie'), SEASON: id('staffel'), EP1: id('folge1'), M_KIDS: id('trick'),
-  M_RUECK: id('rueckkehr'), M_4K: id('vierk'),
+  M_RUECK: id('rueckkehr'), M_4K: id('vierk'), M_DVD: id('dvdrip'),
   EP2: id('folge2'), EP3: id('folge3'), SEASON2: id('staffel2'), S2E1: id('s2e1'),
 };
 const MS = id('mediasource');
@@ -44,6 +44,7 @@ const ITEMS = {
   [I.M_KIDS]: movie(I.M_KIDS, 'Trickfilm', I.LIB_K),
   [I.M_RUECK]: movie(I.M_RUECK, 'Die Rückkehr der Ritter', I.LIB_M, { year: 1999, height: 2160, bitrate: 60000000, hdr: true }),
   [I.M_4K]: movie(I.M_4K, 'Ritter der Nacht', I.LIB_M, { year: 2012, height: 720, bitrate: 4000000 }),
+  [I.M_DVD]: movie(I.M_DVD, 'Alter Schinken', I.LIB_M, { year: 1985, height: 576, bitrate: 2000000 }),
 };
 const VIDEO = crypto.randomBytes(3 * 1024 * 1024);
 

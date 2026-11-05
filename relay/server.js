@@ -20,6 +20,7 @@ const { handleAdmin } = require('./lib/admin');
 const { Guard } = require('./lib/guard');
 const { LibraryStore, variants, parseQuery, score, fold } = require('./lib/library');
 const { WishStore } = require('./lib/wishes');
+const scanLib = require('./lib/scan');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -32,6 +33,15 @@ const CONFIG = {
   cacheBytes: Math.max(0.5, Number(process.env.CACHE_MAX_GB || 10)) * 1024 ** 3,
   trustProxy: process.env.TRUST_PROXY === 'true',
   secureCookies: process.env.SECURE_COOKIES === 'true',
+  // Produktquellen für den ISBN/EAN-Scan (alle optional; ohne Angaben hilft
+  // nur die manuelle Suche bzw. die lokal gespeicherte Barcode-Zuordnung).
+  scanEanSearch: process.env.SCAN_EANSEARCH || '',
+  scanEanSearchUrl: process.env.SCAN_EANSEARCH_URL || 'https://api.ean-search.org',
+  scanCse: process.env.SCAN_GOOGLE_CSE || '',
+  scanCseCx: process.env.SCAN_GOOGLE_CSE_CX || '',
+  scanCseUrl: process.env.SCAN_GOOGLE_CSE_URL || 'https://www.googleapis.com',
+  scanDiscogs: process.env.SCAN_DISCOGS || '',
+  scanDiscogsUrl: process.env.SCAN_DISCOGS_URL || 'https://api.discogs.com',
 };
 
 const users = new UserStore(CONFIG.dataDir);
@@ -52,6 +62,7 @@ const groups = new GroupStore(CONFIG.dataDir);
 const telemetry = new Telemetry(CONFIG.dataDir);
 const library = new LibraryStore(CONFIG.dataDir);
 const wishes = new WishStore(CONFIG.dataDir);
+const scans = new scanLib.ScanStore(CONFIG.dataDir);
 const guard = new Guard(CONFIG.dataDir, (ip, b) => {
   telemetry.audit({ type: 'ip-ban', ip, reason: b.reason, by: b.by === 'auto' ? undefined : b.by });
   telemetry.event('security', `IP ${ip} gesperrt: ${b.reason}`, { level: 'warn' });
@@ -744,6 +755,15 @@ async function handle(req, res) {
   if (req.method === 'GET' && (p === '/admin' || p === '/admin/')) {
     return serveFile(res, path.join(PUBLIC_DIR, 'admin.html'));
   }
+  if (req.method === 'GET' && (p === '/scan' || p === '/scan/')) {
+    return serveFile(res, path.join(PUBLIC_DIR, 'scan.html'));
+  }
+  if (req.method === 'GET' && p === '/vendor/zxing.min.js') {
+    const local = path.join(__dirname, 'node_modules', '@zxing', 'library', 'umd', 'index.min.js');
+    if (fs.existsSync(local)) return serveFile(res, local, 'public, max-age=86400');
+    res.writeHead(302, { Location: 'https://cdn.jsdelivr.net/npm/@zxing/library@0.23.0/umd/index.min.js' });
+    return res.end();
+  }
   if (req.method === 'GET' && p === '/vendor/hls.min.js') {
     const local = path.join(__dirname, 'node_modules', 'hls.js', 'dist', 'hls.min.js');
     if (fs.existsSync(local)) return serveFile(res, local, 'public, max-age=86400');
@@ -944,6 +964,102 @@ async function handle(req, res) {
     });
   }
 
+
+  // --- Scannen: ISBN/EAN → Produkt → Bibliotheks-Abgleich ---
+  if (p === '/api/scan') {
+    const code = scanLib.normalizeCode(url.searchParams.get('code'));
+    if (!code) throw new HttpError(400, 'Bitte eine gültige ISBN/EAN eingeben (8 oder 12–13 Ziffern).');
+    const u = uid();
+    const bind = url.searchParams.get('bind');
+    if (bind) {
+      // Nutzer bestätigt manuell: dieser Barcode gehört zu genau diesem Item.
+      if (!ID_RE.test(bind)) throw new HttpError(400, 'Ungültige ID');
+      await assertAccess(session, bind);
+      const lite = await itemLite(bind);
+      scans.bind(code, bind, lite.Type === 'Series' ? 'series' : 'movie');
+      return sendJson(res, 200, { code, verdict: 'own', match: mapItem(lite), confirmed: true });
+    }
+    const stored = scans.get(code);
+    if (stored && stored.confirmed && stored.itemId) {
+      const full = await jsonCache.get(`raw|${u}|${stored.itemId}`, () => jf(`/Users/${u}/Items/${stored.itemId}`)).catch(() => null);
+      if (full) {
+        const product = (stored.product && stored.product.title) ? stored.product : null;
+        return sendJson(res, 200, {
+          code, product, cached: true, confirmed: true, verdict: 'own',
+          match: mapItem(full), candidates: [], have: scanLib.formatsOfItem(full),
+        });
+      }
+    }
+    let product = (stored && stored.product) || null;
+    let fresh = false;
+    if (!product) {
+      product = await scanLib.lookupProduct(code, {
+        eanSearch: CONFIG.scanEanSearch, eanSearchUrl: CONFIG.scanEanSearchUrl,
+        cse: CONFIG.scanCse, cseCx: CONFIG.scanCseCx, cseUrl: CONFIG.scanCseUrl,
+        discogs: CONFIG.scanDiscogs, discogsUrl: CONFIG.scanDiscogsUrl,
+      });
+      if (product) { scans.remember(code, product); fresh = true; }
+    }
+    const lookupConfigured = !!(CONFIG.scanEanSearch || (CONFIG.scanCse && CONFIG.scanCseCx) || CONFIG.scanDiscogs);
+    if (!product) {
+      return sendJson(res, 200, { code, product: null, verdict: 'unknown', candidates: [], lookupConfigured });
+    }
+    // Titel säubern ([Blu-ray]-Kram stört die Suche) und Kandidaten holen
+    const clean = product.title.replace(/\[.*?\]/g, ' ').replace(/\(.*?\)/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    const { text, year } = parseQuery(clean);
+    const base = { Recursive: 'true', IncludeItemTypes: 'Movie,Series,BoxSet,Video', Limit: '30', Fields: ITEM_FIELDS, EnableImageTypes: 'Primary', ImageTypeLimit: '1' };
+    const queries = variants(text).map((v) => new URLSearchParams({ ...base, SearchTerm: v, ...(year ? { Years: String(year) } : {}) }));
+    // Kopf-Worte zusätzlich: „Star Wars Complete Saga DVD“ muss auch „Star Wars“ finden
+    const lead = text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+    const seenQ = new Set(queries.map((q) => String(q)));
+    for (let n = 1; n <= Math.min(3, lead.length); n++) {
+      const v = lead.slice(0, n).join(' ');
+      const q = new URLSearchParams({ ...base, SearchTerm: v });
+      if (v.length >= 3 && !seenQ.has(String(q))) { seenQ.add(String(q)); queries.push(q); }
+    }
+    const results = await Promise.all(queries.map((q) => jsonCache.get(`scan|${q}`, () => jf(`/Users/${u}/Items?${q}`)).catch(() => ({ Items: [] }))));
+    const byId = new Map();
+    for (const r of results) for (const it of r.Items || []) if (!byId.has(it.Id)) byId.set(it.Id, it);
+    const allowed = await filterAllowed(session, [...byId.values()]);
+    const wantSeries = product.kind === 'series';
+    const boost = (x) => (wantSeries ? (x.type === 'Series' || x.type === 'BoxSet' ? 15 : 0) : (x.type === 'Movie' || x.type === 'Video' ? 15 : 0));
+    // Produkt­titel enthalten den Bibliotheks-Namen komplett? (Produkttitel sind lang und
+    // voll Editions-Kram, dafür ist diese Richtung verlässlicher als die Such-Bewertung.)
+    const hay = fold(clean);
+    const inProduct = (x) => {
+      const nw = fold(x.name).split(' ').filter(Boolean);
+      return nw.length && nw.every((w) => w.length < 3 || hay.includes(w)) ? 60 : 0;
+    };
+    const total = (x) => x.score + boost(x) + inProduct(x);
+    const scored = allowed
+      .map((it) => { const mi = mapItem(it); return { ...mi, score: score(mi, text, product.year || year) }; })
+      .filter((x) => x.score > 0 && ['Movie', 'Video', 'Series', 'BoxSet'].includes(x.type))
+      .sort((a, b) => total(b) - total(a));
+    const candidates = scored.slice(0, 4);
+    const match = candidates.length && total(candidates[0]) >= 45 ? candidates[0] : null;
+    let verdict = 'missing';
+    const have = [];
+    let haveSeasons = [];
+    let gaps = [];
+    if (match) {
+      const full = await jsonCache.get(`raw|${u}|${match.id}`, () => jf(`/Users/${u}/Items/${match.id}`)).catch(() => null);
+      have.push(...(full ? scanLib.formatsOfItem(full) : []));
+      if (wantSeries && match.type === 'Series') {
+        const seasonQ = await jsonCache.get(`scanseasons|${match.id}`, () => jf(`/Users/${u}/Items?ParentId=${match.id}&SortBy=IndexNumber`)).catch(() => ({ Items: [] }));
+        haveSeasons = ((seasonQ && seasonQ.Items) || []).filter((x) => x.Type === 'Season').map((x) => x.IndexNumber).filter((n) => Number.isFinite(n));
+        gaps = (product.seasons || []).filter((n) => !haveSeasons.includes(n));
+        verdict = gaps.length ? 'own_incomplete' : 'own';
+      } else if (product.formats.length && have.length && !product.formats.some((f) => have.includes(f))) {
+        verdict = 'own_other_format';
+      } else {
+        verdict = 'own';
+      }
+    }
+    return sendJson(res, 200, {
+      code, product, fresh, match, candidates, verdict, have,
+      wantedSeasons: product.seasons || [], haveSeasons, gaps, lookupConfigured,
+    });
+  }
 
   // --- Detailseite (Film, Serie, Folge) ---
   if ((m = p.match(/^\/api\/details\/([a-f0-9-]+)$/i))) {

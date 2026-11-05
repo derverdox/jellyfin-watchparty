@@ -1,0 +1,18 @@
+{
+  "name": "Watchparty",
+  "short_name": "Watchparty",
+  "description": "Mit Freunden streamen: Jellyfin-Watchparty und Scan für Filme & Serien",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0c0c10",
+  "theme_color": "#0c0c10",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "shortcuts": [
+    { "name": "Scannen", "short_name": "Scannen", "url": "/scan", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

@@ -177,6 +177,24 @@ async function route() {
   motd.textContent = S.me.motd || '';
   showView('view-lobby');
   if (window.WP && WP.lobby) WP.lobby();
+  deepLink();
+}
+
+// Deep-Links von der Scan-Seite: /?open=<id> öffnet Details, /?q=<text> die Suche
+async function deepLink() {
+  const prm = new URLSearchParams(location.search);
+  const openId = prm.get('open');
+  const qText = prm.get('q');
+  if (!openId && !qText) return;
+  history.replaceState(null, '', location.pathname);
+  openLibrary();
+  if (qText) { $('#lib-search').value = qText; S.lib.search = qText; renderLib(); }
+  if (openId) {
+    try {
+      const it = await api('/api/details/' + openId);
+      if (window.WP && WP.openDetail) WP.openDetail(it); else openTile(it);
+    } catch { toast('Element nicht gefunden'); }
+  }
 }
 
 function renderAgentStatus(online, server) {
@@ -1108,6 +1126,7 @@ async function loadWatchIds() {
 for (const b of $$('#lib-tabs button')) {
   b.addEventListener('click', () => {
     if (b.dataset.v === 'wishes') { if (window.WP) WP.openBoard(); return; }
+    if (b.dataset.v === 'scan') { location.href = '/scan'; return; }
     S.lib.view = b.dataset.v;
     S.lib.search = '';
     $('#lib-search').value = '';

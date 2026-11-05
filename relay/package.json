@@ -1,6 +1,6 @@
 {
   "name": "watchparty-relay",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Öffentlicher Watchparty-Server (Frontend, Konten, Sync, Cache)",
   "main": "server.js",
   "scripts": {
@@ -12,6 +12,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@zxing/library": "^0.23.0",
     "hls.js": "^1.5.20",
     "ws": "^8.18.0"
   }

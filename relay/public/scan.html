@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c0c10">
+  <title>Scannen · Watchparty</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/scan.css">
+</head>
+<body class="scan-page">
+  <header class="scan-head">
+    <a class="btn small" href="/">← Watchparty</a>
+    <h1>📷 Scannen</h1>
+    <span id="who"></span>
+  </header>
+
+  <main class="scan-main">
+    <div id="login-hint" hidden>
+      <p>Bitte erst in der <a href="/">Watchparty-App anmelden</a>, dann funktioniert der Scan direkt.</p>
+    </div>
+
+    <section id="cam-box">
+      <div id="cam-wrap" hidden>
+        <video id="cam" playsinline muted></video>
+        <div class="cam-frame"></div>
+      </div>
+      <div class="cam-actions">
+        <button class="btn primary" id="btn-cam">📷 Barcode mit der Kamera scannen</button>
+        <span id="cam-note"></span>
+      </div>
+    </section>
+
+    <section class="scan-manual">
+      <label for="code">… oder ISBN / EAN eingeben</label>
+      <div class="row">
+        <input id="code" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="z. B. 4006680012345">
+        <button class="btn" id="btn-go">Suchen</button>
+      </div>
+    </section>
+
+    <section id="result" hidden></section>
+  </main>
+
+  <script src="/scan.js"></script>
+</body>
+</html>
