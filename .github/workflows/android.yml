@@ -31,6 +31,9 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Signaturprüfung testen
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
       - uses: gradle/actions/setup-gradle@v4
 
       - name: APKs bauen
