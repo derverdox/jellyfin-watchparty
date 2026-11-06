@@ -696,3 +696,8 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 14px; col
 .nf-ext-form input:focus { border-color: var(--accent); outline: none; }
 .nf-ext-hints { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
 .nf-ext-recent { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ---------- Update ---------- */
+.titlebar .update-pill { -webkit-app-region: no-drag; margin-left: 12px; font: inherit; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--line-2); background: var(--surface-2); color: var(--muted); cursor: default; }
+.titlebar .update-pill.ready { background: var(--accent); color: var(--accent-ink); border-color: transparent; cursor: pointer; }
+.titlebar .update-pill.error { cursor: pointer; }

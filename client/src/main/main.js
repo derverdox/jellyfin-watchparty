@@ -7,6 +7,7 @@ const { Settings } = require('./settings');
 const { Installer, MODELS, detectGpu, recommend } = require('./installer');
 const { Framegen } = require('./framegen');
 const { Session } = require('./session');
+const { Updater } = require('./updater');
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
@@ -15,7 +16,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'wpimg', privileges: { standard:
 const VPY_DIR = path.join(__dirname, '..', '..', 'vpy').replace('app.asar', 'app.asar.unpacked');
 
 let win = null;
-let settings, relay, installer, framegen, session;
+let settings, relay, installer, framegen, session, updater;
 let gpu = null;
 
 function send(channel, payload) {
@@ -91,6 +92,18 @@ app.whenReady().then(async () => {
   });
 
   detectGpu().then((g) => { gpu = g; send('sys:gpu', g); });
+
+  // Updates nur in der installierten Windows-App (nicht beim Entwickeln mit „npm start“)
+  updater = new Updater({ current: app.getVersion(), dir: path.join(userData, 'updates'), enabled: app.isPackaged && process.platform === 'win32' });
+  updater.on('state', (st) => send('update:state', st));
+  updater.start();
+  handle('update:state', () => updater.state);
+  handle('update:check', () => updater.check({ manual: true }));
+  handle('update:install', () => {
+    if (!updater.install(true)) throw new Error('Kein Update bereit');
+    app.quit(); // der Installer wartet, bis die App zu ist, und startet sie danach neu
+    return true;
+  });
 
   /* ---------- Anmeldung ---------- */
   handle('auth:state', async () => {
@@ -300,6 +313,10 @@ app.on('before-quit', async (e) => {
   if (quitting || !session) return;
   e.preventDefault();
   quitting = true;
-  try { await session.destroy(); } finally { app.quit(); }
+  try { await session.destroy(); } finally {
+    // Fertig geladenes Update still beim Beenden installieren
+    if (updater) updater.install(false);
+    app.quit();
+  }
 });
 app.on('window-all-closed', () => app.quit());
