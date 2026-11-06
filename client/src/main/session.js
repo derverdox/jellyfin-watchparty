@@ -88,7 +88,7 @@ class Session extends EventEmitter {
     framegen.on('status', (s) => { this.ui('fg:engine', s); this.updateButtons(); });
 
     this.syncTimer = setInterval(() => this.syncTick(false), SYNC_MS);
-    this.statusTimer = setInterval(() => this.reportStatus(), STATUS_MS);
+    this.statusTimer = setInterval(() => { this.reportStatus(); this.checkAv().catch(() => {}); }, STATUS_MS);
     this.uiTimer = setInterval(() => this.pushPlayerState(), 500);
   }
 
@@ -351,6 +351,7 @@ class Session extends EventEmitter {
     await mpv.set('start', 'none').catch(() => {});
     this.ourSeekAt = Date.now(); // der Startsprung kommt erst nach file-loaded
     this.fileReady = true;
+    this.av = { bad: 0, hinted: false, drops: null };
     if (this.settings.prefs.fullscreen) mpv.set('fullscreen', true).catch(() => {});
     await this.selectTracks();
     this.syncTick(true);
@@ -531,6 +532,43 @@ class Session extends EventEmitter {
     }
   }
 
+  /* ---------- Bild/Ton-Versatz: nur ein Hinweis, keine automatische Änderung ---------- */
+
+  /** Empfehlung, wenn die Grafikkarte nicht hinterherkommt (vom Aufwendigsten zum Leichtesten). */
+  recommendation() {
+    const p = this.settings.prefs;
+    const fg = p.framegen || {};
+    if (fg.enabled) {
+      if (fg.model === 'v4_26') return 'Framegen-Modell „RIFE 4.25 Lite“';
+      if (fg.target === 'display') return 'Framegen-Ziel „2×“ statt Monitor-Hz';
+      if (fg.model === 'v4_25_lite') return 'Framegen-Modell „RIFE 4.22 Lite“';
+      if (p.vsr && p.vsr.enabled) return 'Upscaling aus (F2)';
+      return 'Framegen aus (F1)';
+    }
+    if (p.vsr && p.vsr.enabled) return 'Upscaling aus (F2)';
+    return null;
+  }
+
+  /** Alle 2 s: läuft das Bild dem Ton hinterher (oder fallen viele Bilder weg)? Dann einmal pro Datei Bescheid sagen. */
+  async checkAv() {
+    const mpv = this.mpv;
+    if (!mpv || !mpv.running || !this.fileReady || !this.av || this.av.hinted) return;
+    if (mpv.props.pause || mpv.props.seeking || mpv.props['paused-for-cache']) { this.av.bad = 0; return; }
+    const [avsync, drops, ddrops] = await Promise.all(['avsync', 'frame-drop-count', 'decoder-frame-drop-count'].map((n) => mpv.get(n).catch(() => null)));
+    const dropped = (Number(drops) || 0) + (Number(ddrops) || 0);
+    const newDrops = this.av.drops == null ? 0 : dropped - this.av.drops;
+    this.av.drops = dropped;
+    const off = Math.abs(Number(avsync) || 0);
+    this.av.bad = off > 0.25 || newDrops > 12 ? this.av.bad + 1 : 0;
+    if (this.av.bad < 3) return; // ~6 s am Stück
+    this.av.hinted = true;
+    const rec = this.recommendation();
+    const what = off > 0.25 ? `Bild ${off.toFixed(1).replace('.', ',')} s neben dem Ton` : 'viele ausgelassene Bilder';
+    const text = rec ? `Grafikkarte kommt nicht hinterher (${what}). Empfohlen: ${rec}` : `Bild und Ton laufen auseinander (${what}). Taste I zeigt Details.`;
+    mpv.osd(`⚠ ${text}`, 9000);
+    this.ui('player:hint', { text, recommendation: rec, avsync: off, drops: newDrops });
+  }
+
   /* ---------- Sync ---------- */
 
   setPause(value) {
@@ -706,6 +744,9 @@ class Session extends EventEmitter {
       '--osd-font-size=36',
       '--osd-duration=2500',
       '--osd-on-seek=no', // uosc blendet beim Springen selbst die Leiste ein
+      // Kommt die Grafikkarte (Framegen/VSR) nicht hinterher: schon beim Dekodieren Bilder auslassen,
+      // nicht erst nach dem Filter – sonst läuft das Bild dem Ton immer weiter hinterher
+      '--framedrop=decoder+vo',
       `--volume=${Number(prefs.volume) || 100}`,
       '--target-colorspace-hint=yes',
     ];

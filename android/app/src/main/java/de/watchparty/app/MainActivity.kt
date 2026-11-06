@@ -24,6 +24,7 @@ import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
@@ -75,6 +76,7 @@ class MainActivity : Activity() {
             window.navigationBarColor = Color.parseColor("#0B0B0F")
         }
         prefs = getSharedPreferences("watchparty", MODE_PRIVATE)
+        setupInsets()
         val saved = prefs.getString(KEY_SERVER, null)
         if (saved.isNullOrBlank()) showSetup(null) else showWeb(saved)
     }
@@ -174,6 +176,7 @@ class MainActivity : Activity() {
                     requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     hideSystemBars(true)
                 }
+                refreshInsets()
             }
 
             override fun onHideCustomView() { leaveFullscreen() }
@@ -219,6 +222,7 @@ class MainActivity : Activity() {
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             hideSystemBars(false)
         }
+        refreshInsets()
     }
 
     @Suppress("DEPRECATION")
@@ -293,6 +297,31 @@ class MainActivity : Activity() {
         else req.deny()
     }
 
+    /* ---------------- Ränder: Statusleiste, Navigationsleiste, Tastatur ---------------- */
+
+    /**
+     * Ab Android 15 zeichnen Apps immer randlos, auch unter Status- und Navigationsleiste.
+     * Darum hier selbst Abstand lassen (inkl. Tastatur, damit das Chatfeld sichtbar bleibt).
+     * Im Video-Vollbild und im kleinen Fenster: kein Abstand.
+     */
+    private fun setupInsets() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return // ältere Android-Versionen machen das selbst
+        val content = findViewById<View>(android.R.id.content)
+        content.setOnApplyWindowInsetsListener { v, insets ->
+            if (isTv || fullscreenView != null || inPip()) v.setPadding(0, 0, 0, 0)
+            else {
+                val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.ime())
+                v.setPadding(i.left, i.top, i.right, i.bottom)
+            }
+            insets
+        }
+        content.requestApplyInsets()
+    }
+
+    private fun refreshInsets() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) findViewById<View>(android.R.id.content)?.requestApplyInsets()
+    }
+
     /* ---------------- Bild im Bild (Handy/Tablet) ---------------- */
 
     private fun pipSupported() = !isTv && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
@@ -327,6 +356,7 @@ class MainActivity : Activity() {
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         web?.evaluateJavascript("window.wpTv&&wpTv.pip&&wpTv.pip(${isInPictureInPictureMode})", null)
+        refreshInsets()
         if (isInPictureInPictureMode && pipReceiver == null) {
             val r = object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {

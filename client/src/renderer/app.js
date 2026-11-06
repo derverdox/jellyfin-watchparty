@@ -410,6 +410,7 @@ function onEvent(ch, p) {
       break;
     }
     case 'player:tracks': S.tracks = p; renderTracks(); break;
+    case 'player:hint': toast(`⚠ ${p.text}`, true); break;
     case 'player:filters': S.filters = p; renderPicture(); renderNow(); break;
     case 'player:opened': $('#btn-player').textContent = '⛶ Vollbild'; break;
     case 'player:closed': $('#btn-player').textContent = '⛶ Player öffnen'; S.tracks = { audio: [], sub: [] }; renderTracks(); break;
