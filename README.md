@@ -13,7 +13,8 @@ Filme & Serien vom Jellyfin deines Kumpels **synchron zusammen schauen**, mit Li
 - **Relay** (Hetzner): Web-Oberfläche, Konten & Einladungen, Räume, Chat und Sync. Videos werden in 4-MB-Stücken bzw. HLS-Segmenten **zwischengespeichert und an alle verteilt**. Jedes Stück kommt also nur **einmal** vom Heimanschluss, egal wie viele zuschauen.
 - **Agent** (beim Jellyfin-Rechner): baut die Verbindung **von innen nach außen** auf. Es braucht **keine Portfreigabe und keine Router-Einstellungen**, und Jellyfin bleibt komplett unsichtbar im Internet. Der Jellyfin-API-Key verlässt das Heimnetz nie, und der Agent beantwortet nur eine feste Liste harmloser Anfragen (Bibliothek, Bilder, Streams), selbst wenn jemand das Relay übernehmen würde.
 - **Desktop-Client** (optional, Windows): schaut im selben Raum mit, aber in mpv, in Originalqualität, mit **RIFE-Zwischenbildern** und **RTX Video Super Resolution**. Siehe [`client/README.md`](client/README.md).
-- **Android-App** (optional, Fire TV / Android TV / Handy / Tablet): dieselbe Watchparty als App, auf dem Fernseher komplett mit der Fernbedienung steuerbar. Installation über `https://deine-domain/app`, siehe [`android/README.md`](android/README.md).
+- **TV-App** (optional, Fire TV / Android TV): eigene, native App für den Fernseher. Sie ist komplett auf die Fernbedienung ausgelegt, mit flüssigem Scrollen und einem Player mit ExoPlayer, und schaut genauso synchron mit wie Browser und Desktop. Installation über `https://deine-domain/tv`, siehe [`android/README.md`](android/README.md).
+- **Handy-App** (optional, Android-Handy/Tablet): die Watchparty als App. Installation über `https://deine-domain/app`.
 
 ---
 

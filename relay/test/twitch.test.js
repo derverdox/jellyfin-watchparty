@@ -301,6 +301,11 @@ test('Twitch-Restream & YouTube im Raum', { timeout: 90000 }, async (t) => {
   const csp = (await fetch(`${base}/`)).headers.get('content-security-policy');
   assert.match(csp, /frame-src[^;]*youtube-nocookie\.com/);
   assert.match(csp, /script-src[^;]*www\.youtube\.com/);
+  // Kurzlinks: /tv → TV-App, /app → Handy-App
+  const tvr = await fetch(`${base}/tv`, { redirect: 'manual' });
+  assert.strictEqual(tvr.status, 302);
+  assert.match(tvr.headers.get('location'), /watchparty-tv\.apk$/);
+  assert.match((await fetch(`${base}/app`, { redirect: 'manual' })).headers.get('location'), /\/watchparty\.apk$/);
   // YouTube braucht den Referer (sonst Fehler 153), aber nur die Domain
   assert.strictEqual((await fetch(`${base}/`)).headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
 });
