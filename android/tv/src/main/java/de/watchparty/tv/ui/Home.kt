@@ -85,6 +85,11 @@ fun HomeScreen(app: AppState) {
                 }
             }
             Spacer(Modifier.weight(1f))
+            val upd by app.updater.state.collectAsState()
+            (upd as? de.watchparty.tv.update.UpdateState.Available)?.let { a ->
+                Btn("⟳ Update ${a.info.versionName}", { app.updatePrompt = a.info }, primary = true, small = true, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+            }
             app.me?.let { T(it.name, Modifier.padding(start = 10.dp), size = 14.sp, color = C.muted) }
         }
         // Inhalt
@@ -400,6 +405,18 @@ private fun SettingsTab(app: AppState) {
         ButtonRow {
             Btn("Abmelden", { app.logout() })
             Btn("Server ändern", { app.leaveRoom(); app.replace(Screen.Setup) })
+        }
+        val upd by app.updater.state.collectAsState()
+        Setting("Updates", when (val u = upd) {
+            is de.watchparty.tv.update.UpdateState.Available -> "Neu: ${u.info.versionName} – installieren"
+            is de.watchparty.tv.update.UpdateState.Checking -> "Suche …"
+            is de.watchparty.tv.update.UpdateState.Downloading -> "Lädt ${u.percent} %"
+            is de.watchparty.tv.update.UpdateState.Installing -> "Installiert …"
+            is de.watchparty.tv.update.UpdateState.Latest -> "Aktuell – nochmal suchen"
+            else -> "Nach Updates suchen"
+        }) {
+            val u = app.updater.state.value
+            if (u is de.watchparty.tv.update.UpdateState.Available) app.installUpdate(u.info) else app.checkUpdate(manual = true)
         }
         T("Watchparty TV ${app.version}", color = C.muted, size = 13.sp)
     }

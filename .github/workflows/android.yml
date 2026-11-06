@@ -53,6 +53,10 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk watchparty.apk
           cp tv/build/outputs/apk/release/tv-release.apk watchparty-tv.apk
           rm -f "$RUNNER_TEMP/app.jks"
+          # Update-Info für die TV-App (die App vergleicht versionCode und prüft die Prüfsumme)
+          printf '{"versionCode":%s,"versionName":"2.0.%s","sha256":"%s","size":%s,"commit":"%s"}\n' \
+            "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_NUMBER" "$(sha256sum watchparty-tv.apk | cut -d' ' -f1)" "$(stat -c%s watchparty-tv.apk)" "${GITHUB_SHA::7}" > watchparty-tv.json
+          cat watchparty-tv.json
           ls -la watchparty.apk watchparty-tv.apk
 
       # Kompilierfehler als Annotationen am Commit (GitHub zeigt max. 10 je Schritt → in Häppchen)
@@ -80,6 +84,7 @@ jobs:
           path: |
             android/watchparty.apk
             android/watchparty-tv.apk
+            android/watchparty-tv.json
 
       - name: Als „android-latest“ veröffentlichen
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
@@ -94,8 +99,9 @@ jobs:
           Installation: siehe android/README.md."
           if gh release view android-latest >/dev/null 2>&1; then
             gh release upload android-latest android/watchparty.apk android/watchparty-tv.apk --clobber
+            gh release upload android-latest android/watchparty-tv.json --clobber
             gh release edit android-latest --notes "$NOTES"
           else
-            gh release create android-latest android/watchparty.apk android/watchparty-tv.apk --target "$GITHUB_SHA" --prerelease \
+            gh release create android-latest android/watchparty.apk android/watchparty-tv.apk android/watchparty-tv.json --target "$GITHUB_SHA" --prerelease \
               --title "Android-App (aktuell)" --notes "$NOTES"
           fi

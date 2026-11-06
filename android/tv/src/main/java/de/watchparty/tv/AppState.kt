@@ -15,6 +15,8 @@ import de.watchparty.tv.data.Me
 import de.watchparty.tv.data.Prefs
 import de.watchparty.tv.data.RoomClient
 import de.watchparty.tv.player.PlayerController
+import de.watchparty.tv.update.UpdateInfo
+import de.watchparty.tv.update.Updater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,6 +55,9 @@ class AppState(ctx: Context) {
     val api = Api(prefs, version)
     val room = RoomClient(api)
     val player = PlayerController(ctx, api, prefs, room)
+    val updater = Updater(ctx, api)
+    /** Hinweis-Dialog „Update verfügbar“ (einmal pro Version) */
+    var updatePrompt by mutableStateOf<UpdateInfo?>(null)
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     var me by mutableStateOf<Me?>(null)
@@ -76,11 +81,12 @@ class AppState(ctx: Context) {
     /** Beim Start: Server gesetzt? Angemeldet? */
     fun boot() {
         if (prefs.server.isBlank()) { replace(Screen.Setup); return }
-        if (prefs.sid == null) { replace(Screen.Login); return }
+        if (prefs.sid == null) { replace(Screen.Login); checkUpdate(); return }
         scope.launch {
             try {
                 me = Me.from(api.me())
                 replace(Screen.Home)
+                checkUpdate()
             } catch (e: ApiException) {
                 if (e.status == 401) { prefs.sid = null; replace(Screen.Login) }
                 else { replace(Screen.Home); toast(e.message ?: "Server nicht erreichbar", true) }
@@ -91,6 +97,26 @@ class AppState(ctx: Context) {
     fun loggedIn(meJson: JSONObject) {
         me = Me.from(meJson)
         replace(Screen.Home)
+        checkUpdate()
+    }
+
+    /** Beim Start still nach Updates schauen; neue Version einmal mit Dialog anbieten */
+    fun checkUpdate(manual: Boolean = false) {
+        scope.launch {
+            val info = updater.check()
+            if (info == null) { if (manual) toast(if (updater.state.value is de.watchparty.tv.update.UpdateState.Failed) "Update-Prüfung fehlgeschlagen" else "Du hast die neueste Version."); return@launch }
+            if (manual || prefs.skippedUpdate != info.versionCode) updatePrompt = info
+        }
+    }
+
+    fun installUpdate(info: UpdateInfo) {
+        updatePrompt = null
+        scope.launch { updater.install(info) }
+    }
+
+    fun skipUpdate(info: UpdateInfo) {
+        prefs.skippedUpdate = info.versionCode
+        updatePrompt = null
     }
 
     fun logout() {
