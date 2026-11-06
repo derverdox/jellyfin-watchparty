@@ -138,6 +138,33 @@ async function playExt(url) {
   } catch (e) { S.pendingExt = null; toast(e.message, true); }
 }
 
+/* ---------------- Update ---------------- */
+
+/** Kleine Anzeige oben in der Titelleiste: lädt … / bereit → Klick installiert und startet neu. */
+function renderUpdate(st) {
+  const b = $('#update-pill');
+  if (!st) return;
+  b.classList.remove('ready', 'error');
+  b.onclick = null;
+  if (st.state === 'downloading') {
+    b.hidden = false;
+    b.textContent = `Update ${st.version} wird geladen${st.progress ? ` · ${st.progress} %` : ' …'}`;
+  } else if (st.state === 'ready') {
+    b.hidden = false;
+    b.classList.add('ready');
+    b.textContent = `⟳ Update ${st.version} – jetzt neu starten`;
+    b.title = 'Installiert die neue Version und startet Watchparty neu (sonst automatisch beim Beenden)';
+    b.onclick = () => call('update:install').catch((e) => toast(e.message, true));
+  } else if (st.state === 'error' && st.version) {
+    b.hidden = false;
+    b.classList.add('error');
+    b.textContent = 'Update fehlgeschlagen – nochmal versuchen';
+    b.title = st.error || '';
+    b.onclick = () => call('update:check').catch((e) => toast(e.message, true));
+  } else b.hidden = true;
+}
+call('update:state').then(renderUpdate).catch(() => {});
+
 /* ---------------- Login ---------------- */
 
 $('#login-form').addEventListener('submit', async (ev) => {
@@ -445,6 +472,7 @@ function onEvent(ch, p) {
     case 'player:closed': $('#btn-player').textContent = '⛶ Player öffnen'; S.tracks = { audio: [], sub: [] }; renderTracks(); break;
     case 'fg:engine': S.engine = p; renderPicture(); break;
     case 'prefs': S.prefs = p; renderPrefs(); break;
+    case 'update:state': renderUpdate(p); break;
     default: break;
   }
 }
