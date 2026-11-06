@@ -409,6 +409,9 @@
 
   function wishForm(root) {
     const hint = el('div', { class: 'wish-hint' });
+    const sugg = el('div', { class: 'wish-sugg' });
+    let picked = null; // ausgewählter TMDb-Vorschlag (Titel+Jahr+Typ+Poster)
+    const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9äöüß]/g, '');
     const f = el('form', { class: 'wish-form' },
       el('input', { name: 'title', maxlength: 120, placeholder: 'Titel, z. B. „Blade Runner“', required: true, autocomplete: 'off' }),
       el('input', { name: 'year', type: 'number', min: 1900, max: 2100, placeholder: 'Jahr' }),
@@ -416,15 +419,29 @@
       el('input', { name: 'tags', maxlength: 80, placeholder: 'Tags, mit Komma' }),
       el('input', { name: 'note', maxlength: 500, placeholder: 'Notiz (z. B. „Director\'s Cut“)', class: 'wide' }),
       el('button', { class: 'btn primary', type: 'submit' }, '＋ Wünschen'),
-      hint);
+      sugg, hint);
     let t;
     f.title.addEventListener('input', () => {
       clearTimeout(t);
+      picked = null; // neu getippt → alte Auswahl ist nicht mehr gültig
       t = setTimeout(async () => {
         const q = f.title.value.trim();
-        if (q.length < 2) { hint.replaceChildren(); return; }
+        if (q.length < 2) { hint.replaceChildren(); sugg.replaceChildren(); return; }
         try {
-          const r = await api(`/api/wishes/check?q=${encodeURIComponent(q)}`);
+          const [r, ts] = await Promise.all([
+            api(`/api/wishes/check?q=${encodeURIComponent(q)}`),
+            api(`/api/wishes/titles?q=${encodeURIComponent(q)}&type=${encodeURIComponent(f.type.value)}`),
+          ]);
+          sugg.replaceChildren(...(ts.titles || []).map((x) => el('button', { class: 'sugg', type: 'button', title: 'Übernehmen', onclick: () => {
+            picked = x;
+            f.title.value = x.title;
+            if (x.year) f.year.value = x.year;
+            f.type.value = x.type;
+            sugg.replaceChildren(el('span', { class: 'muted tiny' }, `✓ „${x.title}“${x.year ? ` (${x.year})` : ''} übernommen`));
+          } },
+            x.poster ? el('img', { src: x.poster, alt: '', loading: 'lazy' }) : el('span', { class: 'sugg-noimg' }, '🎬'),
+            el('span', { class: 't' }, x.title, x.year ? el('span', { class: 'muted' }, ` (${x.year})`) : ''),
+            el('span', { class: 'muted tiny' }, x.type === 'series' ? 'Serie' : 'Film'))));
           hint.replaceChildren(
             ...(r.library.length ? [el('span', { class: 'muted tiny' }, 'Schon da: '), ...r.library.map((x) => el('button', { class: 'chip ok', type: 'button', onclick: () => openDetail(x) }, `▶ ${x.name}${x.year ? ` (${x.year})` : ''}`))] : []),
             ...(r.wishes.length ? [el('span', { class: 'muted tiny' }, ' Schon gewünscht: '), ...r.wishes.map((w) => el('button', { class: 'chip', type: 'button', onclick: async () => { await api(`/api/wishes/${w.id}/vote`, { method: 'POST' }); renderBoard(root); } }, `▲ ${w.title} (${w.votes})`))] : []));
@@ -433,8 +450,13 @@
     });
     f.addEventListener('submit', async (e) => {
       e.preventDefault();
+      const use = picked && norm(picked.title) === norm(f.title.value); // Titel noch derselbe?
       try {
-        await api('/api/wishes', { method: 'POST', body: { title: f.title.value, year: f.year.value || null, type: f.type.value, note: f.note.value, tags: f.tags.value.split(',').map((x) => x.trim()).filter(Boolean) } });
+        await api('/api/wishes', { method: 'POST', body: {
+          title: f.title.value, year: f.year.value || null, type: f.type.value, note: f.note.value,
+          tags: f.tags.value.split(',').map((x) => x.trim()).filter(Boolean),
+          tmdbId: use ? picked.tmdbId : null, imdbId: use ? picked.imdbId : null, poster: use ? picked.poster : null,
+        } });
         toast('Wunsch eingetragen – sag deinen Freunden, sie sollen abstimmen!');
         renderBoard(root);
       } catch (ex) { toast(ex.message); }
@@ -455,6 +477,7 @@
     return el('div', { class: `wish ${w.status}` },
       el('button', { class: `vote${w.voted ? ' on' : ''}`, disabled: !data.canWish, title: w.voted ? 'Stimme zurücknehmen' : 'Will ich auch!', onclick: async () => { try { await api(`/api/wishes/${w.id}/vote`, { method: 'POST' }); reload(); } catch (e) { toast(e.message); } } },
         el('span', { class: 'arrow' }, '▲'), el('b', {}, String(w.votes))),
+      w.poster ? el('img', { class: 'wish-poster', src: w.poster, alt: '', loading: 'lazy' }) : '',
       el('div', { class: 'wish-body' },
         el('div', { class: 'wish-title' }, el('b', {}, w.title), w.year ? el('span', { class: 'muted' }, ` (${w.year})`) : '', el('span', { class: 'chip small' }, w.type === 'series' ? 'Serie' : 'Film'), el('span', { class: `tag ${cls}` }, st)),
         w.note ? el('p', { class: 'wish-note' }, w.note) : '',

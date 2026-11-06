@@ -459,6 +459,15 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 14px; col
 .wish-form .wide { grid-column: 1 / -2; }
 .wish-hint { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .wish-hint:empty { display: none; }
+.wish-sugg { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
+.wish-sugg:empty { display: none; }
+.wish-sugg .sugg { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; text-align: left; cursor: pointer; color: inherit; font: inherit; }
+.wish-sugg .sugg:hover { border-color: var(--muted, var(--line)); background: var(--surface-2); }
+.wish-sugg .sugg img, .wish-sugg .sugg-noimg { width: 34px; height: 51px; object-fit: cover; border-radius: 5px; flex: none; }
+.wish-sugg .sugg-noimg { display: inline-flex; align-items: center; justify-content: center; background: var(--surface-2); font-size: 15px; }
+.wish-sugg .sugg .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wish .wish-poster { width: 44px; height: 66px; object-fit: cover; border-radius: 6px; flex: none; }
+
 .board-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .wishes { display: flex; flex-direction: column; gap: 8px; }
 .wish { display: flex; gap: 14px; padding: 12px; background: #ffffff06; border: 1px solid var(--line); border-radius: 12px; }

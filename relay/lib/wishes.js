@@ -28,12 +28,18 @@ class WishStore {
     const year = input.year ? parseInt(input.year, 10) : null;
     if (year != null && !(year >= 1900 && year <= 2100)) throw new Error('Ungültiges Jahr');
     const type = ['movie', 'series'].includes(input.type) ? input.type : 'movie';
-    const dup = this.list.find((w) => w.status !== 'rejected' && fold(w.title) === fold(title) && (!year || !w.year || w.year === year));
+    // Aus Vorschlägen übernommene Felder (TMDb) – validieren, dann mitführen
+    const tmdbId = Number(input.tmdbId) > 0 ? Number(input.tmdbId) : null;
+    const imdbId = /^tt\d{7,10}$/.test(String(input.imdbId || '')) ? String(input.imdbId) : null;
+    const poster = /^https:\/\/image\.tmdb\.org\/[a-z0-9_/.-]{1,120}$/.test(String(input.poster || '')) ? String(input.poster) : null;
+    const dup = tmdbId
+      ? this.list.find((w) => w.status !== 'rejected' && w.tmdbId === tmdbId)
+      : this.list.find((w) => w.status !== 'rejected' && fold(w.title) === fold(title) && (!year || !w.year || w.year === year));
     if (dup) { const e = new Error('Das wünscht sich schon jemand – gib dort deine Stimme ab'); e.wish = dup.id; throw e; }
     const mine = this.list.filter((w) => w.by === username && w.status === 'open').length;
     if (mine >= 30) throw new Error('Du hast schon 30 offene Wünsche');
     const w = {
-      id: crypto.randomBytes(5).toString('hex'), title, year, type,
+      id: crypto.randomBytes(5).toString('hex'), title, year, type, tmdbId, imdbId, poster,
       note: String(input.note || '').slice(0, 500), by: username, created: Date.now(),
       votes: [username], tags: {}, status: 'open', statusNote: '', libraryItemId: null, doneAt: null, seenBy: [],
     };
@@ -100,6 +106,7 @@ class WishStore {
   view(w, username) {
     return {
       id: w.id, title: w.title, year: w.year, type: w.type, note: w.note, by: w.by, created: w.created,
+      poster: w.poster || null, imdbId: w.imdbId || null,
       votes: w.votes.length, voted: w.votes.includes(username),
       tags: Object.entries(w.tags).map(([tag, us]) => ({ tag, votes: us.length, voted: us.includes(username) })).sort((a, b) => b.votes - a.votes),
       status: w.status, statusNote: w.statusNote, libraryItemId: w.libraryItemId, doneAt: w.doneAt,
