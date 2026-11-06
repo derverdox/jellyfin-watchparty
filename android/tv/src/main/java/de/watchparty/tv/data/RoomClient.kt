@@ -233,6 +233,17 @@ class RoomClient(private val api: Api) {
 
     fun clearRatePrompt() { _state.value = _state.value.copy(ratePrompt = null) }
 
+    /** Eigene Aktion sofort anwenden (fühlt sich direkter an), der Server bestätigt gleich */
+    fun applyLocal(action: String, position: Double?) {
+        val pb = _playback.value ?: return
+        if (action == "live") return
+        val pos = position ?: expectedPos(pb)
+        _playback.value = pb.copy(
+            position = pos, updatedAt = serverNow(),
+            playing = when (action) { "play" -> true; "pause" -> false; else -> pb.playing },
+        )
+    }
+
     /* ---------------- Rechte ---------------- */
 
     fun canControl(me: Me?): Boolean {
