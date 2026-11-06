@@ -38,11 +38,20 @@ jobs:
         env:
           APP_KEYSTORE_B64: ${{ secrets.APP_KEYSTORE_B64 }}
           APP_KEYSTORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+          # Alias im Keystore (friendlyName beim Anlegen). Fehlt das Secret,
+          # bleibt es beim Gradle-Default "watchparty".
+          APP_KEY_ALIAS: ${{ secrets.APP_KEY_ALIAS || 'watchparty' }}
         run: |
           # Fester Schlüssel aus den Repo-Secrets, damit Updates über die alte Version passen.
           # Ohne Secret (z. B. PRs aus Forks) gibt es ein Debug-signiertes APK.
           if [ -n "$APP_KEYSTORE_B64" ]; then
-            echo "$APP_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/app.jks"
+            # Zeilenumbrüche entfernen; kaputte/abgeschnittene Secrets sauber melden
+            # statt mit "base64: invalid input" ohne Kontext abzurstürzen.
+            if ! printf '%s' "$APP_KEYSTORE_B64" | tr -d '\r\n' | base64 -d > "$RUNNER_TEMP/app.jks" 2>/dev/null \
+               || [ ! -s "$RUNNER_TEMP/app.jks" ]; then
+              echo "::error title=Keystore-Secret kaputt::APP_KEYSTORE_B64 dekodiert nicht (Länge ${#APP_KEYSTORE_B64}, durch 4 teilbar: $(( ${#APP_KEYSTORE_B64} % 4 == 0 ))). Secret einzeilig mit 'base64 -w0 app.jks' neu setzen."
+              exit 1
+            fi
             export APP_KEYSTORE="$RUNNER_TEMP/app.jks"
           else
             echo "::warning::Kein APP_KEYSTORE_B64-Secret: APK wird mit Debug-Schlüssel signiert"
