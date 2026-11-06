@@ -88,7 +88,8 @@ class Tunnel extends EventEmitter {
                 userName: m.userName,
                 serverName: m.serverName,
                 version: m.jfVersion,
-                agentVersion: m.version
+                agentVersion: m.version,
+                maxUploadMbps: Number.isFinite(m.maxUploadMbps) && m.maxUploadMbps > 0 ? m.maxUploadMbps : 0
             };
             console.log(`[tunnel] Jellyfin "${m.serverName}" (${m.jfVersion}) online, Benutzer "${m.userName}"`);
             this.emit('change', true);

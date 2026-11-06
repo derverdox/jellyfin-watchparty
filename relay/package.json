@@ -1,6 +1,6 @@
 {
   "name": "watchparty-relay",
-  "version": "2.1.0",
+  "version": "2.4.0",
   "description": "Öffentlicher Watchparty-Server (Frontend, Konten, Sync, Cache)",
   "main": "server.js",
   "scripts": {

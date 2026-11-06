@@ -189,3 +189,21 @@ Im Raum oben auf **📺 Twitch/YouTube** klicken und einen Link einfügen (`twit
 - **Sicherheit:** Passwörter werden mit scrypt gehasht, es gibt Login-Bremsen gegen Durchprobieren, Sitzungs-Cookies sind HttpOnly/Secure, und die Website nutzt HTTPS über Caddy. Der Agent-Token ist der Schlüssel zum Tunnel, also geheim halten.
 - **Mit dem PC hochskalieren und auf den Fernseher streamen?** Ist nicht eingebaut. Wer das will, installiert am PC [Sunshine](https://github.com/LizardByte/Sunshine) (oder die Abspaltung [Apollo](https://github.com/ClassicOldSong/Apollo) mit virtuellem Bildschirm) und auf dem Fernseher/Fire TV [Moonlight](https://moonlight-stream.org/). Dann den Desktop-Client mit Framegen/VSR im Vollbild auf dem gestreamten Bildschirm laufen lassen. Die Pfeiltasten und OK der Fernbedienung kommen am PC als Tasten an und steuern mpv.
 - **Konto-Daten** liegen im Docker-Volume `relay-data`. Räume sind bewusst flüchtig, nach einem Neustart macht ihr einfach einen neuen auf.
+
+### Filmquellen und Übertragungsqualität
+
+Beim Neustart eines Films wählt der Relay die beste für alle aktuellen Zuschauer
+freigegebene Quelle desselben Titels. Sie bleibt für den Raum festgelegt; eine
+niedrigere Übertragungsstufe wechselt nicht zu einer anderen Datei. Beim Fortsetzen
+wird die ursprüngliche Quelle verwendet. Full HD bleibt bei jeder 1080p-Quelle
+im Rahmen der Freigaben auswählbar, unabhängig von ihrer Quellbitrate.
+
+**Automatisch** beginnt mit bis zu `AUTO_MAX_MBPS=10` Mbit/s und senkt bei anhaltendem
+Puffern die Übertragungsqualität. Neue Desktop-/TV-Clients verwenden dies standardmäßig;
+bestehende manuelle Einstellungen lassen sich im Qualitätsmenü auf Automatisch stellen.
+Eine passende Originaldatei kann direkt laufen, andernfalls transcodiert Jellyfin.
+`STREAM_MAX_MBPS=0` setzt kein zusätzliches Relay-Limit; Gruppenlimits und 80 % einer
+vom aktualisierten Agent gemeldeten `MAX_UPLOAD_MBPS`-Grenze gelten zusätzlich,
+auch für Originaldateien. Relay und Agent für die Upload-Budgetmeldung gemeinsam
+aktualisieren. Mehrere unterschiedliche Streams teilen weiterhin die Gesamtleitung.
+Details und Grenzen: [Filmversionen](docs/movie-versions.md#umgesetzt-hochwertige-quelle-und-begrenzte-übertragung).

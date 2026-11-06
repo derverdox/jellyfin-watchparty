@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_PREFS = {
-  quality: 'direct',
+  quality: 'auto',
   audioLang: '',
   subLang: 'off', // '' (alte Einstellungen) zählt ebenfalls als aus
   volume: 100,

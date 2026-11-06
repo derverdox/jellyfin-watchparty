@@ -53,11 +53,13 @@ function descendants(pid) {
   return out;
 }
 
+const requests = [];
 function start(port = 0) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     const p = url.pathname;
     const q = url.searchParams;
+    requests.push({ path: p, query: Object.fromEntries(q) });
     const json = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
     let m;
     if (p === '/System/Info') return json({ ServerName: 'Testserver', Version: '10.11.0' });
@@ -96,7 +98,7 @@ function start(port = 0) {
       res.writeHead(r ? 206 : 200, { 'Content-Type': 'video/mp4', 'Content-Length': e - s + 1, ...(r ? { 'Content-Range': `bytes ${s}-${e}/${VIDEO.length}` } : {}) });
       return res.end(VIDEO.subarray(s, e + 1));
     }
-    if ((m = p.match(/^\/Videos\/([a-f0-9]{32})\/master\.m3u8$/))) {
+    if ((m = p.match(/^\/Videos\/([a-f0-9]{32})\/(?:master|main)\.m3u8$/))) {
       res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
       return res.end(`#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=${q.get('MaxStreamingBitrate')}\nmain.m3u8?br=${q.get('MaxStreamingBitrate')}\n`);
     }
@@ -121,4 +123,23 @@ function addMovieVersions(n = 0) {
   ITEMS[id('version-bd')] = movie(id('version-bd'), 'Versionsfilm - 1080p', I.LIB_M);
   ITEMS[id('version-uhd')] = movie(id('version-uhd'), 'Versionsfilm - 2160p', I.LIB_K, { height: 2160 });
 }
-module.exports = { start, addMovies, addMovieVersions };
+function addPlaybackVersions() {
+  const P = Object.fromEntries(['SD', 'HD', 'UHD', 'CUT', 'NATIVE', 'LOW_SOURCE', 'HIGH_SOURCE'].map((key) => [key, id(`playback-${key}`)]));
+  for (const [key, height, lib] of [['SD', 576, I.LIB_M], ['HD', 1080, I.LIB_M], ['UHD', 2160, I.LIB_K], ['CUT', 2160, I.LIB_M]]) {
+    const it = movie(P[key], `Quellenfilm${key === 'CUT' ? ' Extended' : ''} - ${height}p`, lib, { height, bitrate: height === 2160 ? 60000000 : height === 1080 ? 8000000 : 3000000 });
+    it.ProviderIds = { Tmdb: '123456' };
+    it.MediaSources[0].Id = id(`source-${key}`);
+    ITEMS[it.Id] = it;
+  }
+  const native = movie(P.NATIVE, 'Native Quellen', I.LIB_M);
+  const low = movie('unused-low', 'unused', I.LIB_M, { height: 576, bitrate: 3000000 }).MediaSources[0];
+  const high = native.MediaSources[0];
+  low.Id = P.LOW_SOURCE; high.Id = P.HIGH_SOURCE;
+  high.DefaultAudioStreamIndex = 7;
+  high.MediaStreams[1] = { Type: 'Audio', Index: 7, Codec: 'aac', Language: 'eng' };
+  high.RunTimeTicks = 65e7;
+  native.MediaSources = [low, high];
+  ITEMS[native.Id] = native;
+  return P;
+}
+module.exports = { start, addMovies, addMovieVersions, addPlaybackVersions, requests };

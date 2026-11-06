@@ -11,9 +11,9 @@ name: Android-App (Fire TV, Handy, Tablet)
 on:
   push:
     branches: [main]
-    paths: ['android/**', 'relay/public/tv.*', '.github/workflows/android.yml']
+    paths: ['android/**', 'relay/public/tv.*', '.github/workflows/android.yml', '.github/scripts/**']
   pull_request:
-    paths: ['android/**', 'relay/public/tv.*', '.github/workflows/android.yml']
+    paths: ['android/**', 'relay/public/tv.*', '.github/workflows/android.yml', '.github/scripts/**']
   workflow_dispatch:
 
 permissions:
@@ -40,22 +40,11 @@ jobs:
           APP_KEYSTORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
           # Alias im Keystore (friendlyName beim Anlegen). Fehlt das Secret,
           # bleibt es beim Gradle-Default "watchparty".
-          APP_KEY_ALIAS: ${{ secrets.APP_KEY_ALIAS || 'watchparty' }}
+          APP_KEY_ALIAS: ${{ secrets.APP_KEY_ALIAS }}
+          APP_KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
         run: |
-          # Fester Schlüssel aus den Repo-Secrets, damit Updates über die alte Version passen.
-          # Ohne Secret (z. B. PRs aus Forks) gibt es ein Debug-signiertes APK.
-          if [ -n "$APP_KEYSTORE_B64" ]; then
-            # Zeilenumbrüche entfernen; kaputte/abgeschnittene Secrets sauber melden
-            # statt mit "base64: invalid input" ohne Kontext abzurstürzen.
-            if ! printf '%s' "$APP_KEYSTORE_B64" | tr -d '\r\n' | base64 -d > "$RUNNER_TEMP/app.jks" 2>/dev/null \
-               || [ ! -s "$RUNNER_TEMP/app.jks" ]; then
-              echo "::error title=Keystore-Secret kaputt::APP_KEYSTORE_B64 dekodiert nicht (Länge ${#APP_KEYSTORE_B64}, durch 4 teilbar: $(( ${#APP_KEYSTORE_B64} % 4 == 0 ))). Secret einzeilig mit 'base64 -w0 app.jks' neu setzen."
-              exit 1
-            fi
-            export APP_KEYSTORE="$RUNNER_TEMP/app.jks"
-          else
-            echo "::warning::Kein APP_KEYSTORE_B64-Secret: APK wird mit Debug-Schlüssel signiert"
-          fi
+          trap 'rm -f "$RUNNER_TEMP/app.jks" "$RUNNER_TEMP/signing-info.txt"' EXIT
+          source ../.github/scripts/prepare-android-signing.sh
           chmod +x gradlew
           set -o pipefail
           ./gradlew --no-daemon :app:assembleRelease :tv:assembleRelease 2>&1 | tee "$RUNNER_TEMP/build.log"
@@ -67,6 +56,13 @@ jobs:
             "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_NUMBER" "$(sha256sum watchparty-tv.apk | cut -d' ' -f1)" "$(stat -c%s watchparty-tv.apk)" "${GITHUB_SHA::7}" > watchparty-tv.json
           cat watchparty-tv.json
           ls -la watchparty.apk watchparty-tv.apk
+
+      - name: Update-Signaturen gegen veröffentlichtes Release prüfen
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        working-directory: android
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 ../.github/scripts/verify-android-update.py
 
       # Kompilierfehler als Annotationen am Commit (GitHub zeigt max. 10 je Schritt → in Häppchen)
       - name: Fehler sammeln

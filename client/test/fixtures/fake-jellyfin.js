@@ -14,7 +14,7 @@ function start(videoFile, port = 0) {
     Id: MOVIE, Name: 'Testfilm', Type: 'Movie', ProductionYear: 2026, RunTimeTicks: 90 * 1e7,
     ImageTags: {}, Overview: 'Ein Testbild mit Ton.',
     MediaSources: [{
-      Id: MS, Container: 'mp4', DefaultAudioStreamIndex: 1,
+      Id: MS, Container: 'mp4', Bitrate: Math.round(size * 8 / 90), DefaultAudioStreamIndex: 1,
       MediaStreams: [
         { Index: 0, Type: 'Video', Codec: 'h264', Width: 640, Height: 360 },
         { Index: 1, Type: 'Audio', Codec: 'aac', Language: 'deu', DisplayTitle: 'Deutsch AAC', IsDefault: true },
@@ -31,7 +31,7 @@ function start(videoFile, port = 0) {
     if (p === '/System/Info') return json({ ServerName: 'Testserver', Version: '10.11.0' });
     if (p === '/Users') return json([{ Id: USER, Name: 'test', Policy: { IsAdministrator: true } }]);
     if (p === `/Users/${USER}/Views`) return json({ Items: [{ Id: LIB, Name: 'Filme', Type: 'CollectionFolder', CollectionType: 'movies', IsFolder: true }] });
-    if (p === `/Users/${USER}/Items`) return json({ Items: [movie], TotalRecordCount: 1 });
+    if (p === `/Users/${USER}/Items`) return json({ Items: Number(url.searchParams.get('StartIndex') || 0) > 0 ? [] : [movie], TotalRecordCount: 1 });
     if (p === `/Users/${USER}/Items/${MOVIE}`) return json(movie);
     if (p === `/Videos/${MOVIE}/${MS}/Subtitles/2/Stream.vtt`) {
       res.writeHead(200, { 'Content-Type': 'text/vtt' });
