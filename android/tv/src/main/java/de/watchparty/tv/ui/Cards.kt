@@ -3,6 +3,8 @@ package de.watchparty.tv.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -55,8 +57,16 @@ fun PosterCard(item: MediaItem, onClick: () -> Unit, width: Dp = 132.dp, request
             Box(Modifier.fillMaxSize()) {
                 T(item.name, Modifier.align(Alignment.Center).padding(8.dp), size = 13.sp, color = C.muted, maxLines = 3)
                 if (item.hasImage || item.isEpisode) Img(api.img(item.posterId, 300), Modifier.fillMaxSize(), widthPx = 300)
+                if (item.availableQualities.isNotEmpty()) {
+                    Row(Modifier.align(Alignment.TopEnd).padding(5.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        item.availableQualities.forEach { quality ->
+                            T(quality, Modifier.clip(RoundedCornerShape(3.dp)).background(Color.Black.copy(alpha = 0.85f)).padding(horizontal = 3.dp, vertical = 2.dp),
+                                size = 10.sp, color = Color.White, weight = FontWeight.Bold)
+                        }
+                    }
+                }
                 if (item.progress > 1) ProgressLine((item.progress / 100).toFloat(), Modifier.align(Alignment.BottomCenter).padding(6.dp))
-                if (item.watched) T("✓", Modifier.align(Alignment.TopEnd).padding(6.dp).clip(RoundedCornerShape(99.dp)).background(C.accent).padding(horizontal = 7.dp, vertical = 1.dp),
+                if (item.watched) T("✓", Modifier.align(Alignment.TopStart).padding(6.dp).clip(RoundedCornerShape(99.dp)).background(C.accent).padding(horizontal = 7.dp, vertical = 1.dp),
                     size = 13.sp, color = C.accentInk, weight = FontWeight.Bold)
             }
         }

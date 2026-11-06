@@ -7,11 +7,11 @@ function movieTitle(name) {
 function quality(name, streams = []) {
   const suffix = /(?:^|[\s[(-])(576|1080|2160)p\s*[\])]?$/.exec(String(name || '').toLowerCase());
   if (suffix) return { 576: 'SD', 1080: 'Full HD', 2160: '4K' }[suffix[1]];
-  const video = streams.find((s) => s.Type === 'Video');
+  const video = (streams || []).find((s) => s.Type === 'Video');
   if (!video) return null;
   // Width also handles films with black bars cropped from the encoded image.
   const w = Number(video.Width) || 0, h = Number(video.Height) || 0;
-  return w > 1920 || h > 1080 ? '4K' : w > 1280 || h > 720 ? 'Full HD' : w > 1024 || h > 576 ? 'HD' : w || h ? 'SD' : null;
+  return w >= 3840 || h >= 2160 ? '4K' : w > 1280 || h > 720 ? 'Full HD' : w > 1024 || h > 576 ? 'HD' : w || h ? 'SD' : null;
 }
 function qualities(it) {
   const sources = it.MediaSources || [];

@@ -1066,7 +1066,7 @@ async function handle(req, res) {
     q.set('Fields', ITEM_FIELDS);
     q.set('EnableImageTypes', 'Primary');
     q.set('ImageTypeLimit', '1');
-    q.set('Limit', String(Math.min(toInt(url.searchParams.get('limit'), 60), 200)));
+    q.set('Limit', String(Math.max(1, Math.min(toInt(url.searchParams.get('limit'), 60), 200))));
     q.set('StartIndex', String(Math.max(toInt(url.searchParams.get('start'), 0), 0)));
     const search = (url.searchParams.get('search') || '').trim().slice(0, 100);
     const parentId = url.searchParams.get('parentId');

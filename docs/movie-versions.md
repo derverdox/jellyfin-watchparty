@@ -3,7 +3,7 @@
 ## Umgesetzt: Bibliothek
 
 Der Relay gruppiert Filme in `/api/catalog`, `/api/items` und `/api/search`.
-Web, Fire TV / Android (WebView) und Desktop zeigen auf den Filmkarten oben
+Web, Fire TV / Android (WebView), die native Fire-TV-App und Desktop zeigen auf den Filmkarten oben
 rechts die verfügbaren Qualitäten. Die Suffixe `576p`, `1080p`, `2160p`
 werden als SD, Full HD und 4K erkannt und aus dem Gruppentitel entfernt.
 Ohne Qualitätssuffix liefern die Videomaße die Einstufung; HD wird bei
@@ -35,6 +35,37 @@ reale ID. Es gibt noch keine Versionsauswahl im Player. Bereits in Jellyfin
 kombinierte MediaSources erscheinen in diesem ersten Schritt als ein Filmeintrag.
 Verlauf, Merkliste und Bewertungen bleiben an die bisherigen Item-IDs gebunden;
 eine Zusammenführung dieser Daten ist Teil der nächsten Phase.
+
+## Umgesetzt: Duplikatanalyse im Agent
+
+Die geschützte Agent-Verwaltung (Port 8098) bietet „Duplikate analysieren“ an.
+`POST /api/duplicates` startet einen Scan; ein weiterer Start während eines
+laufenden Scans verwendet denselben Auftrag. `GET /api/duplicates` liefert
+Status/Fortschritt und nach Abschluss das Ergebnis, seitenweise mit `start` und
+`limit` (Standard 50, maximal 100 Gruppen). Die Daten werden nicht gecacht (`no-store`)
+und bleiben im Agent-Arbeitsspeicher bis zum nächsten Scan oder Neustart.
+
+Der Agent liest die für seinen Jellyfin-Benutzer sichtbaren Bibliotheken direkt,
+einschließlich in Watchparty ausgeschlossener Bibliotheken. Ausgeschlossene
+Quellen sind im Ergebnis markiert. Pro Bibliothek werden alle Seiten à 500
+Einträge gelesen. Wiederholte Seiten, Netzwerkfehler (30 Sekunden Timeout pro
+Anfrage) und mehr als 100.000 gelesene Einträge brechen den Scan mit Fehler ab;
+ein Teilergebnis wird nicht als vollständige Analyse ausgegeben.
+
+Filme verwenden dieselben Regeln wie der Relay; die identische Hilfsdatei wird
+für die getrennten Docker-/Executable-Builds in beiden Komponenten mitgeführt
+und per Test verglichen. Serien werden ebenso über Provider-IDs oder Titel/Jahr
+zugeordnet. Episoden benötigen eine passende Serienzuordnung, Staffel, Folgenummer
+und denselben Folgenbereich. Ohne ausreichende Metadaten erfolgt kein Vergleich
+über Seriengrenzen. Staffel 0 ist gültig; Mehrfachfolgen werden von Einzelfolgen
+getrennt gehalten. Bereits vorhandene Jellyfin-MediaSources werden einzeln
+aufgelistet, wiederholte Source-IDs innerhalb eines Items entfernt.
+
+Das Ergebnis zeigt Quelldateipfade ausschließlich in der geschützten
+Agent-Verwaltung, dazu Qualität, Laufzeit, Bibliothek, Audio-/Untertitelspuren
+mit ihren jeweiligen Indizes und `syncStatus: unverified`. Es handelt sich um
+eine Metadatenanalyse ohne Lesen oder Verändern der Mediendateien. Gleiche
+Qualität bedeutet nicht gleiche Datei oder gleiche Zeitachse.
 
 ## Vorschlag: Film → Schnitt/Zeitachse → Quelldatei → Spuren
 
