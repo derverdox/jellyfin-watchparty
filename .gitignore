@@ -3,3 +3,6 @@ node_modules
 data
 cache
 dist
+
+# Kotlin-Paket der TV-App heißt „data“ – nicht mit den Daten-Ordnern von Relay/Agent verwechseln
+!android/tv/src/main/java/de/watchparty/tv/data/
