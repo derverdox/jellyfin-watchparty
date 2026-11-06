@@ -1,7 +1,7 @@
 {
   "name": "watchparty-client",
   "productName": "Watchparty",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Desktop-Client für die Jellyfin Watchparty: synchron schauen in mpv, mit RIFE-Zwischenbildern und RTX Video Super Resolution.",
   "main": "src/main/main.js",
   "private": true,
