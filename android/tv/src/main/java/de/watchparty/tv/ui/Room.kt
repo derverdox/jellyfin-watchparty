@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -63,8 +64,11 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import de.watchparty.tv.AppState
 import de.watchparty.tv.HomeTab
+import de.watchparty.tv.Screen
 import de.watchparty.tv.data.ChatMsg
+import de.watchparty.tv.data.Rec
 import de.watchparty.tv.data.RoomEvent
+import de.watchparty.tv.data.RoomRecs
 import de.watchparty.tv.player.PlayerSurface
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -89,12 +93,16 @@ fun RoomScreen(app: AppState) {
     var seekTarget by remember { mutableStateOf<Double?>(null) }
     var idle by remember { mutableStateOf(0) }
     var dismissedPoll by remember { mutableStateOf<String?>(null) }
+    var dismissedRecs by remember { mutableStateOf<String?>(null) }
     val floats = remember { mutableStateListOf<Floating>() }
     val overlayChat = remember { mutableStateListOf<ChatMsg>() }
     val catcher = remember { FocusRequester() }
     val playBtn = remember { FocusRequester() }
     val pollOpen = rs.poll != null && dismissedPoll != rs.poll?.id
-    val dialogOpen = pollOpen || rs.ratePrompt != null
+    // Empfehlungen am Ende: erst nach Abstimmung/Bewertung, nicht wenn es gleich mit der Liste weitergeht
+    val recs = rs.recs
+    val recsOpen = recs != null && dismissedRecs != recs.itemId && rs.advancing == null && rs.ratePrompt == null && !pollOpen
+    val dialogOpen = pollOpen || rs.ratePrompt != null || recsOpen
 
     // Abspielen nur, solange dieser Bildschirm offen ist (beim Stöbern bleibt man im Raum, das Video ruht)
     DisposableEffect(Unit) {
@@ -174,6 +182,7 @@ fun RoomScreen(app: AppState) {
             exit -> exit = false
             pollOpen -> dismissedPoll = rs.poll?.id
             rs.ratePrompt != null -> app.room.clearRatePrompt()
+            recsOpen -> dismissedRecs = recs?.itemId
             panel != null -> panel = null
             seekTarget != null -> seekTarget = null
             controls -> controls = false
@@ -282,6 +291,7 @@ fun RoomScreen(app: AppState) {
         val poll = rs.poll
         if (poll != null && pollOpen && !exit) PollDialog(app, poll) { dismissedPoll = poll.id }
         rs.ratePrompt?.let { (id, title) -> if (!exit) RateDialog(app, id, title) }
+        if (recsOpen && recs != null && !exit && panel == null) RecsOverlay(app, recs) { dismissedRecs = recs.itemId }
         rs.advancing?.let { n ->
             T("⏭ Gleich: ${n.title}", Modifier.align(Alignment.TopEnd).padding(top = 30.dp, end = 40.dp).clip(RoundedCornerShape(10.dp)).background(C.surface2).padding(horizontal = 16.dp, vertical = 10.dp), size = 16.sp)
         }
@@ -606,5 +616,67 @@ private fun RateDialog(app: AppState, itemId: String, title: String) {
             }
         }
         Btn("Überspringen", { app.room.clearRatePrompt() }, small = true)
+    }
+}
+
+/* ---------------- Empfehlungen am Filmende ---------------- */
+
+@Composable
+private fun RecsOverlay(app: AppState, recs: RoomRecs, close: () -> Unit) {
+    val first = remember { FocusRequester() }
+    AutoFocus(first, key = recs.itemId)
+    var focused by remember(recs.itemId) { mutableStateOf(recs.items.first()) }
+    val canLoad = app.room.canLoad(app.me)
+    val movies = recs.items.filter { !it.isSeries }
+    Box(Modifier.fillMaxSize().background(Color(0xB3000000))) {
+        Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().trapFocus().background(Color(0xF20C0C12))
+            .padding(start = 48.dp, end = 48.dp, top = 26.dp, bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            T("NACH „${recs.title.uppercase()}“", size = 13.sp, color = C.accent, weight = FontWeight.Bold, maxLines = 1)
+            T("Das könnte euch auch gefallen", size = 26.sp, weight = FontWeight.Bold)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp)) {
+                itemsIndexed(recs.items, key = { _, r -> r.id }) { i, r ->
+                    RecCard(app, r, top = i == 0, requester = if (i == 0) first else null, onFocus = { focused = r }) {
+                        if (r.isSeries) app.go(Screen.Details(r.id, r.toMediaItem())) else app.play(r.id)
+                    }
+                }
+            }
+            // Warum? Für die Karte, auf der man gerade steht
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                T(focused.name, size = 19.sp, weight = FontWeight.SemiBold, maxLines = 1)
+                val meta = listOfNotNull(focused.year?.toString(), fmtRuntime(focused.runtime).takeIf { !focused.isSeries }, if (focused.isSeries) "Serie" else null,
+                    focused.rating?.let { "★ ${"%.1f".format(it)}" }).joinToString(" · ")
+                if (meta.isNotEmpty()) T(meta, size = 14.sp, color = C.muted)
+                if (focused.reasons.isNotEmpty()) T(focused.reasons.joinToString(" · "), size = 15.sp, color = C.accent, maxLines = 1)
+                if (focused.seenBy.isNotEmpty()) T("Schon gesehen: ${focused.seenBy.joinToString(", ")}", size = 14.sp, color = C.muted, maxLines = 1)
+            }
+            ButtonRow {
+                if (!focused.isSeries) Btn("＋ In die Liste", {
+                    app.room.send("queue-add", "itemId" to focused.id); app.toast("„${focused.name}“ in die Liste")
+                }, small = true)
+                if (canLoad && movies.size >= 2) Btn("🗳 Top 3 abstimmen", {
+                    app.room.send(org.json.JSONObject().put("t", "poll-start").put("itemIds", org.json.JSONArray(movies.take(3).map { it.id })).put("seconds", 60))
+                }, small = true)
+                Btn("Schließen", close, small = true)
+                T(if (canLoad) "OK: für alle abspielen" else "OK: vorschlagen", size = 13.sp, color = C.muted)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecCard(app: AppState, r: Rec, top: Boolean, requester: FocusRequester?, onFocus: () -> Unit, onClick: () -> Unit) {
+    Column(Modifier.width(150.dp)) {
+        Focusable(onClick, Modifier.fillMaxWidth().aspectRatio(2f / 3f), RoundedCornerShape(10.dp), 1.08f, requester, onFocus, background = C.surface2) {
+            Box(Modifier.fillMaxSize()) {
+                T(r.name, Modifier.align(Alignment.Center).padding(8.dp), size = 13.sp, color = C.muted, maxLines = 3)
+                if (r.hasImage) Img(app.api.img(r.id, 300), Modifier.fillMaxSize(), widthPx = 300)
+                if (top) T("Top-Tipp", Modifier.align(Alignment.TopStart).padding(6.dp).clip(RoundedCornerShape(99.dp)).background(C.accent).padding(horizontal = 8.dp, vertical = 2.dp),
+                    size = 12.sp, color = C.accentInk, weight = FontWeight.Bold)
+                if (r.seenBy.isNotEmpty()) T("✓ ${r.seenBy.size}", Modifier.align(Alignment.TopEnd).padding(6.dp).clip(RoundedCornerShape(99.dp)).background(Color(0xD9000000)).padding(horizontal = 7.dp, vertical = 2.dp),
+                    size = 12.sp, weight = FontWeight.Bold)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        T(r.name, size = 13.sp, color = C.muted, maxLines = 1)
     }
 }

@@ -2,7 +2,8 @@
 /*
  * Watchparty – Zusatzfunktionen der Web-Oberfläche:
  * Detail- und Serienansicht, Bewertungen, Gesehen-Status, Warteschlange,
- * Abstimmung, Bewertungsrunde, Intro überspringen, Zufall, schwarzes Brett, Profil.
+ * Abstimmung, Bewertungsrunde, Empfehlungen am Filmende, Intro überspringen, Zufall,
+ * schwarzes Brett, Profil.
  * Baut auf den Helfern aus app.js auf ($, el, S, toast, perm, canLoad, …).
  * Was sich zwischen Web und Desktop-Client unterscheidet, kommt über window.WPX:
  *   api(path, opts), send(msg), img(id, w, type), serverNow(), closeLibrary(),
@@ -18,7 +19,7 @@
   // Außerhalb eines Raums alleine abspielen (Web: eigener Solo-Raum), falls die Oberfläche das kann
   const solo = () => !inRoom() && typeof env.playSolo === 'function';
   const mayPlay = () => canLoad() || solo();
-  const X = { detail: null, show: null, season: 0, pollDraft: [], queue: [], poll: null, round: null, rated: null, board: { sort: 'votes', status: '', tag: '' } };
+  const X = { detail: null, show: null, season: 0, pollDraft: [], queue: [], poll: null, round: null, rated: null, recs: null, recsClosed: null, board: { sort: 'votes', status: '', tag: '' } };
 
   const img = (id, w, type) => env.img(id, w, type);
   const n1 = (x) => String(Math.round(x * 10) / 10).replace('.', ',');
@@ -156,7 +157,23 @@
           d.overview ? el('p', { class: 'xd-overview' }, d.overview) : '',
           actions)));
     if (isSeries && show) root.append(renderSeasons(d, show));
+    if (d.type === 'Movie' || isSeries) root.append(similarRow(d));
     openModal(root, 'detail');
+  }
+
+  /** „Ähnliche Titel“ unter der Detailansicht (lädt nach, stört nicht, wenn es nichts gibt). */
+  function similarRow(d) {
+    const wrap = el('div', { class: 'xd-similar', hidden: true });
+    api(`/api/recommend/${d.id}?limit=10${inRoom() ? `&room=${S.code}` : ''}`).then((r) => {
+      if (X.detail === null || !r.items || !r.items.length || !wrap.isConnected) return;
+      wrap.hidden = false;
+      wrap.replaceChildren(el('h3', {}, 'Ähnliche Titel'), el('div', { class: 'xd-similar-row' }, r.items.map((it) =>
+        el('button', { class: 'sim-tile', title: it.reasons && it.reasons.length ? it.reasons.join(' · ') : it.name, onclick: () => openDetail(it) },
+          el('span', { class: 'sim-poster', style: `background-image:url('${img(it.id, 240)}')` }),
+          el('span', { class: 'sim-name' }, it.name),
+          el('span', { class: 'muted tiny' }, [it.year, it.rating ? `★ ${n1(it.rating)}` : null].filter(Boolean).join(' · '))))));
+    }).catch(() => { /* ohne Empfehlungen geht es auch */ });
+    return wrap;
   }
 
   function renderSeasons(d, show) {
@@ -316,6 +333,58 @@
     }
     clearTimeout(cardTimer);
     if (X.poll || X.advancing) cardTimer = setTimeout(renderCards, 1000);
+  }
+
+  /* ---------------- Empfehlungen am Filmende ---------------- */
+
+  /** Panel „Das könnte euch auch gefallen“: kommt vom Relay, sobald ein Film zu Ende ist. */
+  function renderRecs() {
+    let box = $('#reco-end');
+    if (!box) {
+      const anchor = $('#player-cards');
+      if (!anchor) return;
+      box = el('div', { class: 'reco-end', id: 'reco-end', hidden: true });
+      anchor.after(box);
+    }
+    const r = X.recs;
+    const show = !!(r && r.items && r.items.length && !X.advancing && X.recsClosed !== r.item.id);
+    box.hidden = !show;
+    document.body.classList.toggle('reco-open', show);
+    if (!show) { box.replaceChildren(); return; }
+    const can = canLoad();
+    const sug = perm('suggest');
+    const playable = r.items.filter((x) => x.type !== 'Series');
+    box.replaceChildren(
+      el('div', { class: 'reco-head' },
+        el('div', { class: 'reco-titles' },
+          el('span', { class: 'eyebrow' }, `Nach „${r.item.title}“`),
+          el('h3', {}, 'Das könnte euch auch gefallen')),
+        el('div', { class: 'grow' }),
+        can && playable.length >= 2 ? el('button', { class: 'btn small', title: 'Die ersten drei zur Abstimmung stellen', onclick: () => {
+          send({ t: 'poll-start', itemIds: playable.slice(0, 3).map((x) => x.id), seconds: 60 });
+        } }, '🗳 Top 3 abstimmen') : '',
+        el('button', { class: 'icon', title: 'Schließen', 'aria-label': 'Schließen', onclick: () => { X.recsClosed = r.item.id; renderRecs(); } }, '✕')),
+      el('div', { class: 'reco-row' }, r.items.map((it, i) => recoCard(it, i, can, sug))));
+  }
+
+  function recoCard(it, i, can, sug) {
+    const isSeries = it.type === 'Series';
+    const meta = [it.year, it.runtime && !isSeries ? `${Math.round(it.runtime / 60)} min` : null, isSeries ? 'Serie' : null, it.rating ? `★ ${n1(it.rating)}` : null, it.ours ? `bei uns ★ ${n1(it.ours)}` : null].filter(Boolean).join(' · ');
+    let main = '';
+    if (isSeries) main = el('button', { class: 'btn small primary', onclick: () => openDetail(it) }, 'Ansehen');
+    else if (can) main = el('button', { class: 'btn small primary', onclick: () => { send({ t: 'load', itemId: it.id }); toast(`„${it.name}“ wird geladen…`); } }, solo() ? '▶ Abspielen' : '▶ Für alle');
+    else if (sug) main = el('button', { class: 'btn small primary', onclick: () => { send({ t: 'suggest', itemId: it.id }); toast('Vorschlag im Chat gepostet'); } }, '💡 Vorschlagen');
+    return el('div', { class: 'reco-card' },
+      el('button', { class: 'reco-poster', style: `background-image:url('${img(it.id, 300)}')`, title: 'Details', 'aria-label': `Details zu ${it.name}`, onclick: () => openDetail(it) },
+        i === 0 ? el('span', { class: 'reco-badge' }, 'Top-Tipp') : ''),
+      el('div', { class: 'reco-body' },
+        el('b', { class: 'reco-title', title: it.name }, it.name),
+        meta ? el('span', { class: 'muted tiny' }, meta) : '',
+        it.reasons && it.reasons.length ? el('span', { class: 'reco-why' }, it.reasons.join(' · ')) : '',
+        it.seenBy && it.seenBy.length ? el('span', { class: 'muted tiny' }, `👁 schon gesehen: ${it.seenBy.join(', ')}`) : '',
+        el('div', { class: 'reco-act' },
+          main,
+          !isSeries && (can || sug) && inRoom() ? el('button', { class: 'icon', title: 'In die Liste', 'aria-label': 'In die Liste', onclick: () => queueAdd([it.id], it.name) }, '＋') : '')));
   }
 
   /* ---------------- Intro überspringen ---------------- */
@@ -544,7 +613,8 @@
     switch (m.t) {
       case 'welcome':
         X.queue = m.queue || []; X.poll = m.poll || null; X.round = m.round || null; X.rated = null; X.advancing = null;
-        renderQueue(); renderCards();
+        X.recs = m.recs || null;
+        renderQueue(); renderCards(); renderRecs();
         break;
       case 'queue': X.queue = m.queue; renderQueue(); break;
       case 'poll':
@@ -558,8 +628,9 @@
         if (m.count) toast(`⭐ Eure Runde: ${n1(m.avg)}/10 (${m.count} ${m.count === 1 ? 'Stimme' : 'Stimmen'})`);
         X.round = null; renderCards();
         break;
-      case 'advancing': X.advancing = { next: m.next, at: m.at }; renderCards(); break;
-      case 'playback': if (m.action === 'load') { X.advancing = null; renderCards(); } break;
+      case 'advancing': X.advancing = { next: m.next, at: m.at }; renderCards(); renderRecs(); break;
+      case 'recs': X.recs = m.recs || null; if (!X.recs) X.recsClosed = null; renderRecs(); break;
+      case 'playback': if (m.action === 'load') { X.advancing = null; X.recs = null; X.recsClosed = null; renderCards(); renderRecs(); } break;
       case 'room': renderQueue(); break;
       default: break;
     }

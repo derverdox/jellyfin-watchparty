@@ -28,6 +28,7 @@ data class RoomState(
     val reactions: List<String> = listOf("😂", "😮", "❤️", "👍", "🔥", "😱", "👏", "💀"),
     val agentOnline: Boolean = true,
     val advancing: QueueEntry? = null,
+    val recs: RoomRecs? = null,   // Empfehlungen am Filmende
 ) {
     val isHost get() = info != null && youSid != null && info.host == youSid
 }
@@ -179,6 +180,7 @@ class RoomClient(private val api: Api) {
                     poll = Poll.from(m.optJSONObject("poll")),
                     reactions = m.optJSONArray("reactions").strings().ifEmpty { s.reactions },
                     agentOnline = m.optBoolean("agentOnline", true),
+                    recs = RoomRecs.from(m.optJSONObject("recs")),
                 )
                 setPlayback(m.optJSONObject("playback"))
                 onWelcome?.let { cb -> onWelcome = null; cb(this) }
@@ -196,6 +198,7 @@ class RoomClient(private val api: Api) {
                 }
             }
             "playback" -> {
+                if (m.str("action") == "load" && s.recs != null) _state.value = s.copy(recs = null)
                 setPlayback(m.optJSONObject("playback"))
                 _events.tryEmit(RoomEvent.PlaybackChanged(m.str("by"), m.str("action")))
             }
@@ -225,6 +228,7 @@ class RoomClient(private val api: Api) {
                 _events.tryEmit(RoomEvent.RoundEnd(it?.optString("title") ?: "", m.num("avg"), m.optInt("count")))
             }
             "advancing" -> _state.value = s.copy(advancing = m.optJSONObject("next")?.let { QueueEntry.from(it) })
+            "recs" -> _state.value = s.copy(recs = RoomRecs.from(m.optJSONObject("recs")))
             "load-url" -> when (m.optString("state")) {
                 "loading" -> _events.tryEmit(RoomEvent.Toast("Stream wird verbunden …"))
             }

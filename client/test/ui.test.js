@@ -110,6 +110,46 @@ test('Knöpfe zeigen den Zustand von Framegen und Upscaling', async () => {
   assert.match(b.wp_framegen.tooltip, /nicht installiert/);
 });
 
+test('Empfehlungen am Filmende: Menü im Player, Auswahl geht an den Raum', async () => {
+  const s = fakeSession();
+  const sent = [];
+  s.send = (m) => { sent.push(m); return true; };
+  s.mpv = fakeMpv([]);
+  const A = 'a'.repeat(32), B = 'b'.repeat(32), SER = 'c'.repeat(32);
+  const recs = { item: { id: 'f'.repeat(32), title: 'Batman Begins' }, items: [
+    { id: A, name: 'The Dark Knight', type: 'Movie', year: 2008, rating: 9.0, reasons: ['Regie: Christopher Nolan'], seenBy: ['Lea'] },
+    { id: SER, name: 'Gotham', type: 'Series', year: 2014 },
+    { id: B, name: 'The Prestige', type: 'Movie', year: 2006, rating: 8.5, reasons: [] },
+  ] };
+  s.onMessage({ t: 'recs', recs });
+  const open = s.mpv.calls.find((c) => c[0] === 'script-message-to' && c[1] === 'uosc' && c[2] === 'open-menu');
+  assert.ok(open, 'Menü in mpv geöffnet');
+  const menu = JSON.parse(open[3]);
+  assert.equal(menu.type, 'wp-recs');
+  assert.deepEqual(menu.items.filter((i) => i.items).map((i) => i.title), ['The Dark Knight', 'The Prestige'], 'Serien nur im Fenster');
+  assert.equal(menu.items[0].hint, '2008 · ★ 9');
+  const sub = menu.items[0].items;
+  assert.ok(sub.some((i) => i.title === 'Regie: Christopher Nolan' && i.selectable === false));
+  assert.ok(sub.some((i) => /Schon gesehen: Lea/.test(i.title)));
+  const play = sub.find((i) => /abspielen/.test(i.title));
+  assert.deepEqual(play.value, ['script-message', 'wp', 'reco', 'load', A]);
+
+  // Auswahl im Menü kommt als script-message zurück
+  s.onClientMessage(play.value.slice(1));
+  assert.deepEqual(sent.pop(), { t: 'load', itemId: A });
+  s.onClientMessage(['wp', 'reco', 'queue', B]);
+  assert.deepEqual(sent.pop(), { t: 'queue-add', itemId: B });
+  s.onClientMessage(['wp', 'reco', 'suggest', B]);
+  assert.deepEqual(sent.pop(), { t: 'suggest', itemId: B });
+  s.onClientMessage(['wp', 'reco', 'load', 'kaputt']);
+  assert.equal(sent.length, 0, 'ungültige ID wird ignoriert');
+
+  // Zurückgespult → Menü zu
+  s.onMessage({ t: 'recs', recs });
+  s.onMessage({ t: 'recs', recs: null });
+  assert.ok(s.mpv.calls.some((c) => c[2] === 'close-menu' && c[3] === 'wp-recs'), 'Menü geschlossen');
+});
+
 test('Untertitel sind standardmäßig aus, auch bei „Standard“-Spur in der Datei', async () => {
   assert.equal(DEFAULT_PREFS.subLang, 'off');
   const tracks = [

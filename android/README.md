@@ -26,7 +26,7 @@ Eine eigene, native App, gebaut nur für die Fernbedienung. Sie ist keine Websit
 - **Synchron mit allen:** dieselbe Sync-Logik wie Browser und Desktop. Kleine Abweichungen werden weich über die Geschwindigkeit ausgeglichen, größere durch einen Sprung.
 - **Twitch live** über den Restream des Servers, auf das Bild genau synchron, mit Pause, Zurückspulen und „● LIVE“. **YouTube** sowie Twitch-Videos und -Clips laufen im eingebetteten Player.
 - **Räume:** Freunde sehen und beitreten, Raum per Code öffnen, eigenen Raum erstellen. Wer im Raum ist, kann mit dem Handy den QR-Code scannen und dazukommen.
-- **Chat und Reaktionen** im Bild, Schnellantworten, Abstimmung „Was schauen wir?“, Bewertungsrunde nach dem Film, Intro überspringen, nächste Folge.
+- **Chat und Reaktionen** im Bild, Schnellantworten, Abstimmung „Was schauen wir?“, Bewertungsrunde nach dem Film, **Empfehlungen am Filmende** (OK spielt für alle ab, Zurück schließt), Intro überspringen, nächste Folge.
 - **Anmelden per QR-Code** mit dem Handy, ganz ohne Tippen. Benutzername und Passwort gehen auch.
 
 ### Fernbedienung im Player

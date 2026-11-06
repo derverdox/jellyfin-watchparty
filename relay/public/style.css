@@ -393,6 +393,66 @@ button.chip:hover { border-color: #44445a; }
 .skip-btn { position: absolute; right: 24px; bottom: 96px; z-index: 6; background: #111118e6; border-color: #ffffff40; padding: 12px 20px; backdrop-filter: blur(6px); }
 .skip-btn:hover { background: var(--accent); color: var(--accent-ink); }
 
+/* Empfehlungen am Filmende: Leiste über der Bedienung */
+.reco-end {
+  position: absolute; left: 16px; right: 16px; bottom: 84px; z-index: 5; pointer-events: auto;
+  background: #0c0c12f0; border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px 14px;
+  backdrop-filter: blur(10px); box-shadow: 0 20px 60px #000a; animation: pop .25s ease-out;
+  display: flex; flex-direction: column; gap: 12px; max-height: calc(100% - 120px); min-height: 0;
+}
+.reco-end[hidden] { display: none; }
+.reco-head { display: flex; align-items: center; gap: 12px; }
+.reco-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.reco-titles .eyebrow { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reco-head h3 { margin: 0; font-size: 19px; }
+.reco-head .icon { width: 30px; height: 30px; font-size: 14px; flex: none; }
+.reco-row { display: flex; gap: 14px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding-bottom: 4px; min-height: 0; }
+.reco-row::-webkit-scrollbar { height: 6px; }
+.reco-row::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.reco-card { flex: none; width: 168px; display: flex; flex-direction: column; gap: 8px; scroll-snap-align: start; }
+.reco-poster {
+  position: relative; width: 100%; aspect-ratio: 2 / 3; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--surface-2) center/cover; cursor: pointer; padding: 0; transition: transform .15s, border-color .15s;
+}
+.reco-poster:hover, .reco-poster:focus-visible { transform: translateY(-3px); border-color: var(--accent); outline: none; }
+.reco-badge {
+  position: absolute; left: 8px; top: 8px; background: var(--accent); color: var(--accent-ink);
+  font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 99px; letter-spacing: .02em;
+}
+.reco-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.reco-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+.reco-why { font-size: 12px; color: var(--accent-2); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.reco-act { display: flex; align-items: center; gap: 6px; margin-top: auto; padding-top: 6px; }
+.reco-act .btn.small { padding: 5px 10px; font-size: 13px; }
+.reco-act .icon { width: 30px; height: 30px; font-size: 15px; }
+body.reco-open .player-cards { top: 12px; }
+@media (max-width: 900px) {
+  /* Player ist hier nur ein Streifen oben: als Blatt von unten über den Chat */
+  .reco-end { position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 40; max-height: 72vh; padding: 14px; border-radius: 16px; box-shadow: 0 -10px 50px #000c; }
+}
+@media (max-width: 720px) {
+  .reco-end { padding: 12px; border-radius: 14px; }
+  .reco-card { width: 124px; }
+  .reco-head h3 { font-size: 16px; }
+  .reco-why { display: none; }
+}
+@media (max-height: 560px) and (min-width: 901px) {
+  .reco-card { width: 110px; }
+  .reco-why, .reco-body .muted { display: none; }
+}
+
+/* Ähnliche Titel in der Detailansicht */
+.xd-similar { position: relative; padding: 0 36px 32px; }
+.xd-similar[hidden] { display: none; }
+.xd-similar h3 { margin: 0 0 12px; font-size: 17px; }
+.xd-similar-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; }
+.sim-tile { flex: none; width: 116px; display: flex; flex-direction: column; gap: 4px; background: none; border: 0; padding: 0; color: inherit; text-align: left; cursor: pointer; }
+.sim-poster { width: 100%; aspect-ratio: 2 / 3; border-radius: 8px; background: var(--surface-2) center/cover; border: 1px solid var(--line); transition: border-color .15s, transform .15s; }
+.sim-tile:hover .sim-poster, .sim-tile:focus-visible .sim-poster { border-color: var(--accent); transform: translateY(-2px); }
+.sim-tile:focus-visible { outline: none; }
+.sim-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 720px) { .xd-similar { padding: 0 18px 24px; } }
+
 /* Entwurf einer Abstimmung */
 .poll-draft { position: fixed; left: 50%; top: 72px; transform: translateX(-50%); z-index: 70; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: calc(100% - 24px); background: #111118f2; border: 1px solid var(--accent-line); border-radius: 14px; padding: 10px 14px; box-shadow: 0 10px 40px #000a; }
 
@@ -638,7 +698,7 @@ html.tv .nf-nav .nf-search { flex-basis: 150px; width: 150px; }
 html.tv .nf-nav .nf-search:focus { flex-basis: 220px; width: 220px; }
 
 /* Bild im Bild (Android-App): nur das Video */
-body.pip #view-room .topbar, body.pip #view-room .side, body.pip .controls, body.pip .player-cards,
+body.pip #view-room .topbar, body.pip #view-room .side, body.pip .controls, body.pip .player-cards, body.pip .reco-end,
 body.pip .toasts-layer, body.pip .reactions-layer, body.pip #btn-skip, body.pip .banner, body.pip .toast { display: none !important; }
 body.pip #view-room .player { position: fixed; inset: 0; z-index: 200; }
 body.pip .player video::cue { font-size: .8em; }

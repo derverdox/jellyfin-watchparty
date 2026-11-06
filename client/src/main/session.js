@@ -162,7 +162,7 @@ class Session extends EventEmitter {
         this.ui('room:welcome', { ...msg, code: this.code });
         this.setPlayback(msg.playback);
         break;
-      case 'playback': this.setPlayback(msg.playback, msg); break;
+      case 'playback': if (msg.action === 'load') this.closeRecsMenu(); this.setPlayback(msg.playback, msg); break;
       case 'members': this.members = msg.members; this.ui('room:members', msg.members); break;
       case 'room':
         this.room = msg.room;
@@ -195,8 +195,8 @@ class Session extends EventEmitter {
         break;
       case 'kicked': this.ui('room:kicked', { text: msg.text }); this.leave(); break;
       case 'load-url': this.ui('room:loadurl', msg); break;
-      // Warteschlange, Abstimmung, Bewertungsrunde → an die Oberfläche (extras.js)
-      case 'queue': case 'poll': case 'rate-prompt': case 'round': case 'round-end': case 'advancing':
+      // Warteschlange, Abstimmung, Bewertungsrunde, Empfehlungen → an die Oberfläche (extras.js)
+      case 'queue': case 'poll': case 'rate-prompt': case 'round': case 'round-end': case 'advancing': case 'recs':
         this.ui('room:extra', msg);
         this.osdExtra(msg);
         break;
@@ -216,7 +216,51 @@ class Session extends EventEmitter {
       if (msg.winner) this.mpv.osd(`🏆 Gewonnen: ${msg.winner.title}`, 5000);
     } else if (msg.t === 'rate-prompt') this.mpv.osd(`⭐ Wie fandet ihr „${msg.item.title}“? Im Fenster 1–10 Sterne vergeben`, 8000);
     else if (msg.t === 'round-end' && msg.count) this.mpv.osd(`⭐ Eure Runde: ${String(msg.avg).replace('.', ',')}/10 (${msg.count})`, 6000);
-    else if (msg.t === 'advancing' && msg.next) this.mpv.osd(`⏭ Gleich: ${msg.next.title}`, 6000);
+    else if (msg.t === 'advancing' && msg.next) { this.closeRecsMenu(); this.mpv.osd(`⏭ Gleich: ${msg.next.title}`, 6000); }
+    else if (msg.t === 'recs') { if (msg.recs) this.showRecsMenu(msg.recs); else this.closeRecsMenu(); }
+  }
+
+  /* ---------- Empfehlungen am Filmende: Menü direkt in mpv (uosc) ---------- */
+
+  recsMenu(recs) {
+    const items = [];
+    for (const it of recs.items || []) {
+      if (it.type === 'Series') continue; // Serien wählt man im Fenster (Staffel/Folge)
+      const hint = [it.year, it.rating ? `★ ${String(it.rating).replace('.', ',')}` : null].filter(Boolean).join(' · ');
+      const act = (what) => ['script-message', 'wp', 'reco', what, it.id];
+      const sub = [];
+      if (it.reasons && it.reasons.length) sub.push({ title: it.reasons.join(' · '), value: 'ignore', selectable: false, muted: true, italic: true });
+      if (it.seenBy && it.seenBy.length) sub.push({ title: `Schon gesehen: ${it.seenBy.join(', ')}`, value: 'ignore', selectable: false, muted: true });
+      sub.push({ title: '▶ Für alle abspielen', value: act('load'), bold: true });
+      sub.push({ title: '＋ In die Liste', value: act('queue') });
+      sub.push({ title: '💡 Im Chat vorschlagen', value: act('suggest') });
+      items.push({ title: it.name, hint, items: sub });
+    }
+    if (!items.length) return null;
+    items.push({ title: 'Schließen', value: ['script-message-to', 'uosc', 'close-menu', 'wp-recs'], muted: true, separator: true });
+    return { type: 'wp-recs', title: `Nach „${recs.item.title}“: Das könnte euch gefallen`, items };
+  }
+
+  showRecsMenu(recs) {
+    const mpv = this.mpv;
+    if (!mpv || !mpv.running) return;
+    const menu = this.recsMenu(recs);
+    if (!menu) return;
+    this.recsShown = recs.item.id;
+    mpv.command('script-message-to', 'uosc', 'open-menu', JSON.stringify(menu)).catch(() => {});
+  }
+
+  closeRecsMenu() {
+    if (!this.recsShown) return;
+    this.recsShown = null;
+    if (this.mpv && this.mpv.running) this.mpv.command('script-message-to', 'uosc', 'close-menu', 'wp-recs').catch(() => {});
+  }
+
+  onReco(what, itemId) {
+    if (!/^[a-f0-9-]{32,36}$/i.test(String(itemId || ''))) return;
+    if (what === 'load') { this.send({ t: 'load', itemId }); this.recsShown = null; }
+    else if (what === 'queue') { this.send({ t: 'queue-add', itemId }); if (this.mpv) this.mpv.osd('＋ In die Liste gelegt', 2500); }
+    else if (what === 'suggest') { this.send({ t: 'suggest', itemId }); if (this.mpv) this.mpv.osd('💡 Im Chat vorgeschlagen', 2500); }
   }
 
   /* ---------- Intro, Rückblick, Abspann ---------- */
@@ -1083,6 +1127,7 @@ class Session extends EventEmitter {
       case 'seek': this.seekBy(Number(val) || 0); break;
       case 'close': this.stopPlayer(); break;
       case 'skip': this.skipSegment(); break;
+      case 'reco': this.onReco(val, args[3]); break;
       case 'framegen': {
         const fg = this.settings.prefs.framegen;
         this.setPrefs({ framegen: { enabled: !fg.enabled } }).then((p) => {

@@ -27,6 +27,7 @@ const { Pairing } = require('./lib/pair');
 const { TwitchRelay, TwitchError, parseChannel } = require('./lib/twitch');
 const { parseYouTube, youtubeInfo } = require('./lib/youtube');
 const { parseExtUrl, extKey, extInfo } = require('./lib/ext');
+const reco = require('./lib/recommend');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -295,6 +296,150 @@ async function mediaSegments(id) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Empfehlungen („Das könnte euch auch gefallen“)                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Am Ende eines Films zeigt der Raum ähnliche Titel. Der Algorithmus steckt in
+ * lib/recommend.js; hier werden nur die Daten besorgt – ausschließlich über
+ * Jellyfin-Abfragen, die der Agent ohnehin erlaubt (kein Agent-Update nötig):
+ *   • der ganze Film-/Serienkatalog mit Genres, Studios, Tags (30 min im Relay)
+ *   • je Person des Ausgangstitels (Regie, Drehbuch, Hauptrollen) die Titel mit ihr
+ */
+const RECO_TTL = 30 * 60 * 1000;
+const RECO_FIELDS = 'Genres,Studios,Tags,ProviderIds,ProductionYear,OfficialRating,Overview,PrimaryImageAspectRatio';
+let recoCat = null; // { t, promise }
+const recoPeople = new TtlCache(RECO_TTL, 3000);
+const recoResults = new TtlCache(5 * 60 * 1000, 300);
+
+function recoCatalog() {
+  if (recoCat && Date.now() - recoCat.t < RECO_TTL) return recoCat.promise;
+  const promise = (async () => {
+    const out = [];
+    for (let start = 0; ;) {
+      const q = new URLSearchParams({ Recursive: 'true', IncludeItemTypes: 'Movie,Series', Fields: RECO_FIELDS, EnableImageTypes: 'Primary,Backdrop', ImageTypeLimit: '1', SortBy: 'SortName', Limit: '500', StartIndex: String(start) });
+      const data = await jf(`/Users/${uid()}/Items?${q}`);
+      const items = data.Items || [];
+      out.push(...items);
+      start += items.length;
+      if (!items.length || start > 50000) break;
+    }
+    const byId = new Map(out.map((it) => [it.Id, it]));
+    return { raw: byId, norm: out.map(reco.normalize) };
+  })();
+  recoCat = { t: Date.now(), promise };
+  promise.catch(() => { if (recoCat && recoCat.promise === promise) recoCat = null; });
+  return promise;
+}
+
+/** Alle Filme/Serien mit dieser Person (IDs). */
+function recoPersonItems(personId) {
+  return recoPeople.get(personId, async () => {
+    const q = new URLSearchParams({ Recursive: 'true', IncludeItemTypes: 'Movie,Series', PersonIds: personId, Limit: '500', EnableImages: 'false', EnableUserData: 'false' });
+    const d = await jf(`/Users/${uid()}/Items?${q}`);
+    return (d.Items || []).map((x) => x.Id);
+  });
+}
+
+/** Hat jemand diesen Titel (bzw. von dieser Serie mehr als eine Stunde) schon gesehen? */
+function recoSeen(username, it) {
+  if (library.isWatched(username, it.Id)) return true;
+  if (it.Type === 'Series') {
+    const t = library.profileData(username).time[it.Id];
+    return !!(t && t.seconds >= 3600);
+  }
+  return false;
+}
+
+/**
+ * Empfehlungen zu itemId für eine Gruppe von Zuschauern (Sitzungen).
+ * Ergebnis ist für alle Zuschauer freigegeben und nach Relevanz sortiert.
+ */
+function computeRecs(itemId, viewers, limit = 12) {
+  const names = [...new Set(viewers.map((s) => s.username.toLowerCase()))].sort();
+  return recoResults.get(`${accessVersion}|${itemId}|${names.join(',')}|${limit}`, async () => {
+    let dto = await itemFull(itemId);
+    if (dto.Type === 'Episode' && dto.SeriesId) dto = await itemFull(dto.SeriesId);
+    const seed = reco.normalize(dto);
+    const cat = await recoCatalog();
+
+    // Wer hat mit wem gearbeitet: Regie, Drehbuch, die ersten Hauptrollen
+    const key = seed.people.filter((p) => p.role === 'Director' || p.role === 'Writer' || (p.role === 'Actor' && p.order < 6)).slice(0, 12);
+    const sharedPeople = new Map();
+    const personCounts = new Map();
+    await Promise.all(key.map(async (p) => {
+      try {
+        const ids = await recoPersonItems(p.id);
+        personCounts.set(p.id, Math.max(1, ids.length));
+        for (const id of ids) {
+          if (!sharedPeople.has(id)) sharedPeople.set(id, new Set());
+          sharedPeople.get(id).add(p.id);
+        }
+      } catch { /* Person dann eben nicht */ }
+    }));
+
+    // Geschmack der Anwesenden aus ihren (anonymen) Sternen
+    const ratings = [];
+    for (const [id, r] of Object.entries(library.ratingsDb())) for (const n of names) if (r[n]) ratings.push({ id, score: r[n] });
+    const normById = new Map(cat.norm.map((x) => [x.id, x]));
+    const tasteGenres = reco.tasteFrom(ratings, normById);
+
+    const seenBy = (id) => {
+      const it = cat.raw.get(id);
+      return it ? names.filter((n) => recoSeen(n, it)) : [];
+    };
+    const ranked = reco.recommend(seed, cat.norm, {
+      limit: Math.min(40, limit * 3), sharedPeople, personCounts, tasteGenres,
+      viewers: names.length,
+      watchedBy: (id) => seenBy(id).length,
+      ours: (id) => { const r = library.rating(null, id); return r.count ? r : null; },
+    });
+
+    const out = [];
+    for (const r of ranked) {
+      if (out.length >= limit) break;
+      const it = cat.raw.get(r.id);
+      if (!it) continue;
+      let ok = true;
+      for (const s of viewers) if (!(await canAccess(s, r.id))) { ok = false; break; }
+      if (!ok) continue;
+      const m = mapItem(it);
+      const seen = seenBy(r.id);
+      out.push({
+        id: m.id, name: it.Type === 'Movie' ? (movieTitle(m.name) || m.name) : m.name, type: m.type, year: m.year, rating: m.rating, runtime: m.runtime,
+        officialRating: m.officialRating, hasImage: m.hasImage, hasBackdrop: m.hasBackdrop, playable: m.playable,
+        overview: (m.overview || '').slice(0, 220), genres: (it.Genres || []).slice(0, 3),
+        reasons: r.reasons, score: r.score, ours: library.rating(null, r.id).avg,
+        seenBy: seen.map((n) => (users.find(n) || {}).name || n),
+      });
+    }
+    return out;
+  });
+}
+
+/** Eindeutige Sitzungen (eine pro Konto) im Raum. */
+function roomViewers(room) {
+  const by = new Map();
+  for (const c of room.clients.values()) by.set(c.session.username.toLowerCase(), c.session);
+  return [...by.values()];
+}
+
+/** Für welche Titel lohnen sich Empfehlungen? Filme, und Folgen, nach denen keine mehr kommt. */
+function recoEligible(it) {
+  return !!(it && !it.source && !it.ext && it.runtime && (it.type === 'Movie' || (it.type === 'Episode' && !it.nextEpisodeId)));
+}
+
+/** Im Hintergrund vorberechnen (kurz vor Schluss), damit sie am Ende sofort da sind. */
+function prepareRecs(room, it) {
+  const prep = { itemId: it.id, result: null, failed: false, at: Date.now() };
+  computeRecs(it.id, roomViewers(room), 10).then(
+    (r) => { prep.result = r; },
+    (e) => { prep.failed = true; console.warn('[recs]', e.message); },
+  );
+  return prep;
+}
+
+/* ------------------------------------------------------------------ */
 /* Sessions & login                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -447,6 +592,8 @@ class Room {
     this.queue = [];      // [{ id, title, subtitle, type, runtime, by }]
     this.poll = null;     // Abstimmung
     this.round = null;    // Bewertungsrunde nach dem Film
+    this.recs = null;     // Empfehlungen am Ende ({ item, items })
+    this.recoPrep = null; // im Hintergrund vorberechnet
     this.ratePrompted = false;
     this.advancing = 0;
     this.allowAllControl = true;
@@ -1233,6 +1380,19 @@ async function handle(req, res) {
     return sendJson(res, 200, { items: out });
   }
 
+  // --- Ähnliche Titel (Empfehlungen) ---
+  // ?room=CODE: für alle im Raum (Freigaben + was die schon kennen), sonst nur für mich
+  if ((m = p.match(/^\/api\/recommend\/([a-f0-9-]+)$/i))) {
+    const id = m[1];
+    if (!ID_RE.test(id)) throw new HttpError(400, 'Ungültige ID');
+    await assertAccess(session, id);
+    if (!guard.limit(`reco|${session.id}`, 20, 60000)) throw new HttpError(429, 'Zu viele Anfragen – kurz warten');
+    const room = rooms.get(String(url.searchParams.get('room') || '').toUpperCase());
+    const viewers = room && roomHasSid(room, session.id) ? roomViewers(room) : [session];
+    const limit = Math.max(1, Math.min(20, Number(url.searchParams.get('limit')) || 10));
+    return sendJson(res, 200, { items: await computeRecs(id, viewers, limit) });
+  }
+
   // --- Zufall ---
   if (p === '/api/random') {
     const sp = url.searchParams;
@@ -1675,6 +1835,7 @@ function onConnection(ws, session, room, req) {
     queue: room.queue,
     poll: room.poll ? pollView(room.poll) : null,
     round: room.round ? { item: { id: room.round.itemId, title: room.round.title }, ends: room.round.ends, votes: room.round.votes.size } : null,
+    recs: room.recs,
   });
   if (firstForSession) room.system(`${session.name} ist beigetreten`);
   room.broadcast({ t: 'members', members: room.members() });
@@ -1987,6 +2148,8 @@ async function startExternal(room, src, byName, { play = false } = {}) {
   room.item = item;
   room.ratePrompted = true; // keine Bewertungsrunde für externe Videos
   room.round = null;
+  room.recs = null;
+  room.recoPrep = null;
   room.advancing = 0;
   room.playing = !!play;
   room.position = position;
@@ -2047,6 +2210,8 @@ async function startItem(room, itemId, byName, { play = false, position = 0, ses
   room.item = { id: d.id, mediaSourceId: d.mediaSourceId, title: d.title, subtitle: d.subtitle, type: d.type, runtime: d.runtime, nextEpisodeId: d.nextEpisodeId, seriesId: d.seriesId, seriesName: d.seriesName };
   room.ratePrompted = false;
   room.round = null;
+  room.recs = null;
+  room.recoPrep = null;
   room.advancing = 0;
   room.playing = !!play;
   room.position = Math.max(0, position || 0);
@@ -2067,6 +2232,8 @@ async function startExt(room, ext, byName) {
   room.item = { id: extKey(ext), ext, title: info.title, subtitle: info.subtitle, type: 'External', runtime: null };
   room.ratePrompted = true; // keine Bewertungsrunde
   room.round = null;
+  room.recs = null;
+  room.recoPrep = null;
   room.advancing = 0;
   room.playing = true;
   room.position = Math.max(0, Number(ext.start) || 0);
@@ -2123,6 +2290,17 @@ async function roomTimers(room) {
       room.system(`⭐ Eure Runde zu „${r.title}“: ${String(avg).replace('.', ',')}/10 (${v.length} ${v.length === 1 ? 'Stimme' : 'Stimmen'})`);
       room.broadcast({ t: 'round-end', item: { id: r.itemId, title: r.title }, avg, count: v.length });
     } else room.broadcast({ t: 'round-end', item: { id: r.itemId, title: r.title }, avg: null, count: 0 });
+  }
+  // Empfehlungen: ab 90 % vorberechnen, am Ende (ohne Warteschlange) allen zeigen
+  if (recoEligible(it) && room.clients.size && pos >= it.runtime * 0.9 && (!room.recoPrep || room.recoPrep.itemId !== it.id || (room.recoPrep.failed && now - room.recoPrep.at > 30000))) room.recoPrep = prepareRecs(room, it);
+  const atEnd = !room.playing && pos >= it.runtime - 1;
+  if (room.recs && !atEnd) {
+    // Zurückgespult oder weitergeschaut → ausblenden (kommt am Ende wieder)
+    room.recs = null;
+    room.broadcast({ t: 'recs', recs: null });
+  } else if (!room.recs && atEnd && !room.queue.length && !room.advancing && room.recoPrep && room.recoPrep.itemId === it.id && room.recoPrep.result && room.recoPrep.result.length) {
+    room.recs = { item: { id: it.id, title: it.title, type: it.type }, items: room.recoPrep.result };
+    room.broadcast({ t: 'recs', recs: room.recs });
   }
   // Am Ende: nächster Titel aus der Warteschlange (nach 8 s Pause)
   if (!room.playing && pos >= it.runtime - 1 && room.queue.length && room.clients.size) {

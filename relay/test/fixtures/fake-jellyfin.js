@@ -45,6 +45,14 @@ const ITEMS = {
   [I.M_RUECK]: movie(I.M_RUECK, 'Die Rückkehr der Ritter', I.LIB_M, { year: 1999, height: 2160, bitrate: 60000000, hdr: true }),
   [I.M_4K]: movie(I.M_4K, 'Ritter der Nacht', I.LIB_M, { year: 2012, height: 720, bitrate: 4000000 }),
 };
+// Personen, Studios und Schlagwörter (für Empfehlungen): beide Ritterfilme von derselben Regisseurin
+const P_DIR = id('person-regie'), P_STAR = id('person-star'), P_OTHER = id('person-andere');
+Object.assign(ITEMS[I.M_RUECK], { Studios: [{ Name: 'Burgfilm' }], Tags: ['ritter', 'mittelalter'], OfficialRating: 'FSK 12',
+  People: [{ Id: P_DIR, Name: 'Greta Regie', Type: 'Director' }, { Id: P_STAR, Name: 'Max Ritter', Type: 'Actor' }] });
+Object.assign(ITEMS[I.M_4K], { Studios: [{ Name: 'Burgfilm' }], Tags: ['ritter'], OfficialRating: 'FSK 12',
+  People: [{ Id: P_DIR, Name: 'Greta Regie', Type: 'Director' }, { Id: P_OTHER, Name: 'Ute Andere', Type: 'Actor' }] });
+Object.assign(ITEMS[I.M_NEU], { Genres: ['Komödie'], People: [{ Id: P_OTHER, Name: 'Ute Andere', Type: 'Actor' }] });
+I.P_DIR = P_DIR;
 const VIDEO = crypto.randomBytes(3 * 1024 * 1024);
 
 function descendants(pid) {
@@ -71,7 +79,9 @@ function start(port = 0) {
       else if (q.get('Years')) list = Object.values(ITEMS).filter((x) => x.Type === 'Movie' || x.Type === 'Series');
       else if (q.get('Recursive') === 'true') {
         const types = (q.get('IncludeItemTypes') || '').split(',');
-        list = descendants(q.get('ParentId')).filter((x) => !types[0] || types.includes(x.Type));
+        // Ohne ParentId: die ganze Bibliothek (wie Jellyfin)
+        list = (q.get('ParentId') ? descendants(q.get('ParentId')) : descendants(I.ROOT)).filter((x) => !types[0] || types.includes(x.Type));
+        if (q.get('PersonIds')) list = list.filter((x) => (x.People || []).some((pp) => q.get('PersonIds').split(',').includes(pp.Id)));
       } else list = Object.values(ITEMS).filter((x) => x.ParentId === q.get('ParentId'));
       if (q.get('Years')) list = list.filter((x) => q.get('Years').split(',').includes(String(x.ProductionYear)));
       // Seiten wie bei Jellyfin (StartIndex/Limit); EXTRA_MOVIES hängt viele Filme an (Test für große Bibliotheken)

@@ -141,6 +141,37 @@ data class ChatMsg(val id: String, val ts: Long, val kind: String, val from: Str
     }
 }
 
+/** Eine Empfehlung am Filmende (vom Relay, schon für alle im Raum freigegeben) */
+data class Rec(
+    val id: String, val name: String, val type: String, val year: Int?, val rating: Double?, val runtime: Double?,
+    val hasImage: Boolean, val reasons: List<String>, val seenBy: List<String>,
+) {
+    val isSeries get() = type == "Series"
+    /** Für die Detailseite (gleiche Felder wie in der Bibliothek) */
+    fun toMediaItem() = MediaItem(id = id, name = name, type = type, year = year, rating = rating, runtime = runtime, hasImage = hasImage,
+        isFolder = isSeries, playable = !isSeries)
+
+    companion object {
+        fun from(j: JSONObject) = Rec(
+            j.optString("id"), j.str("name") ?: "", j.str("type") ?: "Movie", j.int("year"), j.num("rating"), j.num("runtime"),
+            if (j.has("hasImage")) j.bool("hasImage") else true, j.optJSONArray("reasons").strings(), j.optJSONArray("seenBy").strings(),
+        )
+    }
+}
+
+/** „Das könnte euch auch gefallen“ nach einem Film */
+data class RoomRecs(val itemId: String, val title: String, val items: List<Rec>) {
+    companion object {
+        fun from(j: JSONObject?): RoomRecs? {
+            if (j == null) return null
+            val item = j.optJSONObject("item") ?: return null
+            val items = j.optJSONArray("items").map { Rec.from(it) }
+            if (items.isEmpty()) return null
+            return RoomRecs(item.optString("id"), item.optString("title"), items)
+        }
+    }
+}
+
 data class QueueEntry(val id: String, val title: String, val subtitle: String?, val type: String?, val by: String?) {
     companion object {
         fun from(j: JSONObject) = QueueEntry(j.optString("id"), j.optString("title"), j.str("subtitle"), j.str("type"), j.str("by"))
