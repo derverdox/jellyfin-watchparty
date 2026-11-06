@@ -46,7 +46,7 @@ function fakeTwitch(dir) {
       });
       return;
     }
-    if (u.pathname.startsWith('/api/channel/hls/')) {
+    if (u.pathname.startsWith('/api/v2/channel/hls/')) {
       res.writeHead(200);
       return res.end('#EXTM3U\n#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="chunked",NAME="180p30 (source)"\n#EXT-X-STREAM-INF:BANDWIDTH=300000,CODECS="avc1.42C00D,mp4a.40.2",VIDEO="chunked"\n/media.m3u8\n');
     }

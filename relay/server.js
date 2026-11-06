@@ -586,7 +586,8 @@ function serveFile(res, file, cache = 'no-cache') {
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'same-origin',
+  // YouTube verlangt beim Einbetten den Referer (sonst „Fehler 153“). Nach außen geht so nur die Domain, nie der Pfad (Raumcode).
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Frame-Options': 'SAMEORIGIN',
   // YouTube/Twitch: eingebettete Player (Twitch-VODs/Clips, YouTube) + deren Skripte und Vorschaubilder.
   // Twitch live kommt dagegen als Restream vom Relay selbst (media-src 'self').

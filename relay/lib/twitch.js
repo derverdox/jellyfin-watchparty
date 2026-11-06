@@ -21,6 +21,8 @@ const CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko'; // öffentliche Client-ID de
 const LOGIN_RE = /^[a-z0-9_]{2,25}$/;
 const RESERVED = new Set(['videos', 'directory', 'p', 'settings', 'subscriptions', 'inventory', 'wallet', 'drops', 'search', 'downloads', 'jobs', 'turbo', 'friends', 'messages', 'payments', 'prime', 'store', 'clips']);
 
+// Gespeicherte GQL-Abfrage, wie sie der Twitch-Player (und Streamlink) nutzt. Rohe Abfragen lehnt Twitch inzwischen oft ab.
+const ACCESS_TOKEN_HASH = 'ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9';
 const ACCESS_TOKEN_QUERY = 'query PlaybackAccessToken_Template($login: String!, $isLive: Boolean!, $vodID: ID!, $isVod: Boolean!, $playerType: String!) {'
   + '  streamPlaybackAccessToken(channelName: $login, params: {platform: "web", playerBackend: "mediaplayer", playerType: $playerType}) @include(if: $isLive) {'
   + '    value    signature   authorization { isForbidden forbiddenReasonCode }   __typename  }'
@@ -515,7 +517,11 @@ class TwitchRelay {
   }
 
   headers(gql) {
-    const h = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36' };
+    const h = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0 Safari/537.36',
+      Referer: 'https://player.twitch.tv/',
+      Origin: 'https://player.twitch.tv',
+    };
     if (gql) {
       h['Client-ID'] = CLIENT_ID;
       h['Content-Type'] = 'text/plain;charset=UTF-8';
@@ -538,9 +544,28 @@ class TwitchRelay {
   }
 
   async accessToken(login) {
-    const j = await this.gql({ operationName: 'PlaybackAccessToken_Template', query: ACCESS_TOKEN_QUERY, variables: { isLive: true, login, isVod: false, vodID: '', playerType: 'site' } });
-    const t = j && j.data && j.data.streamPlaybackAccessToken;
-    if (!t || !t.value) throw new TwitchError(404, 'Kanal nicht gefunden');
+    const variables = { isLive: true, login, isVod: false, vodID: '', playerType: 'embed', platform: 'site' };
+    let t = null;
+    let lastErr = null;
+    // Erst die gespeicherte Abfrage, als Ausweg die ausgeschriebene
+    for (const body of [
+      { operationName: 'PlaybackAccessToken', extensions: { persistedQuery: { version: 1, sha256Hash: ACCESS_TOKEN_HASH } }, variables },
+      { operationName: 'PlaybackAccessToken_Template', query: ACCESS_TOKEN_QUERY, variables },
+    ]) {
+      try {
+        const j = await this.gql(body);
+        t = j && j.data && j.data.streamPlaybackAccessToken;
+        if (t && t.value) break;
+        const err = j && j.errors && j.errors[0];
+        lastErr = err ? String(err.message || err) : null;
+        if (j && j.data && 'streamPlaybackAccessToken' in j.data && !t) break; // Kanal gibt es nicht
+      } catch (e) { lastErr = e.message; }
+      t = null;
+    }
+    if (!t || !t.value) {
+      if (lastErr && /integrity/i.test(lastErr)) throw new TwitchError(502, 'Twitch verlangt gerade eine Browser-Prüfung (Client-Integrity). Mit TWITCH_OAUTH klappt es meist.');
+      throw new TwitchError(404, lastErr ? `Twitch: ${lastErr}` : 'Kanal nicht gefunden');
+    }
     if (t.authorization && t.authorization.isForbidden) throw new TwitchError(403, `Twitch verweigert den Stream (${t.authorization.forbiddenReasonCode || 'gesperrt'})`);
     return t;
   }
@@ -548,12 +573,17 @@ class TwitchRelay {
   async fetchMaster(login) {
     const t = await this.accessToken(login);
     const q = new URLSearchParams({
-      player: 'twitchweb', p: String(Math.floor(Math.random() * 1e7)), type: 'any',
-      allow_source: 'true', allow_audio_only: 'true', allow_spectre: 'false', fast_bread: 'true',
-      playlist_include_framerate: 'true', supported_codecs: 'avc1', sig: t.signature, token: t.value,
+      platform: 'web', p: String(Math.floor(Math.random() * 1e7)),
+      allow_source: 'true', allow_audio_only: 'true', fast_bread: 'true',
+      playlist_include_framerate: 'true', supported_codecs: 'h264', sig: t.signature, token: t.value,
     });
-    const url = `${this.usherUrl}/api/channel/hls/${login}.m3u8?${q}`;
-    const r = await this.fetch(url, { headers: this.headers(false) }, 10000);
+    // Aktuelle Adresse (v2) zuerst, die alte als Ausweg
+    let url = `${this.usherUrl}/api/v2/channel/hls/${login}.m3u8?${q}`;
+    let r = await this.fetch(url, { headers: this.headers(false) }, 10000);
+    if (r.status === 404 || r.status === 400) {
+      url = `${this.usherUrl}/api/channel/hls/${login}.m3u8?${q}`;
+      r = await this.fetch(url, { headers: this.headers(false) }, 10000);
+    }
     if (r.status === 404) throw new TwitchError(404, 'Der Kanal ist gerade nicht live');
     if (r.status === 403) throw new TwitchError(403, 'Twitch verweigert den Stream (Region/Altersfreigabe?)');
     if (r.status !== 200) throw new TwitchError(502, `Twitch antwortet mit ${r.status}`);
