@@ -79,6 +79,8 @@
     opts.rank ? el('span', { class: 'nf-rank' }, String(opts.rank)) : null,
     el('div', { class: 'nf-art' },
       picture(src, title),
+      it.availableQualities && it.availableQualities.length ? el('div', { class: 'nf-quality-badges', 'aria-label': `Verfügbar: ${it.availableQualities.join(', ')}` },
+        it.availableQualities.map((q) => el('span', { class: 'nf-quality-badge' }, q))) : null,
       opts.progress != null ? el('div', { class: 'nf-progress' }, el('i', { style: `width:${Math.min(100, Math.max(2, opts.progress))}%` })) : null,
       it.played && !wide ? el('span', { class: 'nf-seen', title: 'Gesehen' }, '✓') : null,
       wide ? el('span', { class: 'nf-play' }, '▶') : null),

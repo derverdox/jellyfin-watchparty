@@ -77,6 +77,23 @@ Filme & Serien vom Jellyfin deines Kumpels **synchron zusammen schauen**, mit Li
 
 Der Agent hat eine eigene **Admin-UI im LAN** (Standard-Port **8098**): `http://<IP-des-Agent-Rechners>:8098`. Dort stellst du pro Jellyfin-Bibliothek auf „aus“ — ausgeschlossene Bibliotheken sind für **alle** Zuschauer unsichtbar und nicht abspielbar (auch nicht über direkte Links), ohne Neustart. Damit die UI im LAN erreichbar ist, setze `ADMIN_TOKEN` in der `.env` des Agenten (die UI fragt dann nach diesem Token). Ohne `ADMIN_TOKEN` ist die UI nur vom Agent-Rechner selbst erreichbar. Die Auswahl überlebt Neustarts (Volume `agent-data`).
 
+In derselben Agent-Verwaltung gibt es **„Duplikate analysieren“ → „Analyse starten“**.
+Die Analyse liest die Jellyfin-Metadaten aller für den Agent-Benutzer sichtbaren
+Bibliotheken, einschließlich ausgeschlossener Bibliotheken. Sie zeigt mehrfach
+vorhandene Filme und Episoden mit DVD-/Blu-ray-/UHD-Qualitäten, Quelldateipfaden,
+Laufzeiten sowie Audio- und Untertitelspuren. Zwei Blu-rays derselben Qualität
+bleiben als getrennte Quellen sichtbar. Auch bereits von Jellyfin kombinierte
+Versionen werden berücksichtigt. Episoden werden anhand der Serie, Staffel und
+Folgenummer zugeordnet, nicht nur anhand ihres Titels.
+
+Die Analyse läuft auf Anforderung im Hintergrund und zeigt ihren Fortschritt.
+Sie verändert keine Dateien oder Jellyfin-Einträge; das Ergebnis bleibt bis zum
+nächsten Scan bzw. Agent-Neustart im Arbeitsspeicher. Fehlende oder widersprüchliche
+Metadaten können dazu führen, dass Varianten nicht erkannt werden. Eine gefundene
+Gruppe ist **kein Nachweis gleicher Schnittfassung oder synchroner Zeitachsen**.
+Weitere Details: [Filmversionen und synchroner Player](docs/movie-versions.md).
+
+
 ---
 
 ## Benutzung

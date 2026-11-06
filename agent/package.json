@@ -4,7 +4,7 @@
   "description": "Verbindet den Jellyfin-Heimserver mit dem Watchparty-Relay",
   "main": "agent.js",
   "bin": "agent.js",
-  "scripts": { "start": "node agent.js", "exe": "pkg --targets node22-win-x64 --output dist/watchparty-agent.exe ." },
+  "scripts": { "test": "node --test test/*.test.js", "start": "node agent.js", "exe": "pkg --targets node22-win-x64 --output dist/watchparty-agent.exe ." },
   "engines": { "node": ">=18" },
   "license": "MIT",
   "dependencies": { "ws": "^8.18.0" },

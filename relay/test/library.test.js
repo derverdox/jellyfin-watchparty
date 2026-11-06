@@ -28,7 +28,7 @@ test('Such-Bewertung', () => {
 
 test('Suche, Merkliste, Verlauf, Qualität', { timeout: 60000 }, async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-lib-'));
-  fakeJf.addMovies(1234); // mehr als zwei Seiten à 500
+  fakeJf.addMovieVersions(1234); // Varianten auf unterschiedlichen Seiten à 500
   const jf = await fakeJf.start();
   const { I } = jf;
   const port = 20000 + Math.floor(Math.random() * 20000);
@@ -67,6 +67,22 @@ test('Suche, Merkliste, Verlauf, Qualität', { timeout: 60000 }, async (t) => {
   assert.ok(cat.items.every((x) => x.type === 'Movie'));
   const names = cat.items.map((x) => x.name);
   assert.deepStrictEqual(names, [...names].sort((x, y) => x.localeCompare(y, 'de', { numeric: true, sensitivity: 'base' })), 'alphabetisch');
+  const groupedFilm = cat.items.filter((x) => x.name === 'Versionsfilm');
+  assert.strictEqual(groupedFilm.length, 1, 'versions across libraries become one movie');
+  assert.deepStrictEqual(groupedFilm[0].availableQualities, ['SD', 'Full HD', '4K']);
+  assert.strictEqual(groupedFilm[0].versions.length, 3);
+  const searchVersions = (await req('GET', '/api/search?q=versionsfilm')).data.movies;
+  assert.strictEqual(searchVersions.length, 1);
+  assert.deepStrictEqual(searchVersions[0].availableQualities, ['SD', 'Full HD', '4K']);
+  const browsePath = `/api/items?parentId=${I.LIB_M}&collectionType=movies`;
+  const browse = (await req('GET', `${browsePath}&limit=200`)).data;
+  assert.strictEqual(browse.items.filter((x) => x.name === 'Versionsfilm').length, 1, 'group before pagination');
+  const firstPage = (await req('GET', `${browsePath}&limit=1`)).data;
+  assert.strictEqual(firstPage.total, browse.total, 'total counts movies rather than versions');
+  assert.strictEqual(browse.items.find((x) => x.name === 'Versionsfilm').versions.length, 2);
+  const lastPage = (await req('GET', `${browsePath}&limit=200&start=1200`)).data;
+  assert.ok(!lastPage.items.some((x) => x.name === 'Versionsfilm'));
+  assert.strictEqual(browse.total, 1239);
   assert.ok(cat.etag);
   const same = (await req('GET', `/api/catalog?libs=${I.LIB_M},${I.LIB_K}&etag=${cat.etag}`)).data;
   assert.strictEqual(same.unchanged, true, 'unverändert → keine Liste');

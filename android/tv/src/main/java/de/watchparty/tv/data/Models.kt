@@ -43,6 +43,7 @@ data class MediaItem(
     val subtitle: String? = null, // Verlauf: „S01E02 · Titel“
     val watched: Boolean = false,
     val roomWatched: List<String> = emptyList(),
+    val availableQualities: List<String> = emptyList(),
 ) {
     val isSeries get() = type == "Series"
     val isEpisode get() = type == "Episode"
@@ -76,6 +77,7 @@ data class MediaItem(
             subtitle = j.str("subtitle"),
             watched = j.bool("watched") || j.bool("played"),
             roomWatched = j.optJSONArray("roomWatched").strings(),
+            availableQualities = j.optJSONArray("availableQualities").strings(),
         )
     }
 }

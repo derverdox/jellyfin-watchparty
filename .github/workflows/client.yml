@@ -28,6 +28,10 @@ jobs:
           npm install --prefix relay --omit=dev
           npm install --prefix agent --omit=dev
           npm install --prefix client --ignore-scripts
+      - name: Tests (Agent-Duplikatanalyse und Bibliotheksgruppen)
+        run: |
+          npm test --prefix agent
+          node --test relay/test/movie-versions.test.js relay/test/library.test.js
       - name: Tests (Relay + Agent + Client-Kern mit simuliertem mpv)
         run: npm test --prefix client
 

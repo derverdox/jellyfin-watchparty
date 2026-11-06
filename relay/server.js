@@ -19,6 +19,7 @@ const { Telemetry, TICK_MS } = require('./lib/telemetry');
 const { handleAdmin } = require('./lib/admin');
 const { Guard } = require('./lib/guard');
 const { LibraryStore, variants, parseQuery, score, fold } = require('./lib/library');
+const { groupMovies, qualities: movieQualities } = require('./lib/movie-versions');
 const { WishStore } = require('./lib/wishes');
 const { WishSearch } = require('./lib/wishsearch');
 const { Pairing } = require('./lib/pair');
@@ -111,7 +112,7 @@ function libCatalog(libId, collectionType) {
   promise.catch(() => catalogs.delete(key));
   return promise;
 }
-const CATALOG_FIELDS = ['id', 'name', 'type', 'year', 'rating', 'played', 'isFolder', 'playable', 'seriesId', 'hasBackdrop', 'runtime', 'collectionType', 'officialRating'];
+const CATALOG_FIELDS = ['id', 'name', 'type', 'year', 'rating', 'played', 'isFolder', 'playable', 'seriesId', 'hasBackdrop', 'runtime', 'collectionType', 'officialRating', 'availableQualities'];
 function slimItem(it) {
   const m = mapItem(it);
   const o = {};
@@ -168,6 +169,7 @@ function displayTitle(it) {
 
 function mapItem(it) {
   return {
+    ...(it.Type === 'Movie' ? { availableQualities: movieQualities(it) } : {}),
     id: it.Id,
     name: it.Name,
     type: it.Type,
@@ -192,7 +194,7 @@ function mapItem(it) {
   };
 }
 
-const ITEM_FIELDS = 'PrimaryImageAspectRatio,ProductionYear,Overview,OriginalTitle';
+const ITEM_FIELDS = 'PrimaryImageAspectRatio,ProductionYear,Overview,OriginalTitle,ProviderIds,MediaSources,MediaStreams';
 const DETAIL_FIELDS = `${ITEM_FIELDS},Genres,OfficialRating,ChildCount,RecursiveItemCount`;
 
 /** Leichtgewichtige Item-Daten (ohne Mediendetails), gecacht. */
@@ -1064,7 +1066,7 @@ async function handle(req, res) {
     q.set('Fields', ITEM_FIELDS);
     q.set('EnableImageTypes', 'Primary');
     q.set('ImageTypeLimit', '1');
-    q.set('Limit', String(Math.min(toInt(url.searchParams.get('limit'), 60), 200)));
+    q.set('Limit', String(Math.max(1, Math.min(toInt(url.searchParams.get('limit'), 60), 200))));
     q.set('StartIndex', String(Math.max(toInt(url.searchParams.get('start'), 0), 0)));
     const search = (url.searchParams.get('search') || '').trim().slice(0, 100);
     const parentId = url.searchParams.get('parentId');
@@ -1087,10 +1089,29 @@ async function handle(req, res) {
       if (ct === 'tvshows') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Series'); }
     }
     if (parentId && !search) await assertAccess(session, parentId);
-    const data = await jsonCache.get(`items|${q}`, () => jf(`/Users/${uid()}/Items?${q}`));
-    const all = data.Items || [];
+    // Group before pagination: copies can sit on different Jellyfin pages.
+    const start = Number(q.get('StartIndex')), limit = Number(q.get('Limit'));
+    const fullQuery = new URLSearchParams(q);
+    fullQuery.delete('StartIndex');
+    fullQuery.delete('Limit');
+    const all = await jsonCache.get(`all-items|${fullQuery}`, async () => {
+      const out = [];
+      for (let offset = 0; ; ) {
+        const page = new URLSearchParams(fullQuery);
+        page.set('StartIndex', String(offset));
+        page.set('Limit', '500');
+        const data = await jf(`/Users/${uid()}/Items?${page}`);
+        const items = data.Items || [];
+        out.push(...items);
+        offset += items.length;
+        if (!items.length) break;
+        if (offset > 50000) throw new HttpError(502, 'Bibliothek zu groß für vollständige Gruppierung');
+      }
+      return out;
+    });
     const kept = await filterAllowed(session, all);
-    return sendJson(res, 200, { items: kept.map(mapItem), total: Math.max(0, (data.TotalRecordCount || 0) - (all.length - kept.length)) });
+    const grouped = groupMovies(kept, mapItem);
+    return sendJson(res, 200, { items: grouped.slice(start, start + limit), total: grouped.length });
   }
 
   // --- Alle Titel einer oder mehrerer Bibliotheken, alphabetisch (A–Z), mit Fingerabdruck ---
@@ -1106,7 +1127,7 @@ async function handle(req, res) {
     }
     const allowed = await filterAllowed(session, [...byId.values()]);
     const key = (n) => fold(String(n || ''));
-    const items = allowed.map(slimItem).sort((a, b) => key(a.name).localeCompare(key(b.name), 'de', { numeric: true }));
+    const items = groupMovies(allowed, slimItem).sort((a, b) => key(a.name).localeCompare(key(b.name), 'de', { numeric: true }));
     const etag = crypto.createHash('sha1').update(JSON.stringify(items)).digest('hex').slice(0, 20);
     if (url.searchParams.get('etag') === etag) return sendJson(res, 200, { etag, unchanged: true, count: items.length });
     return sendJson(res, 200, { etag, items });
@@ -1126,7 +1147,7 @@ async function handle(req, res) {
     const byId = new Map();
     for (const r of results) for (const it of r.Items || []) if (!byId.has(it.Id)) byId.set(it.Id, it);
     const allowed = await filterAllowed(session, [...byId.values()]);
-    const scored = allowed.map((it) => { const mi = mapItem(it); return { ...mi, score: onlyYear ? 50 : score(mi, text, year) }; })
+    const scored = groupMovies(allowed, mapItem).map((mi) => ({ ...mi, score: onlyYear ? 50 : score(mi, text, year) }))
       .filter((x) => x.score > 0).sort((a, b) => b.score - a.score || (b.year || 0) - (a.year || 0));
     const pick = (types, n) => scored.filter((x) => types.includes(x.type)).slice(0, n);
     return sendJson(res, 200, {

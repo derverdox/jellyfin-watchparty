@@ -12,6 +12,7 @@ const http = require('http');
 const crypto = require('crypto');
 const { Readable } = require('stream');
 const WebSocket = require('ws');
+const { DuplicateScanner } = require('./lib/duplicates');
 
 // Im pkg-Executable (watchparty-agent.exe) zeigt __dirname ins Bündel hinein —
 // die .env muss neben der EXE-Datei liegen dürfen.
@@ -51,8 +52,8 @@ function jfAuth() {
   return `MediaBrowser Client="Watchparty", Device="Watchparty Agent", DeviceId="watchparty-agent", Version="${VERSION}", Token="${CFG.apiKey}"`;
 }
 
-async function jfJson(p) {
-  const r = await fetch(CFG.jellyfinUrl + p, { headers: { Authorization: jfAuth(), Accept: 'application/json' } });
+async function jfJson(p, signal) {
+  const r = await fetch(CFG.jellyfinUrl + p, { headers: { Authorization: jfAuth(), Accept: 'application/json' }, signal });
   if (!r.ok) throw new Error(`Jellyfin ${p} → ${r.status}`);
   return r.json();
 }
@@ -408,6 +409,16 @@ function adminAuthed(req, url) {
   return timingSafeEq(h, CFG.adminToken) || timingSafeEq(url.searchParams.get('token') || '', CFG.adminToken);
 }
 
+const duplicateScanner = new DuplicateScanner({
+  getLibraries: async () => (await jfJson(`/Users/${jellyfin.userId}/Views`, AbortSignal.timeout(30000))).Items || [],
+  fetchPage: (libId, offset, fields) => {
+    const q = new URLSearchParams({ ParentId: libId, Recursive: 'true', IncludeItemTypes: 'Movie,Series,Episode',
+      Fields: fields, StartIndex: String(offset), Limit: '500', SortBy: 'SortName' });
+    return jfJson(`/Users/${jellyfin.userId}/Items?${q}`, AbortSignal.timeout(30000));
+  },
+  isExcluded: (id) => excluded.has(id),
+});
+
 const adminFails = new Map(); // ip → { n, until }
 
 function startAdmin() {
@@ -435,6 +446,18 @@ function startAdmin() {
       adminFails.set(rip, f);
       res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' });
       return res.end('Token fehlt/falsch — ?token=… oder Authorization: Bearer …');
+    }
+    if (url.pathname === '/api/duplicates' && ['GET', 'POST'].includes(req.method)) {
+      res.setHeader('content-type', 'application/json; charset=utf-8');
+      res.setHeader('cache-control', 'no-store');
+      if (req.method === 'POST') {
+        if (!jellyfin) { res.writeHead(503); return res.end(JSON.stringify({ error: 'Warte auf Jellyfin-Verbindung' })); }
+        duplicateScanner.start();
+        res.writeHead(202);
+      }
+      const start = Math.max(0, toInt(url.searchParams.get('start'), 0));
+      const limit = Math.max(1, Math.min(100, toInt(url.searchParams.get('limit'), 50)));
+      return res.end(JSON.stringify(duplicateScanner.snapshot(start, limit)));
     }
     if (req.method === 'GET' && url.pathname === '/api/libraries') {
       if (!jellyfin) { res.writeHead(503, { 'content-type': 'application/json' }); return res.end('{"error":"Warte auf Jellyfin-Verbindung"}'); }
@@ -493,11 +516,18 @@ input:checked+.slider{background:#c0392b}input:checked+.slider:before{transform:
 .excluded .name{color:#9a9aa8;text-decoration:line-through}
 #login{display:flex;gap:8px;margin-bottom:16px}input[type=password]{background:#1d1d25;border:1px solid #2c2c38;color:#e8e8ee;border-radius:8px;padding:8px 10px;width:220px}
 button{background:#5b5bd6;color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer}
+.duplicate{margin:12px 0;padding:10px;background:#1d1d25;border-radius:8px}.source{padding:10px 0;border-top:1px solid #3a3a46;overflow-wrap:anywhere}.type{color:#9a9aa8;font-size:12px}summary{cursor:pointer}h2{font-size:18px}button:disabled{opacity:.5;cursor:wait}
 .err{color:#e06c75}.ok{color:#7ec699}
 </style></head><body>
 <h1>Watchparty-Agent</h1><div class="sub">Bibliotheken, die hier auf <b>aus</b> stehen, sind fuer alle Watchparty-Zuschauer unsichtbar und nicht abspielbar. Wirkt sofort, ohne Neustart.</div>
 <div id="login"><input id="tok" type="password" placeholder="Admin-Token"><button onclick="login()">Los</button></div>
 <div id="out"></div>
+<section id="duplicates" hidden><h2>Duplikate analysieren</h2>
+<p class="sub">Vergleicht Jellyfin-Metadaten für Filme und Episoden in allen Bibliotheken, auch ausgeschlossenen. Keine Dateien werden verändert. Gefundene Varianten sind nicht auf Synchronität geprüft.</p>
+<button id="scan" onclick="startScan()">Analyse starten</button>
+<p id="scan-status" role="status"></p><div id="scan-results"></div>
+<button id="scan-prev" hidden onclick="showPage(-1)">Zurück</button>
+<button id="scan-next" hidden onclick="showPage(1)">Weitere Ergebnisse</button></section>
 <script>
 let T=localStorage.getItem('wp_tok')||'';if(T)document.getElementById('tok').value=T;
 async function api(p,opt){const r=await fetch(p+(p.includes('?')?'&':'?')+'token='+encodeURIComponent(T),opt);
@@ -505,14 +535,40 @@ async function api(p,opt){const r=await fetch(p+(p.includes('?')?'&':'?')+'token
 function login(){T=document.getElementById('tok').value;localStorage.setItem('wp_tok',T);load();}
 async function load(){const o=document.getElementById('out');
  try{const d=await api('/api/libraries');
-  let h='';if(d.server)h+='<p class="ok">Verbunden mit Jellyfin: '+d.server+'</p>';
+  let h='';if(d.server)h+='<p class="ok">Verbunden mit Jellyfin: '+esc(d.server)+'</p>';
   h+=(d.libraries||[]).map(l=>'<div class="card '+(l.excluded?'excluded':'')+'">'+
    '<label class="switch"><input type="checkbox" '+(l.excluded?'checked':'')+' data-id="'+l.id+'" onchange="toggle(this.dataset.id,this.checked)"><span class="slider"></span></label>'+
    '<span class="name">'+esc(l.name)+'</span><span class="type">'+esc(l.type)+'</span></div>').join('');
   o.innerHTML=h||'<p class="err">Keine Bibliotheken gefunden.</p>';
+  document.getElementById('duplicates').hidden=false;scanStatus();
  }catch(e){o.innerHTML='<p class="err">'+e.message+'</p>';}}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 async function toggle(id,on){try{await api('/api/toggle',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,excluded:on})});load();}catch(e){alert(e.message);}}
+let scanTimer=null,scanOffset=0;
+async function startScan(){
+ clearTimeout(scanTimer);scanOffset=0;
+ try{await api('/api/duplicates',{method:'POST'});await scanStatus();}
+ catch(e){document.getElementById('scan-status').textContent=e.message;}
+}
+async function scanStatus(){
+ clearTimeout(scanTimer);
+ const status=document.getElementById('scan-status'),results=document.getElementById('scan-results');
+ try{const d=await api('/api/duplicates?start='+scanOffset+'&limit=50');
+  document.getElementById('scan').disabled=d.status==='running';
+  document.getElementById('scan-prev').hidden=true;document.getElementById('scan-next').hidden=true;
+  if(d.status==='running'){
+   const p=d.progress;status.textContent='Analysiere '+(p.library||'Bibliotheken')+' … '+p.scanned+' Einträge, '+p.librariesDone+'/'+p.libraries+' Bibliotheken.';
+   results.replaceChildren();scanTimer=setTimeout(scanStatus,1500);return;
+  }
+  if(d.status==='error'){status.textContent='Analyse fehlgeschlagen: '+d.error;results.replaceChildren();return;}
+  if(!d.report){status.textContent='Noch keine Analyse gestartet.';return;}
+  const r=d.report;status.textContent=r.scannedItems+' Einträge geprüft: '+r.movieGroups+' Filme und '+r.episodeGroups+' Episoden mit mehreren Versionen ('+r.versions+' Quellen).';
+  results.innerHTML=r.groups.map(g=>'<details class="duplicate"><summary>'+esc(g.type==='Episode'?(g.seriesName||'Unbekannte Serie')+' · S'+g.season+'E'+g.episode+(g.episodeEnd!==g.episode?'–'+g.episodeEnd:'')+' · '+g.name:g.name+(g.year?' ('+g.year+')':''))+' <span class="type">'+esc(g.availableQualities.join(' / ')||'Qualität unbekannt')+' · '+g.versions.length+' Quellen</span></summary>'+g.versions.map(v=>'<div class="source"><b>'+esc(v.name)+'</b> · '+esc(v.qualities.join(' / ')||'Qualität unbekannt')+' · '+(v.runtime?Math.round(v.runtime/60)+' Min.':'Laufzeit unbekannt')+'<br>'+esc(v.libraryName)+(v.excluded?' (ausgeschlossen)':'')+'<br><code>'+esc(v.path||'Dateipfad nicht verfügbar')+'</code><br>Audio: '+esc(v.audio.map(s=>s.label).join(', ')||'keine Angaben')+'<br>Untertitel: '+esc(v.subtitles.map(s=>s.label+(s.forced?' (Forced)':'')).join(', ')||'keine Angaben')+'</div>').join('')+'</details>').join('');
+  document.getElementById('scan-prev').hidden=scanOffset===0;
+  document.getElementById('scan-next').hidden=scanOffset+r.groups.length>=r.duplicateGroups;
+ }catch(e){status.textContent=e.message;document.getElementById('scan').disabled=false;}
+}
+function showPage(delta){scanOffset=Math.max(0,scanOffset+delta*50);scanStatus();}
 if(T)load();
 </script></body></html>`;
 
