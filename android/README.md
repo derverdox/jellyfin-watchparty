@@ -1,5 +1,14 @@
 # 📺📱 Watchparty für Fire TV, Android TV, Handy und Tablet
 
+## Wechsel zum dauerhaften Signierschlüssel
+
+Die aktuellen APKs für Android und Fire TV verwenden den dauerhaften Keystore
+aus den GitHub-Secrets. Installationen des bisherigen, mit einem temporären
+Debug-Schlüssel signierten Releases müssen einmal deinstalliert und anschließend
+neu installiert werden. Dabei gehen lokale App-Daten verloren. Danach sind
+reguläre Updates möglich. Der Release prüft den festgelegten öffentlichen
+Zertifikat-Fingerprint und verhindert weitere unbeabsichtigte Schlüsselwechsel.
+
 Es gibt zwei Apps:
 
 | App | Für | Kurzlink zum Eintippen |
@@ -110,7 +119,7 @@ Wenn auf dem PC die [Android Platform Tools](https://developer.android.com/tools
 
 Jede Änderung an `android/` auf `main` baut automatisch ein neues APK und legt es im Release **„android-latest“** ab. `/app` zeigt immer auf das neueste. Zum Aktualisieren einfach die Installation wiederholen (Downloader → `/app`). Anmeldung und Server bleiben erhalten.
 
-> ⚠️ Das klappt nur, solange jede Version **mit demselben Schlüssel** signiert ist (siehe unten). Ohne eigenen Schlüssel signiert GitHub jedes Mal mit einem zufälligen Test-Schlüssel. Dann meldet Android beim Update „App nicht installiert“, und die alte Version muss vorher deinstalliert werden.
+> ⚠️ Das klappt nur, solange jede Version **mit demselben Schlüssel** signiert ist (siehe unten). Release-Builds ohne eingerichteten Keystore werden abgebrochen. Bisherige Test-Versionen mit Debug-Schlüssel benötigen einmalig eine Neuinstallation.
 
 ### Eigenen Signierschlüssel einrichten (einmalig, empfohlen)
 

@@ -8,6 +8,20 @@ spec.loader.exec_module(verify)
 
 
 class CertificateOutputTests(unittest.TestCase):
+    def test_permanent_key_supports_updates(self):
+        self.assertFalse(verify.requires_reinstall([verify.RELEASE_CERTIFICATE], [verify.RELEASE_CERTIFICATE]))
+
+    def test_approved_debug_key_migration_requires_reinstall(self):
+        self.assertTrue(verify.requires_reinstall([verify.LEGACY_DEBUG_CERTIFICATE], [verify.RELEASE_CERTIFICATE]))
+
+    def test_other_key_transitions_are_rejected(self):
+        for old, new in [([verify.RELEASE_CERTIFICATE], [verify.LEGACY_DEBUG_CERTIFICATE]),
+                         (['a' * 64], [verify.RELEASE_CERTIFICATE]),
+                         ([verify.RELEASE_CERTIFICATE], ['a' * 64]),
+                         (['a' * 64], ['a' * 64])]:
+            with self.assertRaises(RuntimeError):
+                verify.requires_reinstall(old, new)
+
     def test_numbered_signer(self):
         self.assertEqual(verify.certificate_digests('Signer #1 certificate SHA-256 digest: ' + 'a' * 64 + '\n'), ['a' * 64])
 

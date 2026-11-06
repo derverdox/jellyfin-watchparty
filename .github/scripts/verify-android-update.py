@@ -6,6 +6,21 @@ import tempfile
 import sys
 from pathlib import Path
 
+# Approved migration from the ephemeral runner debug key to the permanent
+# keystore in GitHub Secrets. Existing debug-signed installs need reinstalling.
+LEGACY_DEBUG_CERTIFICATE = 'b2fedcc79f5793a8bf7cbe762b563f8953f4d6de179f8903eda48117730eba0a'
+RELEASE_CERTIFICATE = 'df67a7193375424ff46dc80c33a5fb3c96b1e0cfe73fadad4d343169d9602815'
+
+
+def requires_reinstall(old, new):
+    if new != [RELEASE_CERTIFICATE]:
+        raise RuntimeError('Die neue APK muss mit dem festgelegten Release-Schlüssel signiert sein.')
+    if old == new:
+        return False
+    if old == [LEGACY_DEBUG_CERTIFICATE]:
+        return True
+    raise RuntimeError('Nicht freigegebener Wechsel des Android-Signierschlüssels.')
+
 
 def certificate_digests(output):
     # Recent build-tools use "Signer (minSdkVersion=..., maxSdkVersion=...)"
@@ -43,9 +58,14 @@ def main():
             old = certificate(previous, signer)
             new = certificate(Path(name), signer)
             print(name + ': bisherige Signatur ' + ', '.join(old) + '; neue Signatur ' + ', '.join(new), flush=True)
-            if old != new:
-                raise SystemExit('::error::' + name + ' wurde mit einem anderen Schlüssel signiert. Für installierbare Updates muss der bisherige Signierschlüssel verwendet werden.')
-            print(name + ': Signatur mit bisherigem Release kompatibel.')
+            try:
+                reinstall = requires_reinstall(old, new)
+            except RuntimeError as error:
+                raise SystemExit('::error::' + name + ': ' + str(error))
+            if reinstall:
+                print('::warning::' + name + ': Freigegebener Wechsel vom alten Debug-Schlüssel. Bestehende Installationen müssen einmal deinstalliert und neu installiert werden; lokale App-Daten gehen verloren.')
+            else:
+                print(name + ': Signatur mit bisherigem Release kompatibel.')
 
 
 if __name__ == '__main__':

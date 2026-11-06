@@ -41,8 +41,7 @@ jobs:
         env:
           APP_KEYSTORE_B64: ${{ secrets.APP_KEYSTORE_B64 }}
           APP_KEYSTORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
-          # Alias im Keystore (friendlyName beim Anlegen). Fehlt das Secret,
-          # bleibt es beim Gradle-Default "watchparty".
+          # Ohne Alias-Secret wird ein eindeutig vorhandener PrivateKeyEntry verwendet.
           APP_KEY_ALIAS: ${{ secrets.APP_KEY_ALIAS }}
           APP_KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
         run: |
@@ -103,6 +102,8 @@ jobs:
 
           - watchparty-tv.apk: Fire TV / Android TV (eigene TV-App). Kurzlink: https://deine-domain/tv
           - watchparty.apk: Handy & Tablet. Kurzlink: https://deine-domain/app
+
+          Signierschlüssel: Diese APKs verwenden den neuen dauerhaften Release-Schlüssel. Bei einer bisherigen Installation mit dem alten Debug-Schlüssel ist einmaliges Deinstallieren und Neuinstallieren nötig; lokale App-Daten gehen dabei verloren. Nach der Neuinstallation sind reguläre Updates möglich.
 
           Installation: siehe android/README.md."
           if gh release view android-latest >/dev/null 2>&1; then
