@@ -148,6 +148,16 @@
       <div class="now" id="now-playing"><span class="muted">Noch nichts ausgewählt</span></div>
       <div class="actions">
         <button class="btn small" id="btn-library">🎞 <span class="hide-sm">Bibliothek</span></button>
+        <div class="menu-wrap">
+          <button class="btn small" id="btn-link" title="Twitch-Kanal oder YouTube-Video abspielen">📺 <span class="hide-sm">Twitch/YouTube</span></button>
+          <form class="menu down link-menu" id="link-menu" hidden>
+            <label>Twitch- oder YouTube-Link
+              <input id="link-input" type="url" inputmode="url" autocomplete="off" placeholder="twitch.tv/kanal oder youtube.com/watch?v=…" required>
+            </label>
+            <button class="btn primary small" type="submit" id="link-go">Für alle abspielen</button>
+            <p class="tiny muted">Twitch läuft über das Relay: alle im Raum bekommen exakt denselben Stream und bleiben auf das Bild genau gleich.</p>
+          </form>
+        </div>
         <button class="btn small" id="btn-invite" title="Einladungslink kopieren">🔗 <span class="hide-sm">Einladen</span> <code id="room-code"></code></button>
       </div>
     </header>
@@ -155,6 +165,7 @@
     <main class="stage">
       <div class="player" id="player">
         <video id="video" playsinline preload="auto"></video>
+        <div class="yt-host" id="yt-host" hidden><div id="yt-frame"></div><div class="yt-shield" id="yt-shield"></div></div>
         <div class="reactions-layer" id="reactions-layer"></div>
         <div class="toasts-layer" id="toasts-layer"></div>
 
@@ -164,6 +175,7 @@
             <h2>Was schauen wir?</h2>
             <p class="muted">Such einen Film oder eine Folge aus – alle im Raum sehen es sofort.</p>
             <button class="btn primary" id="btn-library-empty">Bibliothek öffnen</button>
+            <button class="btn" id="btn-link-empty">📺 Twitch oder YouTube</button>
           </div>
         </div>
         <div class="overlay" id="overlay-noaccess" hidden>
@@ -191,6 +203,7 @@
             <button class="icon" id="btn-back" aria-label="10 Sekunden zurück">↺</button>
             <button class="icon" id="btn-fwd" aria-label="10 Sekunden vor">↻</button>
             <div class="time"><span id="t-cur">0:00</span> / <span id="t-dur">0:00</span></div>
+            <button class="btn small live-btn" id="btn-live" hidden title="Zurück zu live (für alle)">● LIVE</button>
             <span class="lock" id="lock-hint" hidden title="Nur der Host kann steuern">🔒 Host steuert</span>
             <div class="grow"></div>
             <div class="react-bar" id="react-bar"></div>
@@ -295,6 +308,7 @@
 
   <script src="/vendor/hls.min.js"></script>
   <script src="/app.js"></script>
+  <script src="/media.js"></script>
   <script src="/extras.js"></script>
   <script src="/qrcode.js"></script>
   <script src="/pair.js"></script>

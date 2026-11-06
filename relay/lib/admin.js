@@ -52,7 +52,7 @@ async function handleAdmin(ctx, req, res, url, me) {
       return {
         code: room.code, createdBy: room.createdBy, createdAt: room.createdAt, allowAllControl: room.allowAllControl,
         host: host ? host.session.name : null, playing: room.playing, position: room.positionAt(now),
-        item: room.item ? { id: room.item.id, title: room.item.title, subtitle: room.item.subtitle, type: room.item.type, runtime: room.item.runtime } : null,
+        item: room.item ? { id: room.item.id, title: room.item.title, subtitle: room.item.subtitle, type: room.item.type, runtime: room.item.runtime, source: room.item.source || null, live: !!room.item.live, thumb: room.item.thumb || null } : null,
         chat: room.chat.filter((x) => x.kind === 'user').length,
         empty: room.clients.size === 0, emptySince: room.emptySince,
         members: [...room.clients.values()].map((c) => ({

@@ -261,8 +261,17 @@ class Session extends EventEmitter {
       this.loadedId = null; this.loadedKey = null; this.info = null; this.fileReady = false;
       return;
     }
-    if (pb.item.id !== this.loadedId) this.loadItem(pb.item.id);
-    else this.syncTick(true);
+    if (pb.item.id !== this.loadedId && pb.item.source) this.showExternal(pb.item);
+    else if (pb.item.id !== this.loadedId) this.loadItem(pb.item.id);
+    else if (!pb.item.source) this.syncTick(true);
+  }
+
+  /** Twitch/YouTube laufen (noch) nur im Browser bzw. in der TV-App – mpv kennt deren Zeitachse nicht. */
+  showExternal(item) {
+    this.loadedId = item.id; this.loadedKey = null; this.info = null; this.fileReady = false;
+    const what = item.source === 'twitch' ? 'Twitch-Livestreams' : 'YouTube-Videos';
+    if (this.mpv) { this.mpv.command('stop').catch(() => {}); this.mpv.osd(`📺 ${what} gibt es im Desktop-Client noch nicht – bitte im Browser mitschauen`, 8000); }
+    this.ui('room:error', `${what} laufen im Desktop-Client noch nicht synchron. Öffne den Raum im Browser oder in der TV-App.`);
   }
 
   async loadItem(id) {
