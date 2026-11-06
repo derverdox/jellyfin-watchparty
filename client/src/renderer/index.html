@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' wpimg: data:; style-src 'self'; script-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' wpimg: data: https://i.ytimg.com https://static-cdn.jtvnw.net; style-src 'self'; script-src 'self'">
   <title>Watchparty</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -211,15 +211,22 @@
           </div>
           <div class="btn-row">
             <button class="btn" id="btn-library">🎬 Film auswählen</button>
+            <button class="btn" id="btn-link" title="Twitch-Kanal oder YouTube-Video für alle abspielen">📺 Twitch/YouTube</button>
             <div class="spacer"></div>
             <button class="icon big" id="btn-back" title="10 s zurück">↺</button>
             <button class="play" id="btn-play" title="Play/Pause">▶</button>
             <button class="icon big" id="btn-fwd" title="10 s vor">↻</button>
             <div class="spacer"></div>
+            <button class="btn live-btn" id="btn-live" hidden title="Zurück zu live (für alle)">● LIVE</button>
             <button class="btn" id="btn-next" hidden>⏭ Nächste Folge</button>
             <button class="btn" id="btn-player">⛶ Player öffnen</button>
           </div>
           <p class="tiny muted lock" id="lock-hint" hidden>🔒 Gerade steuert nur der Host.</p>
+          <form class="link-form" id="link-form" hidden>
+            <input id="link-input" inputmode="url" autocomplete="off" spellcheck="false" placeholder="twitch.tv/kanal oder youtube.com/watch?v=…" required>
+            <button class="btn primary" type="submit" id="link-go">Für alle abspielen</button>
+            <button class="btn" type="button" id="link-cancel">Abbrechen</button>
+          </form>
         </div>
 
         <div class="panels">

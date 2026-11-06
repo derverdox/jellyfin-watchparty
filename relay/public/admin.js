@@ -137,7 +137,9 @@ function groupChip(id) {
   const g = groupById(id);
   return el('span', { class: 'chip' }, el('span', { class: 'dot', style: `background:${g ? g.color : '#777'}` }), g ? g.name : id);
 }
-function itemImg(id, w = 160) { return `/img/${id}?w=${w}`; }
+function itemImg(id, w = 160, item) { return item && item.source ? (item.thumb || '') : `/img/${id}?w=${w}`; }
+/** Position/Länge – bei Twitch gibt es keine Länge, nur „live“. */
+function posText(r) { return r.item && r.item.live ? '● LIVE' : `${fmtTime(r.position)} / ${fmtTime(r.item && r.item.runtime)}`; }
 
 /* ---------------- Diagramme ---------------- */
 
@@ -383,10 +385,10 @@ function renderOverview() {
   if (!live.length) box.append(el('div', { class: 'empty' }, 'Gerade schaut niemand.'));
   for (const r of live.slice(0, 6)) {
     box.append(el('div', { class: 'mini-room' },
-      el('div', { class: 'poster', style: r.item ? `background-image:url("${itemImg(r.item.id, 120)}")` : '' }, r.item ? '' : '🎬'),
+      el('div', { class: 'poster', style: r.item ? `background-image:url("${itemImg(r.item.id, 120, r.item)}")` : '' }, r.item ? '' : '🎬'),
       el('div', {},
         el('div', {}, el('b', {}, r.item ? r.item.title : 'Noch nichts ausgewählt'), r.item && r.item.subtitle ? el('span', { class: 'muted' }, ` · ${r.item.subtitle}`) : null),
-        el('div', { class: 'tiny muted' }, `${r.playing ? '▶' : '❚❚'} ${r.item ? `${fmtTime(r.position)} / ${fmtTime(r.item.runtime)}` : ''} · Raum `, el('span', { class: 'room-code' }, r.code)),
+        el('div', { class: 'tiny muted' }, `${r.playing ? '▶' : '❚❚'} ${r.item ? posText(r) : ''} · Raum `, el('span', { class: 'room-code' }, r.code)),
         el('div', { class: 'who' }, r.members.map((m) => el('span', { class: 'chip', title: `${m.name} · ${(STATE[m.status.state] || ['?'])[0]}` }, el('span', { class: 'dot', style: `background:${m.status.state === 'playing' ? 'var(--ok)' : m.status.state === 'buffering' ? 'var(--accent)' : 'var(--line-2)'}` }), m.name)))),
       el('span', { class: 'tiny muted' }, `${r.members.length} 👤`)));
   }
@@ -448,12 +450,12 @@ function renderRooms() {
     const input = el('input', { maxlength: 300, placeholder: 'Ansage an diesen Raum …', 'data-code': r.code, value: drafts[r.code] || '' });
     const card = el('div', { class: 'card room-card' },
       el('div', { class: 'room-top' },
-        el('div', { class: 'poster', style: r.item ? `background-image:url("${itemImg(r.item.id, 200)}")` : '' }, r.item ? '' : '🎬'),
+        el('div', { class: 'poster', style: r.item ? `background-image:url("${itemImg(r.item.id, 200, r.item)}")` : '' }, r.item ? '' : '🎬'),
         el('div', { class: 'room-title' },
           el('div', { class: 'room-meta' }, el('span', { class: 'room-code' }, r.code), r.empty ? el('span', { class: 'tag' }, `leer seit ${ago(r.emptySince)}`) : el('span', { class: `tag ${r.playing ? 'on' : ''}` }, r.playing ? 'läuft' : 'pausiert'), r.allowAllControl ? el('span', { class: 'tag info' }, 'alle steuern') : el('span', { class: 'tag' }, 'nur Host steuert')),
           el('h3', {}, r.item ? `${r.item.title}${r.item.subtitle ? ` · ${r.item.subtitle}` : ''}` : 'Noch nichts ausgewählt'),
           el('div', { class: 'room-meta' }, `erstellt von ${r.createdBy || '?'} ${ago(r.createdAt)}`, r.host ? ` · Host: ${r.host}` : '', ` · ${r.chat} Chat-Nachrichten`),
-          r.item ? el('div', { class: 'progress' }, el('div', { class: 'bar' }, el('div', { style: `width:${pct}%` })), el('div', { class: 'times' }, el('span', {}, fmtTime(r.position)), el('span', {}, fmtTime(r.item.runtime)))) : null),
+          r.item ? el('div', { class: 'progress' }, el('div', { class: 'bar' }, el('div', { style: `width:${pct}%` })), el('div', { class: 'times' }, el('span', {}, r.item.live ? '● LIVE' : fmtTime(r.position)), el('span', {}, r.item.live ? '' : fmtTime(r.item.runtime)))) : null),
         el('div', { class: 'room-actions' },
           el('a', { class: 'btn small', href: `/r/${r.code}`, target: '_blank' }, 'Beitreten'),
           r.allowAllControl ? null : el('button', { class: 'btn small', onclick: () => roomAction(r.code, 'unlock') }, 'Steuerung freigeben'),

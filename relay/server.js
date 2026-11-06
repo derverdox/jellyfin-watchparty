@@ -21,6 +21,8 @@ const { Guard } = require('./lib/guard');
 const { LibraryStore, variants, parseQuery, score, fold } = require('./lib/library');
 const { WishStore } = require('./lib/wishes');
 const { Pairing } = require('./lib/pair');
+const { TwitchRelay, TwitchError, parseChannel } = require('./lib/twitch');
+const { parseYouTube, youtubeInfo } = require('./lib/youtube');
 const { parseExtUrl, extKey, extInfo } = require('./lib/ext');
 
 loadEnvFile(path.join(__dirname, '.env'));
@@ -55,6 +57,18 @@ const telemetry = new Telemetry(CONFIG.dataDir);
 const library = new LibraryStore(CONFIG.dataDir);
 const wishes = new WishStore(CONFIG.dataDir);
 const pairing = new Pairing();
+// Twitch: ein Zugang auf dem Relay, alle im Raum bekommen exakt dieselben Segmente
+const twitch = new TwitchRelay({
+  cache,
+  oauth: process.env.TWITCH_OAUTH || '',
+  dvrSeconds: Math.max(1, Number(process.env.TWITCH_DVR_MINUTES) || 15) * 60,
+  delaySeconds: Math.max(2, Number(process.env.TWITCH_DELAY_SECONDS) || 4),
+  gqlUrl: process.env.TWITCH_GQL_URL || undefined,
+  usherUrl: process.env.TWITCH_USHER_URL || undefined,
+});
+const YT_OEMBED = process.env.YOUTUBE_OEMBED_URL || 'https://www.youtube.com';
+const EXTERNAL_RE = /^(twitch|yt|tw):/;
+const isExternal = (item) => !!(item && (item.source === 'twitch' || item.source === 'youtube'));
 const guard = new Guard(CONFIG.dataDir, (ip, b) => {
   telemetry.audit({ type: 'ip-ban', ip, reason: b.reason, by: b.by === 'auto' ? undefined : b.by });
   telemetry.event('security', `IP ${ip} gesperrt: ${b.reason}`, { level: 'warn' });
@@ -327,6 +341,7 @@ function ancestors(id) {
 }
 
 async function canAccess(session, itemId, resolved) {
+  if (EXTERNAL_RE.test(String(itemId))) return true; // Twitch/YouTube: keine Jellyfin-Freigaben
   const r = resolved || accessOf(session);
   if (!r.rules) return true;
   return decisionCache.get(`${accessVersion}|${session.username.toLowerCase()}|${norm(itemId)}`, async () => {
@@ -573,7 +588,8 @@ const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'SAMEORIGIN',
-  // YouTube/Twitch: eingebettete Player (Video kommt direkt von dort) + deren Skripte und Vorschaubilder
+  // YouTube/Twitch: eingebettete Player (Twitch-VODs/Clips, YouTube) + deren Skripte und Vorschaubilder.
+  // Twitch live kommt dagegen als Restream vom Relay selbst (media-src 'self').
   'Content-Security-Policy': "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://www.youtube.com https://s.ytimg.com https://player.twitch.tv https://embed.twitch.tv; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.twitch.tv https://embed.twitch.tv https://clips.twitch.tv; img-src 'self' data: https://i.ytimg.com https://static-cdn.jtvnw.net; media-src 'self' blob:; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'",
   'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(), payment=(), usb=()', // Kamera: QR-Code scannen
   'Cross-Origin-Opener-Policy': 'same-origin',
@@ -771,7 +787,7 @@ async function handle(req, res) {
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
   if (isSecure(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   const ip = clientIp(req);
-  if (p.startsWith('/api/') || p.startsWith('/stream/') || p.startsWith('/img/') || p.startsWith('/subs/')) {
+  if (p.startsWith('/api/') || p.startsWith('/stream/') || p.startsWith('/img/') || p.startsWith('/subs/') || p.startsWith('/live/')) {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req)) throw new HttpError(403, 'Anfrage von fremder Seite abgelehnt');
     const ban = guard.banned(ip);
     if (ban) {
@@ -968,8 +984,8 @@ async function handle(req, res) {
       const hidden = room.private && !mineToo;
       let item = null;
       if (room.item && !hidden) {
-        item = (room.item.ext || await canAccess(session, room.item.id).catch(() => false))
-          ? { id: room.item.id, ext: room.item.ext || undefined, title: room.item.title, subtitle: room.item.subtitle || null, type: room.item.type, seriesId: room.item.seriesId || null, position: Math.round(room.positionAt(now)), runtime: room.item.runtime || null }
+        item = (room.item.ext || isExternal(room.item) || await canAccess(session, room.item.id).catch(() => false))
+          ? { id: room.item.id, ext: room.item.ext || (room.item.source ? { kind: room.item.source, live: !!room.item.live, channel: room.item.channel, id: room.item.videoId } : undefined), title: room.item.title, subtitle: room.item.subtitle || null, type: room.item.type, seriesId: room.item.seriesId || null, position: Math.round(room.positionAt(now)), runtime: room.item.runtime || null }
           : { hidden: true };
       }
       const names = [];
@@ -1469,6 +1485,51 @@ async function handle(req, res) {
     throw new HttpError(404, 'Nicht gefunden');
   }
 
+  // --- Twitch: Infos, Playlist und Segmente vom Relay ---
+  if ((m = p.match(/^\/api\/twitch\/([a-z0-9_]{2,25})$/i))) {
+    const login = m[1].toLowerCase();
+    const info = await twitch.info(login);
+    const ch = twitch.channels.get(login);
+    const variants = ch && ch.variants.length ? ch.variants : await twitch.channel(login).master().catch(() => []);
+    const def = twitch.channels.get(login) ? twitch.channels.get(login).defaultId() : null;
+    return sendJson(res, 200, {
+      ...info,
+      variants: variants.filter((v) => !/hev|hvc|av01/i.test(v.codecs || '')).map((v) => ({ id: v.id, name: v.id === 'chunked' ? `${v.name.replace(/\s*\(source\)/i, '')} (Quelle)` : v.id === 'audio_only' ? 'Nur Ton' : v.name, bandwidth: v.bandwidth })),
+      defaultId: def,
+      window: twitch.window(login),
+      delay: twitch.delay,
+    });
+  }
+  // Zuordnung Zeitstempel ↔ PTS (Desktop-Client mit mpv)
+  if ((m = p.match(/^\/api\/twitch\/([a-z0-9_]{2,25})\/map$/i))) {
+    const ch = twitch.channel(m[1].toLowerCase());
+    let v;
+    try { v = await ch.variant(String(url.searchParams.get('v') || ch.defaultId() || '')); } catch (e) { throw new HttpError(e.status || 502, e.message); }
+    if (!v) throw new HttpError(404, 'Diese Qualität gibt es nicht');
+    return sendJson(res, 200, { segments: v.map(), wrap: 2 ** 33 / 90000, delay: twitch.delay, offline: v.offline });
+  }
+  if ((m = p.match(/^\/live\/twitch\/([a-z0-9_]{2,25})\/([A-Za-z0-9_]{1,40})(?:\.m3u8|\/(\d{1,12})\.(ts|mp4|m4s|aac)|\/init-(m\d{1,4})\.mp4)$/))) {
+    const [, login, vid, seq, , mapId] = m;
+    const ch = twitch.channel(login);
+    let v;
+    try { v = await ch.variant(vid); } catch (e) { throw new HttpError(e.status || 502, e.message); }
+    if (!v) throw new HttpError(404, 'Diese Qualität gibt es nicht');
+    if (!seq && !mapId) {
+      // Neue Variante: kurz auf die ersten Segmente warten
+      if (!v.readySegments().length) await v.waitFor(() => v.readySegments().length >= 2 || v.offline, 10000);
+      const from = Number(url.searchParams.get('from'));
+      const body = Buffer.from(v.playlist(`/live/twitch/${login}/${vid}`, from > 0 ? from : undefined));
+      telemetry.out(body.length, true);
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Content-Length': body.length, 'Cache-Control': 'no-store' });
+      return res.end(body);
+    }
+    const r = mapId ? await v.init(mapId) : await v.segment(Number(seq));
+    if (!r) throw new HttpError(404, 'Segment nicht (mehr) da');
+    telemetry.out(r.buf.length, true);
+    res.writeHead(200, { 'Content-Type': (r.meta && r.meta.type) || 'video/mp2t', 'Content-Length': r.buf.length, 'Cache-Control': 'private, max-age=3600' });
+    return res.end(r.buf);
+  }
+
   if (p === '/api/stop') return sendJson(res, 200, { ok: true }); // Transcodes sind geteilt → Jellyfin räumt selbst auf
 
   throw new HttpError(404, 'Nicht gefunden');
@@ -1596,8 +1657,11 @@ function onConnection(ws, session, room, req) {
           client.status = {
             pos: Number.isFinite(pos) ? Math.max(0, pos) : 0,
             state: ['playing', 'paused', 'buffering', 'idle', 'blocked', 'error'].includes(msg.state) ? msg.state : 'idle',
-            drift: Number.isFinite(Number(msg.drift)) ? Math.round(Number(msg.drift) * 10) / 10 : 0,
+            drift: Number.isFinite(Number(msg.drift)) ? Math.round(Number(msg.drift) * 100) / 100 : 0,
           };
+          // YouTube: Länge kennt nur der Player → erste Meldung übernehmen (für Ende & Warteschlange)
+          const dur = Number(msg.dur);
+          if (room.item && room.item.source === 'youtube' && !room.item.runtime && Number.isFinite(dur) && dur > 1 && dur < 48 * 3600) room.item.runtime = dur;
           // Twitch live: wie weit hinter dem Live-Bild (für das Angleichen)
           const lat = Number(msg.lat);
           if (Number.isFinite(lat) && lat >= 0 && lat < 300) client.status.lat = Math.round(lat * 100) / 100;
@@ -1628,17 +1692,24 @@ function onConnection(ws, session, room, req) {
           if (!rateOk(client.ctrlTimes, 12, 3000)) break;
           let pos = Number(msg.position);
           if (!Number.isFinite(pos)) pos = room.positionAt();
-          pos = Math.max(0, room.item.runtime ? Math.min(pos, room.item.runtime) : pos);
+          if (room.item.live) {
+            // Twitch: Position ist ein Zeitstempel und muss im DVR-Fenster des Relays liegen
+            const w = twitch.window(room.item.channel);
+            const target = twitch.liveTarget(room.item.channel);
+            if (msg.action === 'live' || !w) pos = target != null ? target : room.positionAt();
+            else pos = Math.min(Math.max(pos, w.start / 1000 + 1), target != null ? target : w.end / 1000 - 1);
+          } else pos = Math.max(0, room.item.runtime ? Math.min(pos, room.item.runtime) : pos);
           const was = room.playing;
-          if (msg.action === 'play') room.playing = true;
+          if (msg.action === 'play' || msg.action === 'live') room.playing = true;
           else if (msg.action === 'pause') room.playing = false;
           else if (msg.action !== 'seek') break;
           room.position = pos;
           room.updatedAt = Date.now();
           room.seq++;
           room.broadcast({ t: 'playback', playback: room.playback(), by: session.name, action: msg.action });
-          if (msg.action === 'seek') room.system(`${session.name} ist zu ${fmtTime(pos)} gesprungen`);
-          else if (msg.action === 'pause' && was) room.system(`${session.name} hat bei ${fmtTime(pos)} pausiert`);
+          if (msg.action === 'live') room.system(`${session.name} ist zurück zu live gesprungen`);
+          else if (msg.action === 'seek') room.system(`${session.name} ist zu ${posLabel(room, pos)} gesprungen`);
+          else if (msg.action === 'pause' && was) room.system(`${session.name} hat bei ${posLabel(room, pos)} pausiert`);
           else if (msg.action === 'play' && !was) room.system(`${session.name} hat auf Play gedrückt`);
           break;
         }
@@ -1655,14 +1726,23 @@ function onConnection(ws, session, room, req) {
           break;
         }
 
-        /* ---------- YouTube/Twitch ---------- */
-        case 'load-ext': {
+        /* ---------- YouTube/Twitch per Link ---------- */
+        // Twitch live → Restream über das Relay (alle exakt derselbe Stream),
+        // YouTube → Player mit Raum-Sync (Browser: IFrame, Desktop: mpv + yt-dlp),
+        // Twitch-VODs/Clips → eingebetteter Twitch-Player (ext.js)
+        case 'load-url': case 'load-ext': {
           const isHost = session.id === room.hostSid;
           if (!mayControl(room, session) || (!isHost && !accessOf(session).perms.load)) { send({ t: 'error', text: 'Du darfst gerade nichts auswählen.' }); break; }
-          if (!rateOk(client.ctrlTimes, 12, 3000)) break;
-          const ext = parseExtUrl(msg.url);
+          if (!rateOk(client.ctrlTimes, 6, 3000)) break;
+          const raw = String(msg.url || '').slice(0, 500);
+          const ext = parseExtUrl(raw);
           if (!ext) { send({ t: 'error', text: 'Das ist kein YouTube- oder Twitch-Link.' }); break; }
-          await startExt(room, ext, session.name);
+          if (ext.kind === 'twitch' && !ext.live) { await startExt(room, ext, session.name); break; }
+          send({ t: 'load-url', state: 'loading' });
+          const src = ext.kind === 'youtube' ? { youtube: { id: ext.id, start: ext.start || 0 } } : { twitch: ext.channel };
+          const err = await startExternal(room, src, session.name, { play: ext.kind === 'twitch' || (msg.play === true && room.clients.size === 1) || msg.t === 'load-ext' }).catch((e) => e.message || 'Fehler');
+          send({ t: 'load-url', state: err ? 'error' : 'ok', text: err || undefined });
+          if (err) send({ t: 'error', text: err });
           break;
         }
 
@@ -1839,6 +1919,50 @@ function mayLoad(room, session) {
   return mayControl(room, session) && (session.id === room.hostSid || accessOf(session).perms.load);
 }
 
+/** Twitch-Kanal oder YouTube-Video für den Raum starten. Gibt bei Erfolg null zurück, sonst eine Fehlermeldung. */
+async function startExternal(room, src, byName, { play = false } = {}) {
+  let item, position = 0;
+  if (src.twitch) {
+    const login = src.twitch;
+    let opened;
+    try { opened = await twitch.open(login); } catch (e) { return e instanceof TwitchError ? e.message : `Twitch: ${e.message}`; }
+    const info = await twitch.info(login);
+    item = {
+      id: `twitch:${login}`, source: 'twitch', live: true, channel: login,
+      title: info.displayName || login, subtitle: info.title ? `${info.title}${info.game ? ` · ${info.game}` : ''}` : 'Twitch live',
+      type: 'Live', runtime: null, thumb: info.avatar || null,
+    };
+    position = twitch.liveTarget(login) || opened.window.end / 1000;
+  } else {
+    const { id, start } = src.youtube;
+    const info = await youtubeInfo(id, globalThis.fetch, YT_OEMBED);
+    if (!info) return 'Dieses YouTube-Video gibt es nicht.';
+    if (!info.embeddable) return 'Dieses YouTube-Video darf nicht eingebettet werden.';
+    item = { id: `yt:${id}`, source: 'youtube', videoId: id, title: info.title, subtitle: info.author ? `YouTube · ${info.author}` : 'YouTube', type: 'Video', runtime: null, thumb: `https://i.ytimg.com/vi/${id}/mqdefault.jpg` };
+    position = start || 0;
+  }
+  room.item = item;
+  room.ratePrompted = true; // keine Bewertungsrunde für externe Videos
+  room.round = null;
+  room.advancing = 0;
+  room.playing = !!play;
+  room.position = position;
+  room.updatedAt = Date.now();
+  room.seq++;
+  room.broadcast({ t: 'playback', playback: room.playback(), by: byName, action: 'load' });
+  room.system(`${byName} hat ${item.source === 'twitch' ? `den Twitch-Kanal „${item.title}“` : `„${item.title}“ (YouTube)`} gestartet`);
+  telemetry.itemStarted(item, byName);
+  return null;
+}
+
+/** Position für Chat-Meldungen: bei Live als Abstand zur Live-Kante. */
+function posLabel(room, pos) {
+  if (!room.item || !room.item.live) return fmtTime(pos);
+  const t = twitch.liveTarget(room.item.channel);
+  const behind = t != null ? Math.round(t - pos) : 0;
+  return behind > 2 ? `−${fmtTime(behind)} (hinter live)` : 'live';
+}
+
 /** Titel für den ganzen Raum starten (Auswahl, Warteschlange, Abstimmung). */
 async function startItem(room, itemId, byName, { play = false, position = 0 } = {}) {
   const d = await getItemDetails(itemId);
@@ -1899,6 +2023,7 @@ async function roomTimers(room) {
   const now = Date.now();
   if (room.poll && now >= room.poll.ends) await finishPoll(room);
   const it = room.item;
+  if (it && it.live) return liveTimers(room, it);
   if (!it || !it.runtime) return;
   const wasPlaying = room.playing;
   room.normalize();
@@ -1932,6 +2057,41 @@ async function roomTimers(room) {
       await startItem(room, next.id, 'Warteschlange', { play: true }).catch(() => {});
     }
   }
+}
+
+/**
+ * Twitch: Stream am Laufen halten, solange jemand im Raum ist. Läuft der Raum
+ * schneller als Twitch liefert (Streamer hängt) oder fällt die Position aus dem
+ * DVR-Fenster, wird für alle gemeinsam neu angesetzt.
+ */
+function liveTimers(room, it) {
+  if (!room.clients.size) return;
+  twitch.keepAlive(it.channel);
+  const ch = twitch.channels.get(it.channel);
+  if (!ch) return;
+  const w = ch.window();
+  if (!w) return;
+  const pos = room.positionAt();
+  const now = Date.now();
+  let fix = null;
+  if (ch.offline && room.playing && pos > w.end / 1000 - 1) {
+    // Stream ist zu Ende: am letzten Bild für alle anhalten
+    room.playing = false;
+    room.position = w.end / 1000 - 0.5;
+    room.updatedAt = now;
+    room.seq++;
+    room.broadcast({ t: 'playback', playback: room.playback(), action: 'end' });
+    room.system('Der Stream ist offline.');
+    return;
+  }
+  if (room.playing && pos > w.end / 1000 - 1) fix = twitch.liveTarget(it.channel);      // Kante überholt → alle zurück auf live
+  else if (pos < w.start / 1000) fix = twitch.liveTarget(it.channel);                   // aus dem Fenster gefallen → live
+  if (fix == null || (room.lastLiveFix && now - room.lastLiveFix < 3000)) return;
+  room.lastLiveFix = now;
+  room.position = fix;
+  room.updatedAt = now;
+  room.seq++;
+  room.broadcast({ t: 'playback', playback: room.playback(), action: 'live' });
 }
 
 /** Wer im Raum den gewählten Film nicht sehen darf, bekommt Bescheid (der Host auch). */
@@ -1976,7 +2136,7 @@ setInterval(() => {
   telemetry.tick(rooms, cache.stats());
   // Fortschritt für „Zuletzt geschaut“
   for (const room of rooms.values()) {
-    if (!room.item || !room.playing || room.item.ext) continue;
+    if (!room.item || !room.playing || isExternal(room.item) || room.item.ext) continue;
     const pos = room.positionAt();
     for (const c of room.clients.values()) {
       if (!c.status || c.status.state !== 'playing') continue;

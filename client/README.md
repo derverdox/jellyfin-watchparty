@@ -102,3 +102,11 @@ Für die Tests müssen vorher `npm install` in `relay/` und `agent/` gelaufen un
 - **Framegen startet nicht:** In der Lobby unter *Einrichtung* prüfen, ob Framegen und das Modell installiert sind. Treiber aktuell halten, TensorRT 10 braucht einen neuen NVIDIA-Treiber.
 - **Engine-Bau schlägt fehl:** Meistens zu wenig Grafikspeicher oder ein alter Treiber. Ein Lite-Modell probieren.
 - **Bild hängt nach einem Sprung kurz:** Normal mit Framegen. mpv lädt das VapourSynth-Skript bei jedem Sprung neu, das dauert ein bis zwei Sekunden.
+
+## Twitch & YouTube
+
+Im Raum auf **📺 Twitch/YouTube** klicken und einen Link einfügen. Beides läuft in mpv, inklusive Framegen und RTX VSR.
+
+- **Twitch:** mpv spielt den Restream vom Relay. Der Client rechnet die Zeit von mpv (roher Zeitstempel des Streams) über die Zuordnung vom Relay (`/api/twitch/<kanal>/map`) auf die gemeinsame Zeitachse um, also genauso wie der Browser. Pause, Spulen im DVR-Fenster und **● LIVE** gelten für alle.
+- **YouTube** läuft über yt-dlp. Das Setup lädt `yt-dlp.exe` mit herunter (fehlt es, wird es beim ersten YouTube-Video nachgeholt) und aktualisiert es einmal am Tag. Unter Linux/macOS muss `yt-dlp` im PATH liegen.
+- Die Qualität merkt sich der Client getrennt für Jellyfin, Twitch und YouTube.

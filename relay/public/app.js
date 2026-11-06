@@ -7,7 +7,7 @@ const video = $('#video');
 const player = $('#player');
 // Heiße Pfade (updateControls, seek) laufen mehrfach pro Sekunde → Knoten cachen
 const D = {
-  btnPlay: $('#btn-play'), btnBack: $('#btn-back'), btnFwd: $('#btn-fwd'), btnNext: $('#btn-next'),
+  btnPlay: $('#btn-play'), btnBack: $('#btn-back'), btnFwd: $('#btn-fwd'), btnNext: $('#btn-next'), btnLive: $('#btn-live'),
   tCur: $('#t-cur'), tDur: $('#t-dur'),
   seek: $('#seek'), seekFill: $('#seek-fill'), seekBuffer: $('#seek-buffer'), seekTip: $('#seek-tip'),
 };
@@ -48,6 +48,7 @@ const S = {
   correcting: false,
   prefs: loadPrefs(),
   sel: { quality: null, audio: null, sub: -1 },
+  mode: 'video',        // 'video' (Jellyfin), 'twitch' (Relay-Restream) oder 'yt' (YouTube-Player) – siehe media.js
   lib: { stack: [], search: '' },
 };
 
@@ -204,7 +205,9 @@ function renderAgentStatus(online, server) {
   const box = $('#lobby-agent');
   box.classList.toggle('on', !!online);
   box.textContent = online ? `Heimserver online${server ? ` (${server})` : ''}` : 'Heimserver offline – Filme sind gerade nicht verfügbar';
-  $('#agent-banner').hidden = !!online || $('#view-room').hidden;
+  // Twitch/YouTube brauchen den Heimserver nicht
+  const external = !!(S.playback && S.playback.item && S.playback.item.source);
+  $('#agent-banner').hidden = !!online || external || $('#view-room').hidden;
 }
 
 $('#register-form').addEventListener('submit', async (e) => {
@@ -436,6 +439,7 @@ function onMessage(msg) {
     case 'chat': addChat(msg.msg); break;
     case 'react': floatEmoji(msg.emoji, msg.from); break;
     case 'error': toast(msg.text); break;
+    case 'load-url': onLoadUrl(msg); break;
     case 'announce':
       toast(`📣 ${msg.from}: ${msg.text}`);
       break;
@@ -464,8 +468,8 @@ function expectedPos() {
   const pb = S.playback;
   if (!pb) return 0;
   let p = pb.playing ? pb.position + (serverNow() - pb.updatedAt) / 1000 : pb.position;
-  const dur = (pb.item && pb.item.runtime) || video.duration;
-  if (Number.isFinite(dur) && dur > 0) p = Math.min(p, dur);
+  const dur = (pb.item && pb.item.runtime) || mediaDuration();
+  if (!(pb.item && pb.item.live) && Number.isFinite(dur) && dur > 0) p = Math.min(p, dur);
   return Math.max(0, p);
 }
 
@@ -473,6 +477,7 @@ function setPlayback(pb) {
   if (S.playback && pb.seq < S.playback.seq && pb.item && S.playback.item && pb.item.id === S.playback.item.id) return;
   S.playback = pb;
   renderNowPlaying();
+  if (S.me) renderAgentStatus(S.me.agentOnline, S.me.server);
   if (!pb.item) {
     teardownPlayer();
     if (window.WPExt) WPExt.unload();
@@ -496,7 +501,8 @@ function setPlayback(pb) {
   if (window.WPExt && WPExt.active()) WPExt.unload();
   if (pb.item.id !== S.loadedId) {
     $('#overlay-noaccess').hidden = true;
-    loadItem(pb.item.id);
+    if (pb.item.source) loadExternal(pb.item); // Twitch / YouTube (media.js)
+    else loadItem(pb.item.id);
   } else {
     syncTick(true);
   }
@@ -504,6 +510,7 @@ function setPlayback(pb) {
 }
 
 async function loadItem(id) {
+  if (S.mode !== 'video') teardownPlayer(); // von Twitch/YouTube zurück auf Jellyfin
   S.loadedId = id;
   S.info = null;
   $('#overlay-loading').hidden = false;
@@ -572,6 +579,7 @@ function currentSub() { return S.info && S.info.subs.find((s) => s.index === S.s
 function buildSource() {
   const info = S.info;
   if (!info) return;
+  if (S.mode !== 'video') return buildExternal();
   const sub = currentSub();
   const burn = sub && !sub.isText;
   // Direktwiedergabe geht nur ohne Spurwechsel / eingebrannte Untertitel
@@ -614,7 +622,7 @@ function buildSource() {
       S.hls = hls;
     } else {
       video.src = url; // Safari kann HLS nativ; Direktstream überall
-      video.addEventListener('loadedmetadata', () => { try { video.currentTime = expectedPos(); } catch { /* egal */ } }, { once: true });
+      video.addEventListener('loadedmetadata', () => { try { seekLocal(expectedPos()); } catch { /* egal */ } }, { once: true });
     }
   }
   applyTextTrack();
@@ -648,6 +656,7 @@ function stopTranscode() {
 function teardownPlayer() {
   destroyHls();
   stopTranscode();
+  teardownExternal();
   S.loadedId = null;
   S.loadedKey = null;
   S.info = null;
@@ -659,6 +668,7 @@ function teardownPlayer() {
 
 async function tryPlay() {
   if (S.blocked) return;
+  if (S.mode === 'yt') { ytPlay(); return; }
   try {
     await video.play();
   } catch (ex) {
@@ -685,28 +695,32 @@ $('#btn-unblock').addEventListener('click', () => {
 function syncTick(force = false) {
   const pb = S.playback;
   // Während der Nutzer am Balken zieht, nicht hinter ihm ins Video springen
-  if (!pb || !pb.item || !S.loadedKey || video.readyState < 1 || S.seeking) return;
+  if (!pb || !pb.item || !S.loadedKey || S.seeking) return;
+  if (S.mode === 'yt') return ytSync(force);
+  if (video.readyState < 1) return;
   const exp = expectedPos();
+  const cur = curPos();
+  if (!Number.isFinite(cur)) return; // Twitch: Zeitstempel noch unbekannt
 
   if (!pb.playing) {
     if (!video.paused) video.pause();
     video.playbackRate = 1;
-    if (!video.seeking && Math.abs(video.currentTime - exp) > 0.08) video.currentTime = exp;
+    if (!video.seeking && Math.abs(cur - exp) > 0.08) seekLocal(exp);
     return;
   }
 
-  if (video.ended && exp >= (video.duration || Infinity) - 1) return;
+  if (S.mode === 'video' && video.ended && exp >= (video.duration || Infinity) - 1) return;
   if (video.paused && !S.blocked) tryPlay();
   if (video.seeking) return;
 
-  const diff = exp - video.currentTime; // >0: ich hänge hinterher
+  const diff = exp - cur; // >0: ich hänge hinterher
   const ad = Math.abs(diff);
   const now = performance.now();
   if (ad > 1.5 && (force || now - S.lastHardSeek > 3000 || ad > 8)) {
     S.lastHardSeek = now;
     video.playbackRate = 1;
     // etwas vorausspringen, damit nach dem Laden nicht gleich wieder Rückstand ist
-    video.currentTime = exp + (diff > 0 && video.readyState < 3 ? 0.5 : 0);
+    seekLocal(exp + (diff > 0 && video.readyState < 3 ? 0.5 : 0));
     S.correcting = false;
     return;
   }
@@ -723,10 +737,15 @@ function reportStatus(forceState) {
   let state = forceState;
   if (!state) {
     if (S.blocked) state = 'blocked';
+    else if (S.mode === 'yt') state = ytState();
     else if (!S.loadedKey || video.readyState < 3 || video.seeking) state = S.playback.playing ? 'buffering' : (video.readyState < 1 ? 'buffering' : 'paused');
     else state = video.paused ? 'paused' : 'playing';
   }
-  send({ t: 'status', pos: video.currentTime || 0, state, drift: expectedPos() - (video.currentTime || 0) });
+  const cur = curPos();
+  const pos = Number.isFinite(cur) ? cur : expectedPos();
+  const msg = { t: 'status', pos, state, drift: Number.isFinite(cur) ? expectedPos() - cur : 0 };
+  if (S.mode === 'yt' && mediaDuration()) msg.dur = mediaDuration();
+  send(msg);
 }
 setInterval(() => reportStatus(), 2000);
 
@@ -755,15 +774,19 @@ video.addEventListener('error', () => {
 
 function duration() {
   if (window.WPExt && WPExt.active()) return WPExt.duration();
-  const d = (S.playback && S.playback.item && S.playback.item.runtime) || video.duration;
+  if (isLive()) { const w = liveWindow(); return w ? w.end - w.start : 0; }
+  const d = (S.playback && S.playback.item && S.playback.item.runtime) || mediaDuration();
   return Number.isFinite(d) && d > 0 ? d : 0;
 }
 
 function updateControls() {
   const pb = S.playback;
+  if (isLive()) return updateLiveControls();
+  D.btnLive.hidden = true;
   const dur = duration();
   const ext = window.WPExt && WPExt.active();
-  const cur = S.seeking ? Number(D.seek.value) / 1000 * dur : ext ? WPExt.time() : (S.loadedKey ? video.currentTime : expectedPos());
+  const local = S.loadedKey ? curPos() : NaN;
+  const cur = S.seeking ? Number(D.seek.value) / 1000 * dur : ext ? WPExt.time() : (Number.isFinite(local) ? local : expectedPos());
   D.tCur.textContent = ext && WPExt.live() ? 'LIVE' : fmt(cur);
   D.tDur.textContent = ext && WPExt.live() ? (WPExt.latency() != null ? `${String(Math.round(WPExt.latency() * 10) / 10).replace('.', ',')} s hinter live` : '') : fmt(dur);
   D.btnPlay.textContent = pb && pb.playing ? '❚❚' : '▶';
@@ -772,7 +795,8 @@ function updateControls() {
     D.seekFill.style.width = dur ? `${(cur / dur) * 100}%` : '0';
   }
   let buf = 0;
-  for (let i = 0; i < video.buffered.length; i++) {
+  if (S.mode === 'yt') buf = ytBuffered();
+  else for (let i = 0; i < video.buffered.length; i++) {
     if (video.buffered.start(i) <= video.currentTime + 1) buf = Math.max(buf, video.buffered.end(i));
   }
   D.seekBuffer.style.width = dur ? `${Math.min(100, (buf / dur) * 100)}%` : '0';
@@ -783,7 +807,7 @@ function updateControls() {
 
 function renderControlState() {
   const ok = canControl();
-  for (const id of ['#btn-play', '#btn-back', '#btn-fwd', '#seek']) $(id).disabled = !ok;
+  for (const id of ['#btn-play', '#btn-back', '#btn-fwd', '#seek', '#btn-live']) $(id).disabled = !ok;
   $('#lock-hint').hidden = ok;
   $('#host-panel').hidden = !isHost();
   $('#chk-all-control').checked = !!(S.room && S.room.allowAllControl);
@@ -794,6 +818,7 @@ function renderControlState() {
 
 function control(action, position) {
   if (!canControl() || !S.playback || !S.playback.item) return;
+  if (action === 'live') { send({ t: 'control', action }); return; }
   // Sofort lokal anwenden (fühlt sich direkter an), Server bestätigt
   const pb = { ...S.playback, position, updatedAt: serverNow(), playing: action === 'play' ? true : action === 'pause' ? false : S.playback.playing };
   S.playback = pb;
@@ -806,12 +831,14 @@ function control(action, position) {
 function togglePlay() {
   if (!S.playback || !S.playback.item) return;
   if (S.blocked) { $('#btn-unblock').click(); return; }
-  const pos = window.WPExt && WPExt.active() ? WPExt.time() : S.loadedKey && video.readyState >= 1 ? video.currentTime : expectedPos();
+  const cur = window.WPExt && WPExt.active() ? WPExt.time() : S.loadedKey ? curPos() : NaN;
+  const pos = Number.isFinite(cur) ? cur : expectedPos();
   control(S.playback.playing ? 'pause' : 'play', pos);
 }
 function seekBy(d) {
   if (!S.playback || !S.playback.item) return;
-  if (window.WPExt && WPExt.live()) return; // live: nicht spulbar
+  if (window.WPExt && WPExt.live()) return; // eingebetteter Twitch-Player live: nicht spulbar
+  if (isLive()) { control('seek', expectedPos() + d); return; } // Server hält es im DVR-Fenster
   const dur = duration();
   control('seek', Math.max(0, Math.min(dur || Infinity, expectedPos() + d)));
 }
@@ -836,7 +863,8 @@ seek.addEventListener('input', () => {
 seek.addEventListener('change', () => {
   const t = (Number(seek.value) / 1000) * duration();
   S.seeking = false;
-  control('seek', t);
+  const w = isLive() && liveWindow();
+  control('seek', w ? w.start + t : t);
 });
 // Tooltip: Rect cachen (getBoundingClientRect pro Maus-Event erzwingt Reflow) und
 // DOM-Schreibarbeiten auf ein rAF pro Frame bündeln.
@@ -851,7 +879,7 @@ seek.addEventListener('mousemove', (e) => {
     tipRaf = 0;
     const dur = duration();
     D.seekTip.hidden = !dur;
-    D.seekTip.textContent = fmt(tipPos * dur);
+    D.seekTip.textContent = isLive() ? `−${fmt(dur - tipPos * dur)}` : fmt(tipPos * dur);
     D.seekTip.style.left = `${tipPos * 100}%`;
   });
 });
@@ -866,6 +894,7 @@ $('#btn-next').addEventListener('click', () => {
 function applyVolumePrefs() {
   video.volume = S.prefs.volume;
   video.muted = S.prefs.muted;
+  ytVolume();
   $('#volume').value = S.prefs.volume;
   $('#btn-mute').textContent = video.muted || video.volume === 0 ? '🔇' : '🔊';
 }
@@ -891,6 +920,7 @@ $('#settings-menu').addEventListener('click', (e) => e.stopPropagation());
 document.addEventListener('click', () => { $('#settings-menu').hidden = true; });
 
 $('#sel-quality').addEventListener('change', (e) => {
+  if (S.mode === 'twitch') { setTwitchVariant(e.target.value); return; }
   S.sel.quality = e.target.value;
   S.prefs.quality = e.target.value;
   savePrefs();
@@ -964,6 +994,7 @@ function renderNowPlaying() {
   box.innerHTML = '';
   const item = S.playback && S.playback.item;
   if (!item) { box.append(el('span', { class: 'muted' }, 'Noch nichts ausgewählt')); return; }
+  if (item.source) box.append(el('span', { class: `src-badge ${item.source}` }, item.source === 'twitch' ? '● LIVE' : '▶ YouTube'));
   box.append(el('strong', {}, item.title));
   if (item.subtitle) box.append(el('span', { class: 'muted' }, ` · ${item.subtitle}`));
 }

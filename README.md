@@ -136,6 +136,21 @@ docker compose exec -e DOMAIN=example.com relay node server.js invite 48   # Ein
 - **📌 Schwarzes Brett:** Wunschliste für neue Medien. Jeder trägt Titel ein (mit Jahr, Notiz, Tags), stimmt ab und taggt. Beim Eintippen prüft es, ob der Titel schon da oder schon gewünscht ist. Admins setzen den Status (offen, in Arbeit, verfügbar, abgelehnt). Taucht ein Wunsch in Jellyfin auf, wird er von selbst „verfügbar“ und der Wünschende sieht es in der Lobby. Wer wünschen darf, steuert das Recht „Wünsche“ in den Gruppen.
 - **📊 Mein Jahr:** persönliche Statistik mit geschauten Stunden, aktiven Tagen, längster Serie am Stück, Top-Titeln, Lieblings-Genres und Wochentagen.
 
+## Twitch & YouTube im Raum
+
+Im Raum oben auf **📺 Twitch/YouTube** klicken und einen Link einfügen (`twitch.tv/kanal`, `youtube.com/watch?v=…`, `youtu.be/…`, auch mit `?t=90`).
+
+- **Twitch läuft über das Relay:** Der Server holt den Kanal **einmal** über einen einzigen Zugang und verteilt dieselben Segmente an alle im Raum. Er nimmt nur Segmente in seine Playlist auf, die schon komplett auf dem Server liegen. Damit bekommen alle exakt dieselben Daten zur selben Zeit.
+- **Feste Timeline auch für Livestreams:** Jedes Twitch-Segment hat einen Zeitstempel (`#EXT-X-PROGRAM-DATE-TIME`). Die Raum-Position ist dieser Zeitstempel, und jeder Browser rechnet ihn in seine lokale Videozeit um. Danach greift derselbe Sync wie bei Filmen: weiche Korrektur über die Abspielgeschwindigkeit, ab 80 ms Abweichung.
+- **Pausieren, Zurückspulen und „● LIVE“:** Das Relay hält ein DVR-Fenster vor (Standard 15 min). Pause und Spulen gelten für alle. „● LIVE“ springt den ganzen Raum zurück an die Kante. Hängt der Stream beim Streamer, setzt das Relay alle gemeinsam neu an.
+- **Qualität pro Person** (⚙): Alle Twitch-Qualitäten haben dieselben Zeitstempel, deshalb bleibt der Sync auch bei unterschiedlicher Qualität erhalten. Jede Qualität wird nur geholt, solange sie jemand schaut.
+- **Werbefrei/eigener Zugang:** `TWITCH_OAUTH` in der `relay/.env` (siehe `.env.example`). Ohne Token schaut das Relay anonym, Werbesegmente werden dann übersprungen.
+- **YouTube** läuft im offiziellen YouTube-Player und synchronisiert über dieselbe Raum-Position. YouTube kennt nur feste Geschwindigkeitsstufen, deshalb liegt die Genauigkeit hier etwa bei 0,1 s statt im Bild-Bereich.
+- **Desktop-Client:** Twitch und YouTube laufen auch in mpv (mit Framegen/VSR), synchron mit Browser und TV-App. YouTube braucht dort yt-dlp, das richtet der Client selbst ein.
+- **Grenzen:** Twitch-VODs/Clips gehen noch nicht, nur Live-Kanäle.
+
+> Twitch-Streams weiterzuverteilen ist nach den Twitch-Nutzungsbedingungen nicht erlaubt. Das ist für einen kleinen privaten Kreis gedacht, nicht für öffentliche Räume.
+
 ## Sicherheit
 
 - **Brute-Force-Schutz:** Nach 5 Fehlversuchen pro IP wächst die Wartezeit (2 s, 4 s, 8 s … bis 15 min). Ab 30 Fehlversuchen pro Stunde wird die IP für 1 h gesperrt, ab 100 am Tag für 24 h. Pro Konto werden Versuche ab 20 Fehlern gebremst, aber nicht hart gesperrt, damit niemand fremde Konten aussperren kann. Sperren überleben Neustarts und sind in der Verwaltung unter **Sicherheit** einsehbar.

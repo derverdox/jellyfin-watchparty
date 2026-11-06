@@ -367,12 +367,12 @@
     const out = [
       el('div', { class: 'nf-page-title' }, el('h2', {}, 'YouTube & Twitch')),
       el('section', { class: 'nf-row nf-ext' },
-        el('p', { class: 'muted' }, 'Link rein, alle schauen synchron mit. Das Video kommt bei jedem direkt von YouTube bzw. Twitch, euer Heimserver hat dabei nichts zu tun.'),
+        el('p', { class: 'muted' }, 'Link rein, alle schauen synchron mit. Euer Heimserver hat dabei nichts zu tun.'),
         form,
         el('ul', { class: 'nf-ext-hints muted' },
-          el('li', {}, 'YouTube und Twitch-Videos: Pause und Spulen gelten für alle.'),
-          el('li', {}, 'Twitch live: Wer schneller ist, wartet kurz auf den Langsamsten, damit niemand vorher jubelt.'),
-          el('li', {}, 'Werbung: Jeder schaut mit seinem eigenen Konto. Wer bei YouTube bzw. Twitch angemeldet ist und Premium/Turbo hat, sieht keine.'))),
+          el('li', {}, 'Twitch live: Der Server holt den Stream einmal und gibt allen exakt dasselbe Bild – aufs Bild genau synchron, mit Pause, Zurückspulen und „● LIVE“.'),
+          el('li', {}, 'YouTube, Twitch-Videos und Clips: Pause und Spulen gelten für alle.'),
+          el('li', {}, 'Werbung: Bei YouTube und Twitch-Videos schaut jeder mit seinem eigenen Konto (Premium/Turbo = keine Werbung). Twitch live läuft über den Zugang des Servers.'))),
     ];
     // Freunde, die gerade YouTube/Twitch schauen
     const box = el('section', { class: 'nf-row' });

@@ -27,7 +27,7 @@ test('Links erkennen', () => {
   assert.strictEqual(extKey({ kind: 'twitch', live: true, channel: 'x' }), 'tw:live:x');
 });
 
-test('Twitch im Raum: alle bekommen den Stream, Verzögerung wird geteilt', { timeout: 60000 }, async (t) => {
+test('Twitch-Video im Raum: alle bekommen den Stream, Verzögerung wird geteilt', { timeout: 60000 }, async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-ext-'));
   const port = 20000 + Math.floor(Math.random() * 20000);
   const proc = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
@@ -73,14 +73,16 @@ test('Twitch im Raum: alle bekommen den Stream, Verzögerung wird geteilt', { ti
   a.ws.send(JSON.stringify({ t: 'load-ext', url: 'https://example.com/nix' }));
   await wait(a, (m) => m.t === 'error' && /kein YouTube/.test(m.text), 'Fehler für falschen Link');
 
-  a.ws.send(JSON.stringify({ t: 'load-ext', url: 'https://www.twitch.tv/riotgames' }));
-  const pb = await wait(b, (m) => m.t === 'playback' && m.playback.item && m.playback.item.ext, 'Twitch-Stream bei allen');
-  assert.deepStrictEqual(pb.playback.item.ext, { kind: 'twitch', live: true, channel: 'riotgames' });
-  assert.strictEqual(pb.playback.item.id, 'tw:live:riotgames');
+  // Twitch live läuft über den Restream (twitch.test.js), VODs/Clips über den eingebetteten Player
+  a.ws.send(JSON.stringify({ t: 'load-ext', url: 'https://www.twitch.tv/videos/2290001234?t=90' }));
+  const pb = await wait(b, (m) => m.t === 'playback' && m.playback.item && m.playback.item.ext, 'Twitch-Video bei allen');
+  assert.deepStrictEqual(pb.playback.item.ext, { kind: 'twitch', video: '2290001234', start: 90 });
+  assert.strictEqual(pb.playback.item.id, 'tw:v:2290001234');
   assert.strictEqual(pb.playback.playing, true, 'läuft sofort');
+  assert.strictEqual(pb.playback.position, 90);
   assert.strictEqual(pb.playback.item.runtime, null);
 
-  // Verzögerung hinter live wird an alle verteilt
+  // Verzögerung (lat) wird an alle verteilt
   b.ws.send(JSON.stringify({ t: 'status', pos: 0, state: 'playing', drift: 0, lat: 7.25 }));
   a.ws.send(JSON.stringify({ t: 'status', pos: 0, state: 'playing', drift: 0, lat: 2.5 }));
   const mem = await wait(a, (m) => m.t === 'members' && m.members.some((x) => x.status && x.status.lat === 7.25) && m.members.some((x) => x.status && x.status.lat === 2.5), 'Verzögerung in der Mitgliederliste');
@@ -90,10 +92,10 @@ test('Twitch im Raum: alle bekommen den Stream, Verzögerung wird geteilt', { ti
   const act = await (await fetch(`${base}/api/activity`, { headers: lea })).json();
   const f = act.friends.find((x) => x.username === 'chef');
   assert.strictEqual(f.state, 'watching');
-  assert.strictEqual(f.item.title, 'riotgames');
-  assert.deepStrictEqual(f.item.ext, { kind: 'twitch', live: true, channel: 'riotgames' });
+  assert.strictEqual(f.item.title, 'Twitch-Video 2290001234');
+  assert.deepStrictEqual(f.item.ext, { kind: 'twitch', video: '2290001234', start: 90 });
 
   // Pause/Play gelten auch hier für alle
-  a.ws.send(JSON.stringify({ t: 'control', action: 'pause', position: 0 }));
+  a.ws.send(JSON.stringify({ t: 'control', action: 'pause', position: 95 }));
   await wait(b, (m) => m.t === 'playback' && m.playback.item && m.playback.item.ext && m.playback.playing === false, 'Pause bei allen');
 });

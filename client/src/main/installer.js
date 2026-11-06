@@ -21,6 +21,7 @@ const VSMLRT_BASE = `https://github.com/AmusementClub/vs-mlrt/releases/download/
 const VSMLRT_PARTS = [`vsmlrt-windows-x64-tensorrt.${VSMLRT_TAG}.7z.001`, `vsmlrt-windows-x64-tensorrt.${VSMLRT_TAG}.7z.002`];
 const VSMLRT_SCRIPTS = `scripts.${VSMLRT_TAG}.7z`;
 const MODELS_BASE = 'https://github.com/AmusementClub/vs-mlrt/releases/download/external-models';
+const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe';
 
 /** RIFE-Modelle, die der Client anbietet. pad = nötige Teilbarkeit der Bildgröße. */
 const MODELS = {
@@ -55,6 +56,44 @@ class Installer extends EventEmitter {
   get scriptsDir() { return path.join(this.dir, 'vs-scripts'); }
   get modelsDir() { return path.join(this.pluginsDir, 'models', 'rife'); }
 
+  /** yt-dlp für YouTube: unter Windows neben mpv, sonst aus dem PATH. */
+  ytdlpPath() { return process.platform === 'win32' ? path.join(this.dir, 'yt-dlp.exe') : 'yt-dlp'; }
+
+  /**
+   * yt-dlp holen (falls es fehlt) bzw. aktuell halten. YouTube ändert oft etwas,
+   * ein altes yt-dlp ist der häufigste Grund, wenn Videos nicht mehr laden.
+   */
+  async ensureYtDlp() {
+    if (process.platform !== 'win32') return 'yt-dlp';
+    const exe = this.ytdlpPath();
+    if (fs.existsSync(exe)) return exe;
+    if (!fs.existsSync(this.dir)) throw new Error('Erst den Player einrichten (Lobby → Player einrichten)');
+    const own = !this.abort;
+    if (own) this.abort = new AbortController();
+    try {
+      await fsp.mkdir(this.dl, { recursive: true });
+      const file = await this.download(YTDLP_URL, 'yt-dlp.exe', 'ytdlp', 'yt-dlp herunterladen');
+      await fsp.rename(file, exe).catch(async () => { await fsp.copyFile(file, exe); await fsp.rm(file, { force: true }); });
+      const m = this.manifest();
+      m.ytdlpUpdated = Date.now();
+      this.saveManifest(m);
+    } finally { if (own) this.abort = null; }
+    return exe;
+  }
+
+  /** Höchstens einmal am Tag im Hintergrund „yt-dlp -U“. */
+  updateYtDlp() {
+    const exe = this.ytdlpPath();
+    if (process.platform !== 'win32' || !fs.existsSync(exe)) return;
+    const m = this.manifest();
+    if (m.ytdlpUpdated && Date.now() - m.ytdlpUpdated < 24 * 3600 * 1000) return;
+    execFile(exe, ['-U'], { timeout: 120000, windowsHide: true }, () => {
+      const mm = this.manifest();
+      mm.ytdlpUpdated = Date.now();
+      this.saveManifest(mm);
+    });
+  }
+
   manifest() {
     try { return JSON.parse(fs.readFileSync(this.manifestFile, 'utf8')); } catch { return {}; }
   }
@@ -70,7 +109,8 @@ class Installer extends EventEmitter {
     const base = !!m.base && fs.existsSync(this.mpvExe);
     const framegen = base && !!m.framegen && fs.existsSync(path.join(this.scriptsDir, 'vsmlrt.py'));
     const models = Object.keys(MODELS).filter((k) => fs.existsSync(path.join(this.modelsDir, MODELS[k].onnx)));
-    return { supported, base, framegen, models, mpv: m.mpvVersion || null, busy: this.busy, dir: this.root };
+    const ytdlp = supported ? fs.existsSync(this.ytdlpPath()) : true;
+    return { supported, base, framegen, models, ytdlp, mpv: m.mpvVersion || null, busy: this.busy, dir: this.root };
   }
 
   /** Unsere eigenen Python-Hilfsdateien bei jedem Start aktualisieren. */
@@ -91,6 +131,7 @@ class Installer extends EventEmitter {
     this.abort = new AbortController();
     try {
       if (!this.status().base) await this.installBase();
+      if (!fs.existsSync(this.ytdlpPath())) await this.ensureYtDlp().catch((e) => this.progress('ytdlp', `yt-dlp fehlt (YouTube geht dann nicht): ${e.message}`, null));
       if (what === 'framegen') {
         if (!this.status().framegen) await this.installFramegen();
         if (model && !this.status().models.includes(model)) await this.installModel(model);

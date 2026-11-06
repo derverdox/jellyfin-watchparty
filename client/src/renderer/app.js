@@ -121,6 +121,23 @@ async function playSolo(itemId, position = 0) {
   } catch (e) { S.pendingPlay = null; toast(e.message, true); }
 }
 
+/**
+ * YouTube/Twitch-Link: Twitch live und YouTube laufen hier in mpv (über den Raum),
+ * Twitch-VODs/Clips meldet der Raum als eingebetteten Player → Fenster mit der Website.
+ */
+async function playExt(url) {
+  try {
+    if (S.code && S.you && !$('#view-room').hidden) {
+      if (canLoad()) await call('room:send', { t: 'load-ext', url });
+      else toast('Hier steuert gerade jemand anderes.', true);
+      return;
+    }
+    S.pendingExt = url;
+    const r = await call('room:solo');
+    enterRoom(r.code);
+  } catch (e) { S.pendingExt = null; toast(e.message, true); }
+}
+
 /* ---------------- Login ---------------- */
 
 $('#login-form').addEventListener('submit', async (ev) => {
@@ -364,6 +381,12 @@ function onEvent(ch, p) {
       renderMembers(); renderControlState();
       if (p.serverNow) S.offset = p.serverNow - Date.now();
       if (window.WP) WP.onMessage({ ...p, t: 'welcome' });
+      if (S.pendingExt) {
+        const url = S.pendingExt;
+        S.pendingExt = null;
+        if (canLoad()) call('room:send', { t: 'load-ext', url }).catch((e) => toast(e.message, true));
+        if (!(S.setup && S.setup.platform === 'win32' && !S.setup.base)) call('player:show').catch(() => {});
+      }
       if (S.pendingPlay) {
         const pp = S.pendingPlay;
         S.pendingPlay = null;
@@ -387,6 +410,13 @@ function onEvent(ch, p) {
     case 'room:chat': addChat(p); break;
     case 'room:react': floatEmoji(p.emoji, p.from); break;
     case 'room:error': toast(p, true); break;
+    case 'room:loadurl': {
+      const btn = $('#link-go');
+      btn.disabled = p.state === 'loading';
+      btn.textContent = p.state === 'loading' ? 'Verbinde …' : 'Für alle abspielen';
+      if (p.state === 'ok') { $('#link-form').hidden = true; $('#link-input').value = ''; }
+      break;
+    }
     case 'room:announce': toast(`📣 ${p.from}: ${p.text}`); break;
     case 'room:noaccess':
       S.noaccess = p.id;
@@ -425,7 +455,7 @@ function renderNow() {
   const pb = S.playback;
   const it = pb && pb.item;
   const info = S.item && it && S.item.id === it.id ? S.item : null;
-  $('#now-poster').hidden = !it;
+  $('#now-poster').hidden = !it || !!(it.source && !it.thumb);
   if (!it) {
     $('#now-eyebrow').textContent = 'Noch nichts ausgewählt';
     $('#now-title').textContent = 'Such euch was aus';
@@ -438,7 +468,7 @@ function renderNow() {
   $('#now-title').textContent = it.title;
   $('#now-sub').textContent = it.subtitle || '';
   if (it.ext) {
-    // YouTube/Twitch laufen nicht in mpv, sondern im Fenster mit der Website
+    // Twitch-VODs/Clips (eingebetteter Player) laufen nicht in mpv, sondern im Fenster mit der Website
     $('#now-sub').append(' · ', el('button', { class: 'btn small primary', onclick: () => call('ext:window', { code: S.code }).catch((e) => toast(e.message, true)) }, '▶ Im Fenster öffnen'));
     $('#now-poster').hidden = true;
     $('#now-bg').style.backgroundImage = it.ext.kind === 'youtube' ? `url("https://i.ytimg.com/vi/${it.ext.id}/hqdefault.jpg")` : '';
@@ -447,10 +477,13 @@ function renderNow() {
   }
   const poster = $('#now-poster');
   poster.onerror = () => { poster.hidden = true; };
-  if (poster.dataset.id !== it.id) { poster.dataset.id = it.id; poster.src = img(it.id, 300); }
-  $('#now-bg').style.backgroundImage = `url("${img(it.id, 1280, 'Backdrop')}")`;
+  // Twitch/YouTube: Bild kommt direkt von dort (falls vorhanden)
+  const art = it.source ? (it.thumb || '') : img(it.id, 300);
+  if (poster.dataset.id !== it.id) { poster.dataset.id = it.id; if (art) poster.src = art; }
+  $('#now-bg').style.backgroundImage = it.source ? (it.thumb ? `url("${it.thumb}")` : '') : `url("${img(it.id, 1280, 'Backdrop')}")`;
   const b = $('#now-badges');
   b.innerHTML = '';
+  if (it.source) b.append(el('span', { class: `badge src-badge ${it.source}` }, it.source === 'twitch' ? '● LIVE · Twitch' : '▶ YouTube'));
   if (info && info.width) b.append(el('span', { class: 'badge' }, `${info.width}×${info.height}`));
   if (it.runtime) b.append(el('span', { class: 'badge' }, fmt(it.runtime)));
   const f = S.filters;
@@ -470,12 +503,24 @@ function updateTransport() {
   const dur = duration();
   const p = S.player;
   const cur = S.seeking ? S.seekValue : p && p.running && p.ready ? p.pos : (p ? p.expected : 0);
-  $('#t-cur').textContent = fmt(cur);
-  $('#t-dur').textContent = fmt(dur);
+  const live = p && p.live && pb && pb.item && pb.item.live ? p.live : null;
+  if (live) {
+    // Twitch: Abstand zur Live-Kante statt Zeit, Leiste = DVR-Fenster
+    const behind = S.seeking ? Math.max(0, dur - cur) : live.behind;
+    $('#t-cur').textContent = behind > 3 ? `−${fmt(behind)}` : 'live';
+    $('#t-dur').textContent = `DVR ${fmt(dur)}`;
+  } else {
+    $('#t-cur').textContent = fmt(cur);
+    $('#t-dur').textContent = fmt(dur);
+  }
+  const liveBtn = $('#btn-live');
+  liveBtn.hidden = !(pb && pb.item && pb.item.live);
+  liveBtn.disabled = !canControl();
+  liveBtn.classList.toggle('at-live', !!(live && live.behind <= 3 && pb.playing));
   const pct = dur ? Math.min(100, (cur / dur) * 100) : 0;
   $('#seek-fill').style.width = `${pct}%`;
   $('#seek-knob').style.left = `${pct}%`;
-  const buf = p && p.cache ? Math.min(100, ((cur + p.cache) / (dur || 1)) * 100) : 0;
+  const buf = p && p.cache ? Math.min(100, ((cur + p.cache) / (dur || 1)) * 100) : 0; // bei Twitch: Puffer ab der eigenen Position
   $('#seek-buffer').style.width = `${buf}%`;
   const playing = !!(pb && pb.playing);
   const btn = $('#btn-play');
@@ -528,7 +573,7 @@ seekEl.addEventListener('pointermove', (ev) => {
   const t = seekAt(ev);
   const tip = $('#seek-tip');
   tip.hidden = false;
-  tip.textContent = fmt(t);
+  tip.textContent = S.player && S.player.live && S.playback && S.playback.item && S.playback.item.live ? `−${fmt(dur - t)}` : fmt(t);
   tip.style.left = `${(t / dur) * 100}%`;
   if (S.seeking) { S.seekValue = t; updateTransport(); }
 });
@@ -544,7 +589,25 @@ seekEl.addEventListener('pointerup', (ev) => {
   if (!S.seeking) return;
   S.seeking = false;
   $('#seek-tip').hidden = true;
-  call('room:control', { action: 'seek', position: seekAt(ev) });
+  const t = seekAt(ev);
+  const live = S.player && S.player.live && S.playback && S.playback.item && S.playback.item.live ? S.player.live : null;
+  call('room:control', { action: 'seek', position: live ? live.start + t : t });
+});
+
+/* ---------- Twitch & YouTube per Link ---------- */
+$('#btn-live').addEventListener('click', () => call('room:control', { action: 'live' }));
+$('#btn-link').addEventListener('click', () => {
+  if (!canLoad()) { toast('Du darfst hier gerade nichts auswählen.', true); return; }
+  const f = $('#link-form');
+  f.hidden = !f.hidden;
+  if (!f.hidden) $('#link-input').focus();
+});
+$('#link-cancel').addEventListener('click', () => { $('#link-form').hidden = true; });
+$('#link-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const url = $('#link-input').value.trim();
+  if (!url) return;
+  call('room:send', { t: 'load-url', url, play: !!(S.members && S.members.length === 1) }).catch((ex) => toast(ex.message, true));
 });
 
 document.addEventListener('keydown', (ev) => {
@@ -994,7 +1057,7 @@ window.WPX = {
   closeLibrary: () => { $('#library').hidden = true; },
   img,
   playSolo,
-  playExt: (url) => call('ext:window', { url }).catch((e) => toast(e.message, true)),
+  playExt,
   joinRoom: async (code) => { try { const r = await call('room:join', code); enterRoom(r.code); } catch (e) { toast(e.message, true); } },
   showLobby: () => showLobby(),
   goHome: () => showHome(),

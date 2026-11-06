@@ -157,6 +157,7 @@
     <main class="stage">
       <div class="player" id="player">
         <video id="video" playsinline preload="auto"></video>
+        <div class="yt-host" id="yt-host" hidden><div id="yt-frame"></div><div class="yt-shield" id="yt-shield"></div></div>
         <div class="reactions-layer" id="reactions-layer"></div>
         <div class="toasts-layer" id="toasts-layer"></div>
 
@@ -166,6 +167,7 @@
             <h2>Was schauen wir?</h2>
             <p class="muted">Such einen Film oder eine Folge aus – alle im Raum sehen es sofort.</p>
             <button class="btn primary" id="btn-library-empty">Bibliothek öffnen</button>
+            <button class="btn" id="btn-link-empty">📺 Twitch oder YouTube</button>
           </div>
         </div>
         <div class="overlay" id="overlay-noaccess" hidden>
@@ -193,6 +195,7 @@
             <button class="icon" id="btn-back" aria-label="10 Sekunden zurück">↺</button>
             <button class="icon" id="btn-fwd" aria-label="10 Sekunden vor">↻</button>
             <div class="time"><span id="t-cur">0:00</span> / <span id="t-dur">0:00</span></div>
+            <button class="btn small live-btn" id="btn-live" hidden title="Zurück zu live (für alle)">● LIVE</button>
             <span class="lock" id="lock-hint" hidden title="Nur der Host kann steuern">🔒 Host steuert</span>
             <div class="grow"></div>
             <div class="react-bar" id="react-bar"></div>
@@ -286,7 +289,7 @@
         <input name="url" placeholder="Link einfügen, z. B. youtube.com/watch?v=… oder twitch.tv/kanal" autocomplete="off" required>
         <button class="btn primary" type="submit">Los</button>
       </form>
-      <p class="muted tiny">Jeder schaut direkt bei YouTube/Twitch, mit seinem eigenen Konto. Wer dort angemeldet ist und Premium bzw. Turbo hat, sieht keine Werbung.</p>
+      <p class="muted tiny">Twitch live holt der Server einmal und gibt allen exakt denselben Stream (aufs Bild genau synchron). YouTube und Twitch-Videos schaut jeder mit seinem eigenen Konto.</p>
     </div>
   </div>
 
@@ -309,6 +312,7 @@
 
   <script src="/vendor/hls.min.js"></script>
   <script src="/app.js"></script>
+  <script src="/media.js"></script>
   <script src="/ext.js"></script>
   <script src="/extras.js"></script>
   <script src="/qrcode.js"></script>
