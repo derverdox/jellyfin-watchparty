@@ -679,3 +679,11 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 14px; col
 .src-badge { font-weight: 700; }
 .src-badge.twitch { background: #9146ff; color: #fff; }
 .src-badge.youtube { background: #ff0033; color: #fff; }
+/* Reiter „YouTube & Twitch“ */
+.nf-ext { display: grid; gap: 12px; max-width: 760px; }
+.nf-ext p { margin: 0; }
+.nf-ext-form { display: flex; gap: 8px; }
+.nf-ext-form input { flex: 1; min-width: 0; background: #000a; border: 1px solid #ffffff2e; color: #fff; border-radius: 8px; padding: 10px 12px; font: inherit; }
+.nf-ext-form input:focus { border-color: var(--accent); outline: none; }
+.nf-ext-hints { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+.nf-ext-recent { display: flex; flex-wrap: wrap; gap: 8px; }

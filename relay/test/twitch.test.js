@@ -262,12 +262,14 @@ test('Twitch-Restream & YouTube im Raum', { timeout: 90000 }, async (t) => {
   /* ---------- Fehlerfälle ---------- */
   await sleep(3100); // Steuer-Bremse (6 Aktionen / 3 s) zurücksetzen
   lea.msgs.length = 0;
-  lea.send({ t: 'load-url', url: 'https://www.twitch.tv/videos/12345' });
-  await lea.wait((x) => x.t === 'error' && /VODs/.test(x.text), 'VOD-Hinweis');
   lea.send({ t: 'load-url', url: 'https://example.com/foo' });
-  await lea.wait((x) => x.t === 'error' && /kein Twitch- oder YouTube-Link/.test(x.text), 'kein Link');
+  await lea.wait((x) => x.t === 'error' && /kein YouTube- oder Twitch-Link/.test(x.text), 'kein Link');
   lea.send({ t: 'load-url', url: 'twitch.tv/offline' });
   await lea.wait((x) => x.t === 'error' && /nicht live/.test(x.text), 'offline');
+  // Twitch-VODs gehen an den eingebetteten Player (ext.js), nicht an den Restream
+  lea.send({ t: 'load-ext', url: 'https://www.twitch.tv/videos/12345' });
+  m = await chef.wait((x) => x.t === 'playback' && x.playback.item && x.playback.item.ext && x.playback.item.ext.video === '12345', 'VOD eingebettet');
+  assert.ok(!m.playback.item.source, 'kein Restream');
 
   /* ---------- YouTube ---------- */
   await sleep(3100);

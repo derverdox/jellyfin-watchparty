@@ -9,7 +9,7 @@
  * Gemeinsame Helfer beider Oberflächen: el, S, toast, colorFor, showView; WP.* aus extras.js.
  * Was sich unterscheidet, kommt über window.WPX:
  *   api(path, opts), img(id, w, type), playSolo(itemId, pos), joinRoom(code),
- *   showLobby(), goHome(), openFolder(item)
+ *   showLobby(), goHome(), openFolder(item), playExt(url)
  */
 (function home() {
   const q = (s) => document.querySelector(s);
@@ -220,7 +220,8 @@
   function loading() { body().replaceChildren(el('div', { class: 'nf-loading' }, el('div', { class: 'spinner' }))); }
 
   async function renderStart() {
-    const libs = await libraries();
+    // Heimserver offline: trotzdem Freunde, Weiterschauen usw. zeigen (YouTube/Twitch gehen ja weiter)
+    const libs = await libraries().catch(() => []);
     const [hist, list, top] = await Promise.all([loadHistory().catch(() => []), watchlist().catch(() => []), topRated()]);
     const newest = await Promise.all([...movieLibs(libs), ...showLibs(libs)].map((l) => libItems(l, 'added', 20).then((r) => ({ lib: l, items: r.items || [] })).catch(() => ({ lib: l, items: [] }))));
     const out = [];
@@ -339,6 +340,57 @@
     return sec;
   }
 
+  /* ---------------- YouTube & Twitch ---------------- */
+
+  const EXT_KEY = 'wp_ext_recent';
+  const extRecent = () => { try { return JSON.parse(localStorage.getItem(EXT_KEY) || '[]'); } catch { return []; } };
+  function extRemember(url) {
+    try { localStorage.setItem(EXT_KEY, JSON.stringify([url, ...extRecent().filter((u) => u !== url)].slice(0, 12))); } catch { /* egal */ }
+  }
+  function extLabel(url) {
+    const m = /(?:v=|youtu\.be\/|shorts\/|live\/)([\w-]{11})/.exec(url);
+    if (m) return `YouTube · ${m[1]}`;
+    const t = /twitch\.tv\/(videos\/\d+|[\w]+)/i.exec(url);
+    return t ? `Twitch · ${t[1].replace('videos/', 'Video ')}` : url;
+  }
+  function startExt(url) {
+    const u = String(url || '').trim();
+    if (!/(youtube\.com|youtu\.be|twitch\.tv)/i.test(u)) { toast('Bitte einen YouTube- oder Twitch-Link einfügen.'); return; }
+    extRemember(u);
+    env.playExt(u);
+  }
+
+  async function renderExt() {
+    const input = el('input', { name: 'url', placeholder: 'YouTube- oder Twitch-Link einfügen …', autocomplete: 'off', required: true });
+    const form = el('form', { class: 'nf-ext-form', onsubmit: (e) => { e.preventDefault(); startExt(input.value); } },
+      input, el('button', { class: 'btn primary', type: 'submit' }, '▶ Zusammen schauen'));
+    const out = [
+      el('div', { class: 'nf-page-title' }, el('h2', {}, 'YouTube & Twitch')),
+      el('section', { class: 'nf-row nf-ext' },
+        el('p', { class: 'muted' }, 'Link rein, alle schauen synchron mit. Euer Heimserver hat dabei nichts zu tun.'),
+        form,
+        el('ul', { class: 'nf-ext-hints muted' },
+          el('li', {}, 'Twitch live: Der Server holt den Stream einmal und gibt allen exakt dasselbe Bild – aufs Bild genau synchron, mit Pause, Zurückspulen und „● LIVE“.'),
+          el('li', {}, 'YouTube, Twitch-Videos und Clips: Pause und Spulen gelten für alle.'),
+          el('li', {}, 'Werbung: Bei YouTube und Twitch-Videos schaut jeder mit seinem eigenen Konto (Premium/Turbo = keine Werbung). Twitch live läuft über den Zugang des Servers.'))),
+    ];
+    // Freunde, die gerade YouTube/Twitch schauen
+    const box = el('section', { class: 'nf-row' });
+    out.push(box);
+    const recent = extRecent();
+    if (recent.length) {
+      out.push(el('section', { class: 'nf-row' }, el('h3', {}, 'Zuletzt geteilt'),
+        el('div', { class: 'nf-ext-recent' }, recent.map((u) => el('button', { class: 'btn small', title: u, onclick: () => startExt(u) }, `▶ ${extLabel(u)}`)))));
+    }
+    body().replaceChildren(...out);
+    if (!isTv()) input.focus();
+    try {
+      const data = await api('/api/activity');
+      const live = (data.friends || []).filter((f) => f.item && f.item.ext && f.room);
+      if (live.length && box.isConnected) box.replaceChildren(el('h3', {}, 'Gerade bei Freunden'), el('div', { class: 'nf-friends' }, live.map(friendCard)));
+    } catch { /* egal */ }
+  }
+
   async function renderList() {
     H.cache.delete('watchlist');
     const list = await watchlist();
@@ -370,6 +422,7 @@
       else if (H.tab === 'movies') await renderKind('movies');
       else if (H.tab === 'series') await renderKind('series');
       else if (H.tab === 'list') await renderList();
+      else if (H.tab === 'ext') await renderExt();
       else await renderStart();
     } catch (e) {
       body().replaceChildren(el('div', { class: 'nf-hero-spacer' }), el('p', { class: 'error nf-empty' }, e.message));

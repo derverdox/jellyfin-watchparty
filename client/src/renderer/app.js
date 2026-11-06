@@ -121,6 +121,23 @@ async function playSolo(itemId, position = 0) {
   } catch (e) { S.pendingPlay = null; toast(e.message, true); }
 }
 
+/**
+ * YouTube/Twitch-Link: Twitch live und YouTube laufen hier in mpv (über den Raum),
+ * Twitch-VODs/Clips meldet der Raum als eingebetteten Player → Fenster mit der Website.
+ */
+async function playExt(url) {
+  try {
+    if (S.code && S.you && !$('#view-room').hidden) {
+      if (canLoad()) await call('room:send', { t: 'load-ext', url });
+      else toast('Hier steuert gerade jemand anderes.', true);
+      return;
+    }
+    S.pendingExt = url;
+    const r = await call('room:solo');
+    enterRoom(r.code);
+  } catch (e) { S.pendingExt = null; toast(e.message, true); }
+}
+
 /* ---------------- Login ---------------- */
 
 $('#login-form').addEventListener('submit', async (ev) => {
@@ -364,6 +381,12 @@ function onEvent(ch, p) {
       renderMembers(); renderControlState();
       if (p.serverNow) S.offset = p.serverNow - Date.now();
       if (window.WP) WP.onMessage({ ...p, t: 'welcome' });
+      if (S.pendingExt) {
+        const url = S.pendingExt;
+        S.pendingExt = null;
+        if (canLoad()) call('room:send', { t: 'load-ext', url }).catch((e) => toast(e.message, true));
+        if (!(S.setup && S.setup.platform === 'win32' && !S.setup.base)) call('player:show').catch(() => {});
+      }
       if (S.pendingPlay) {
         const pp = S.pendingPlay;
         S.pendingPlay = null;
@@ -402,6 +425,11 @@ function onEvent(ch, p) {
       $('#now-sub').textContent = `„${p.title}“ ist für dein Konto nicht freigegeben. Frag den Admin oder schlagt was anderes vor.`;
       break;
     case 'room:joined': enterRoom(p.code); break;
+    case 'room:ext':
+      S.ext = p.item;
+      renderNow();
+      toast(`„${p.item.title}“ (${p.item.subtitle}) läuft. Öffne es im Fenster, um mitzuschauen.`);
+      break;
     case 'room:agent': if (S.me) { S.me.agentOnline = p.online; } if (!p.online) toast('Der Heimserver ist gerade offline.', true); break;
     case 'room:kicked': toast(p.text || 'Du wurdest aus dem Raum entfernt.', true); S.code = null; showHome(); break;
     case 'player:state': {
@@ -439,6 +467,14 @@ function renderNow() {
   $('#now-eyebrow').textContent = pb.playing ? 'Läuft gerade' : 'Pausiert';
   $('#now-title').textContent = it.title;
   $('#now-sub').textContent = it.subtitle || '';
+  if (it.ext) {
+    // Twitch-VODs/Clips (eingebetteter Player) laufen nicht in mpv, sondern im Fenster mit der Website
+    $('#now-sub').append(' · ', el('button', { class: 'btn small primary', onclick: () => call('ext:window', { code: S.code }).catch((e) => toast(e.message, true)) }, '▶ Im Fenster öffnen'));
+    $('#now-poster').hidden = true;
+    $('#now-bg').style.backgroundImage = it.ext.kind === 'youtube' ? `url("https://i.ytimg.com/vi/${it.ext.id}/hqdefault.jpg")` : '';
+    $('#now-badges').innerHTML = '';
+    return;
+  }
   const poster = $('#now-poster');
   poster.onerror = () => { poster.hidden = true; };
   // Twitch/YouTube: Bild kommt direkt von dort (falls vorhanden)
@@ -1021,6 +1057,7 @@ window.WPX = {
   closeLibrary: () => { $('#library').hidden = true; },
   img,
   playSolo,
+  playExt,
   joinRoom: async (code) => { try { const r = await call('room:join', code); enterRoom(r.code); } catch (e) { toast(e.message, true); } },
   showLobby: () => showLobby(),
   goHome: () => showHome(),

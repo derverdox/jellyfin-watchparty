@@ -204,7 +204,7 @@ app.whenReady().then(async () => {
     if (!API_ALLOW.some(([mm, re]) => mm === m && re.test(ps))) throw new Error('Nicht erlaubt');
     return relay.request(m, ps, m === 'GET' ? undefined : (body || {}));
   });
-  const SEND_ALLOW = new Set(['load', 'load-url', 'suggest', 'queue-add', 'queue-remove', 'queue-move', 'queue-clear', 'queue-play', 'poll-start', 'poll-vote', 'poll-end']);
+  const SEND_ALLOW = new Set(['load', 'load-url', 'load-ext', 'suggest', 'queue-add', 'queue-remove', 'queue-move', 'queue-clear', 'queue-play', 'poll-start', 'poll-vote', 'poll-end']);
   handle('room:send', (msg) => {
     if (!msg || !SEND_ALLOW.has(msg.t)) throw new Error('Nicht erlaubt');
     return session.send(msg);
@@ -232,6 +232,27 @@ app.whenReady().then(async () => {
     adminWin.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(relay.base)) { e.preventDefault(); shell.openExternal(url); } });
     adminWin.on('closed', () => { adminWin = null; });
     return true;
+  });
+
+  /* ---------- YouTube/Twitch: Website im eigenen Fenster ---------- */
+  let extWin = null;
+  handle('ext:window', async ({ code, url } = {}) => {
+    let c = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!c) c = (await relay.request('POST', '/api/rooms', { solo: true })).code;
+    const ses = electronSession.fromPartition('persist:wp-web');
+    await ses.cookies.set({ url: relay.base, name: 'wp_sid', value: relay.sid, httpOnly: true, secure: relay.base.startsWith('https:'), sameSite: 'lax' });
+    const target = `${relay.base}/r/${c}${url ? `?ext=${encodeURIComponent(String(url).slice(0, 500))}` : ''}`;
+    if (extWin && !extWin.isDestroyed()) { extWin.loadURL(target); extWin.focus(); return { code: c }; }
+    extWin = new BrowserWindow({
+      width: 1280, height: 800, minWidth: 640, minHeight: 400, backgroundColor: '#000000', title: 'YouTube & Twitch · Watchparty',
+      icon: path.join(__dirname, '..', '..', 'build', 'icon.png'), autoHideMenuBar: true,
+      webPreferences: { partition: 'persist:wp-web', contextIsolation: true, sandbox: true, nodeIntegration: false, autoplayPolicy: 'no-user-gesture-required' },
+    });
+    extWin.loadURL(target);
+    extWin.webContents.setWindowOpenHandler(({ url: u }) => { if (/^https?:\/\//.test(u)) shell.openExternal(u); return { action: 'deny' }; });
+    extWin.webContents.on('will-navigate', (e, u) => { if (!u.startsWith(relay.base)) { e.preventDefault(); shell.openExternal(u); } });
+    extWin.on('closed', () => { extWin = null; });
+    return { code: c };
   });
 
   /* ---------- Player ---------- */

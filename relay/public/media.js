@@ -409,34 +409,12 @@ $('#yt-shield').addEventListener('click', () => {
 $('#yt-shield').addEventListener('dblclick', toggleFs);
 
 /* ------------------------------------------------------------------ */
-/* Link einfügen                                                       */
+/* Link einfügen: Eingabe kommt aus dem YouTube/Twitch-Fenster (app.js, #ext-modal) */
 /* ------------------------------------------------------------------ */
 
-function openLinkMenu() {
-  if (!canLoad()) { toast('Du darfst hier gerade nichts auswählen.'); return; }
-  const m = $('#link-menu');
-  m.hidden = false;
-  setTimeout(() => $('#link-input').focus(), 0);
-}
+$('#btn-link-empty').addEventListener('click', () => $('#btn-ext').click());
 
-$('#btn-link').addEventListener('click', (e) => {
-  e.stopPropagation();
-  if ($('#link-menu').hidden) openLinkMenu(); else $('#link-menu').hidden = true;
-});
-$('#btn-link-empty').addEventListener('click', (e) => { e.stopPropagation(); openLinkMenu(); });
-$('#link-menu').addEventListener('click', (e) => e.stopPropagation());
-document.addEventListener('click', () => { $('#link-menu').hidden = true; });
-$('#link-menu').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const url = $('#link-input').value.trim();
-  if (!url) return;
-  send({ t: 'load-url', url, play: !!(S.members && S.members.length === 1) });
-});
-
+/** Rückmeldung vom Relay, während ein Twitch-Kanal geöffnet wird. */
 function onLoadUrl(msg) {
-  const btn = $('#link-go');
-  if (msg.state === 'loading') { btn.disabled = true; btn.textContent = 'Verbinde …'; return; }
-  btn.disabled = false;
-  btn.textContent = 'Für alle abspielen';
-  if (msg.state === 'ok') { $('#link-menu').hidden = true; $('#link-input').value = ''; }
+  if (msg.state === 'loading') toast('Twitch wird verbunden …');
 }

@@ -23,6 +23,7 @@ const { WishStore } = require('./lib/wishes');
 const { Pairing } = require('./lib/pair');
 const { TwitchRelay, TwitchError, parseChannel } = require('./lib/twitch');
 const { parseYouTube, youtubeInfo } = require('./lib/youtube');
+const { parseExtUrl, extKey, extInfo } = require('./lib/ext');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -66,7 +67,7 @@ const twitch = new TwitchRelay({
   usherUrl: process.env.TWITCH_USHER_URL || undefined,
 });
 const YT_OEMBED = process.env.YOUTUBE_OEMBED_URL || 'https://www.youtube.com';
-const EXTERNAL_RE = /^(twitch|yt):/;
+const EXTERNAL_RE = /^(twitch|yt|tw):/;
 const isExternal = (item) => !!(item && (item.source === 'twitch' || item.source === 'youtube'));
 const guard = new Guard(CONFIG.dataDir, (ip, b) => {
   telemetry.audit({ type: 'ip-ban', ip, reason: b.reason, by: b.by === 'auto' ? undefined : b.by });
@@ -489,6 +490,7 @@ class Room {
         isHost: c.session.id === this.hostSid,
         status: c.status,
         joinedAt: c.joinedAt,
+        kind: c.kind,
       });
     }
     return seen;
@@ -586,7 +588,9 @@ const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'same-origin',
   'X-Frame-Options': 'SAMEORIGIN',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://www.youtube.com https://s.ytimg.com; img-src 'self' data: https://i.ytimg.com https://static-cdn.jtvnw.net; media-src 'self' blob:; connect-src 'self' ws: wss:; frame-src https://www.youtube-nocookie.com https://www.youtube.com; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'",
+  // YouTube/Twitch: eingebettete Player (Twitch-VODs/Clips, YouTube) + deren Skripte und Vorschaubilder.
+  // Twitch live kommt dagegen als Restream vom Relay selbst (media-src 'self').
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://www.youtube.com https://s.ytimg.com https://player.twitch.tv https://embed.twitch.tv; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.twitch.tv https://embed.twitch.tv https://clips.twitch.tv; img-src 'self' data: https://i.ytimg.com https://static-cdn.jtvnw.net; media-src 'self' blob:; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'",
   'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(), payment=(), usb=()', // Kamera: QR-Code scannen
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Resource-Policy': 'same-origin',
@@ -980,8 +984,8 @@ async function handle(req, res) {
       const hidden = room.private && !mineToo;
       let item = null;
       if (room.item && !hidden) {
-        item = (await canAccess(session, room.item.id).catch(() => false))
-          ? { id: room.item.id, title: room.item.title, subtitle: room.item.subtitle || null, type: room.item.type, seriesId: room.item.seriesId || null, position: Math.round(room.positionAt(now)), runtime: room.item.runtime || null }
+        item = (room.item.ext || isExternal(room.item) || await canAccess(session, room.item.id).catch(() => false))
+          ? { id: room.item.id, ext: room.item.ext || (room.item.source ? { kind: room.item.source, live: !!room.item.live, channel: room.item.channel, id: room.item.videoId } : undefined), title: room.item.title, subtitle: room.item.subtitle || null, type: room.item.type, seriesId: room.item.seriesId || null, position: Math.round(room.positionAt(now)), runtime: room.item.runtime || null }
           : { hidden: true };
       }
       const names = [];
@@ -1658,6 +1662,9 @@ function onConnection(ws, session, room, req) {
           // YouTube: Länge kennt nur der Player → erste Meldung übernehmen (für Ende & Warteschlange)
           const dur = Number(msg.dur);
           if (room.item && room.item.source === 'youtube' && !room.item.runtime && Number.isFinite(dur) && dur > 1 && dur < 48 * 3600) room.item.runtime = dur;
+          // Twitch live: wie weit hinter dem Live-Bild (für das Angleichen)
+          const lat = Number(msg.lat);
+          if (Number.isFinite(lat) && lat >= 0 && lat < 300) client.status.lat = Math.round(lat * 100) / 100;
           room.membersDirty = true;
           break;
         }
@@ -1719,20 +1726,21 @@ function onConnection(ws, session, room, req) {
           break;
         }
 
-        case 'load-url': {
-          // Twitch-Kanal oder YouTube-Video per Link
+        /* ---------- YouTube/Twitch per Link ---------- */
+        // Twitch live → Restream über das Relay (alle exakt derselbe Stream),
+        // YouTube → Player mit Raum-Sync (Browser: IFrame, Desktop: mpv + yt-dlp),
+        // Twitch-VODs/Clips → eingebetteter Twitch-Player (ext.js)
+        case 'load-url': case 'load-ext': {
           const isHost = session.id === room.hostSid;
           if (!mayControl(room, session) || (!isHost && !accessOf(session).perms.load)) { send({ t: 'error', text: 'Du darfst gerade nichts auswählen.' }); break; }
           if (!rateOk(client.ctrlTimes, 6, 3000)) break;
           const raw = String(msg.url || '').slice(0, 500);
-          const login = parseChannel(raw);
-          const yt = !login && parseYouTube(raw);
-          if (!login && !yt) {
-            send({ t: 'error', text: /twitch\.tv\/videos\//i.test(raw) ? 'Twitch-VODs gehen noch nicht – nur Live-Kanäle.' : 'Das ist kein Twitch- oder YouTube-Link.' });
-            break;
-          }
+          const ext = parseExtUrl(raw);
+          if (!ext) { send({ t: 'error', text: 'Das ist kein YouTube- oder Twitch-Link.' }); break; }
+          if (ext.kind === 'twitch' && !ext.live) { await startExt(room, ext, session.name); break; }
           send({ t: 'load-url', state: 'loading' });
-          const err = await startExternal(room, login ? { twitch: login } : { youtube: yt }, session.name, { play: login ? true : msg.play === true && room.clients.size === 1 }).catch((e) => e.message || 'Fehler');
+          const src = ext.kind === 'youtube' ? { youtube: { id: ext.id, start: ext.start || 0 } } : { twitch: ext.channel };
+          const err = await startExternal(room, src, session.name, { play: ext.kind === 'twitch' || (msg.play === true && room.clients.size === 1) || msg.t === 'load-ext' }).catch((e) => e.message || 'Fehler');
           send({ t: 'load-url', state: err ? 'error' : 'ok', text: err || undefined });
           if (err) send({ t: 'error', text: err });
           break;
@@ -1974,6 +1982,22 @@ async function startItem(room, itemId, byName, { play = false, position = 0 } = 
   return true;
 }
 
+/** YouTube/Twitch für den ganzen Raum starten (läuft sofort los). */
+async function startExt(room, ext, byName) {
+  const info = await extInfo(ext);
+  room.item = { id: extKey(ext), ext, title: info.title, subtitle: info.subtitle, type: 'External', runtime: null };
+  room.ratePrompted = true; // keine Bewertungsrunde
+  room.round = null;
+  room.advancing = 0;
+  room.playing = true;
+  room.position = Math.max(0, Number(ext.start) || 0);
+  room.updatedAt = Date.now();
+  room.seq++;
+  room.broadcast({ t: 'playback', playback: room.playback(), by: byName, action: 'load' });
+  room.system(`${byName} hat „${info.title}“ (${info.subtitle}) gestartet`);
+  return true;
+}
+
 function pollView(poll) {
   return {
     id: poll.id, by: poll.by, ends: poll.ends,
@@ -2112,7 +2136,7 @@ setInterval(() => {
   telemetry.tick(rooms, cache.stats());
   // Fortschritt für „Zuletzt geschaut“
   for (const room of rooms.values()) {
-    if (!room.item || !room.playing || isExternal(room.item)) continue;
+    if (!room.item || !room.playing || isExternal(room.item) || room.item.ext) continue;
     const pos = room.positionAt();
     for (const c of room.clients.values()) {
       if (!c.status || c.status.state !== 'playing') continue;
