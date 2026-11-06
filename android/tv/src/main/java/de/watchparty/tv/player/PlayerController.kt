@@ -159,7 +159,7 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
         scope.launch {
             try {
                 val t = api.twitch(item.channel ?: id.removePrefix("twitch:"))
-                if (loadedId != id || loadedMediaSourceId != mediaSourceId) return@launch
+                if (loadedId != id || loadedMediaSourceId != item.mediaSourceId) return@launch
                 twitch = t
                 val variants = t.optJSONArray("variants").map { Quality(it.optString("id"), it.optString("name")) }
                 val pref = prefs.twitchQuality
@@ -167,7 +167,7 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
                     ?: throw IllegalStateException("Twitch liefert keine Qualitäten")
                 startTwitch(item.channel ?: "", q, variants)
             } catch (e: Exception) {
-                if (loadedId == id && loadedMediaSourceId == mediaSourceId) _ui.value = PlayerUi(error = "Twitch: ${e.message}")
+                if (loadedId == id && loadedMediaSourceId == item.mediaSourceId) _ui.value = PlayerUi(error = "Twitch: ${e.message}")
             }
         }
     }
@@ -182,7 +182,7 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
         scope.launch {
             try {
                 val pi = PlayInfo.from(api.item(id, mediaSourceId))
-                if (loadedId != id) return@launch
+                if (loadedId != id || loadedMediaSourceId != mediaSourceId) return@launch
                 info = pi
                 autoQuality = pi.autoQuality
                 val audio = pickAudio(pi)
@@ -192,7 +192,7 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
                     audio = pi.audio, audioIndex = audio, subs = pi.subs, subIndex = sub)
                 openJellyfin(pi, q, audio, sub, room.expectedPos())
             } catch (e: Exception) {
-                if (loadedId == id) _ui.value = PlayerUi(error = "Konnte das Video nicht laden: ${e.message}")
+                if (loadedId == id && loadedMediaSourceId == mediaSourceId) _ui.value = PlayerUi(error = "Konnte das Video nicht laden: ${e.message}")
             }
         }
     }

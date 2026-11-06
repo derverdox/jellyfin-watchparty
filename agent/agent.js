@@ -19,7 +19,7 @@ const { DuplicateScanner } = require('./lib/duplicates');
 const selfDir = process.pkg ? path.dirname(process.execPath) : __dirname;
 loadEnvFile(path.join(selfDir, '.env'));
 
-const VERSION = '2.3.0';
+const VERSION = '2.4.0';
 const CFG = {
   relayUrl: process.env.RELAY_URL || '',
   token: process.env.AGENT_TOKEN || '',

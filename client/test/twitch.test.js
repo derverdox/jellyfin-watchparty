@@ -187,9 +187,10 @@ test('Desktop-Client: Twitch auf der Zeitstempel-Achse, YouTube über yt-dlp', {
   other.send({ t: 'control', action: 'play', position: 30 });
   await until(() => Math.abs(session.localPos() - roomPos()) < 0.12 && session.mpv.props.pause === false, 8000, 'YouTube synchron');
   // Qualität wird getrennt von Jellyfin gemerkt
+  const jellyfinQuality = settings.prefs.quality;
   await session.setPrefs({ quality: '720' });
   assert.strictEqual(settings.prefs.ytQuality, '720');
-  assert.strictEqual(settings.prefs.quality, 'direct', 'Jellyfin-Qualität bleibt');
+  assert.strictEqual(settings.prefs.quality, jellyfinQuality, 'Jellyfin-Qualität bleibt');
   const y720 = await until(() => mpvEvents().slice(before).filter((e) => e.ev === 'loadfile')[1], 5000, 'neu geladen mit 720p');
   assert.match(y720.ytdlFormat, /height<=720/);
 });
