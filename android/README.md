@@ -33,6 +33,13 @@ Eine eigene, native App, gebaut nur für die Fernbedienung. Sie ist keine Websit
 
 Textfelder öffnen die Bildschirmtastatur erst nach **OK**. Beim Drüberfahren bleiben die Pfeiltasten frei.
 
+### Updates
+
+Die TV-App schaut beim Start nach, ob es eine neue Version gibt, und bietet sie einmal an: **Jetzt installieren**, Später oder Überspringen. Unter **Einstellungen → Updates** geht das auch von Hand. Die App lädt das neue APK über `deine-domain/tv.apk`, prüft die Prüfsumme und übergibt es dem Android-Installer.
+
+- **Beim ersten Update** fragt Android, ob „Watchparty TV“ Apps installieren darf. Auf dem Fire TV liegt das unter *Einstellungen → Mein Fire TV → Entwickleroptionen → Apps unbekannter Herkunft → Watchparty TV: an*.
+- **Updates klappen nur mit festem Signierschlüssel** (GitHub-Secret `APP_KEYSTORE_B64`). Ohne Schlüssel signiert jeder Build anders, und Android lehnt das Update ab. Die App sagt das dann auch so.
+
 ### Installation auf dem Fire TV
 
 Wie unten beschrieben (Downloader), nur mit **`deine-domain/tv`** statt `/app`. Die TV-App hat eine eigene App-ID und läuft neben der alten Watchparty-App, die du danach deinstallieren kannst.

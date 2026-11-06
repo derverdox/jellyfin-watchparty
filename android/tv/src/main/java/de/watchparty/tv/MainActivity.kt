@@ -34,6 +34,8 @@ import de.watchparty.tv.ui.LoginScreen
 import de.watchparty.tv.ui.RoomScreen
 import de.watchparty.tv.ui.SetupScreen
 import de.watchparty.tv.ui.T
+import de.watchparty.tv.ui.UpdateDialog
+import de.watchparty.tv.ui.UpdateProgress
 
 class MainActivity : ComponentActivity() {
     private lateinit var app: AppState
@@ -83,6 +85,9 @@ class MainActivity : ComponentActivity() {
                             if (now - lastBack < 2500) finish() else { lastBack = now; app.toast("Nochmal „Zurück“ zum Beenden") }
                         }
                     }
+                    // Update: Hinweis einmal pro Version (nicht mitten im Film), Fortschritt unten rechts
+                    app.updatePrompt?.let { info -> if (top !is Screen.Room) UpdateDialog(app, info) }
+                    UpdateProgress(app, Modifier.align(Alignment.BottomEnd))
                     app.toast?.let { (text, bad) ->
                         T(text, Modifier.align(Alignment.TopCenter).padding(top = 28.dp).clip(RoundedCornerShape(12.dp))
                             .background(if (bad) C.danger else Color(0xF21E1E28)).padding(horizontal = 22.dp, vertical = 12.dp),
