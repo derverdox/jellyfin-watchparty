@@ -306,6 +306,8 @@ test('Twitch-Restream & YouTube im Raum', { timeout: 90000 }, async (t) => {
   assert.strictEqual(tvr.status, 302);
   assert.match(tvr.headers.get('location'), /watchparty-tv\.apk$/);
   assert.match((await fetch(`${base}/app`, { redirect: 'manual' })).headers.get('location'), /\/watchparty\.apk$/);
+  assert.match((await fetch(`${base}/tv.json`, { redirect: 'manual' })).headers.get('location'), /watchparty-tv\.json$/, 'Update-Info der TV-App');
+  assert.match((await fetch(`${base}/tv.apk`, { redirect: 'manual' })).headers.get('location'), /watchparty-tv\.apk$/);
   // YouTube braucht den Referer (sonst Fehler 153), aber nur die Domain
   assert.strictEqual((await fetch(`${base}/`)).headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
 });

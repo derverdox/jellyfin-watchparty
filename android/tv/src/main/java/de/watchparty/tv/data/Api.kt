@@ -38,6 +38,9 @@ class Prefs(ctx: Context) {
     var chatOverlay: Boolean
         get() = sp.getBoolean("chatOverlay", true)
         set(v) { sp.edit().putBoolean("chatOverlay", v).apply() }
+    var skippedUpdate: Long
+        get() = sp.getLong("skippedUpdate", 0L)
+        set(v) { sp.edit().putLong("skippedUpdate", v).apply() }
     var recentLinks: List<String>
         get() = (sp.getString("recentLinks", "") ?: "").split('\n').filter { it.isNotBlank() }
         set(v) { sp.edit().putString("recentLinks", v.take(12).joinToString("\n")).apply() }

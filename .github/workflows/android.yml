@@ -38,11 +38,20 @@ jobs:
         env:
           APP_KEYSTORE_B64: ${{ secrets.APP_KEYSTORE_B64 }}
           APP_KEYSTORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+          # Alias im Keystore (friendlyName beim Anlegen). Fehlt das Secret,
+          # bleibt es beim Gradle-Default "watchparty".
+          APP_KEY_ALIAS: ${{ secrets.APP_KEY_ALIAS || 'watchparty' }}
         run: |
           # Fester Schlüssel aus den Repo-Secrets, damit Updates über die alte Version passen.
           # Ohne Secret (z. B. PRs aus Forks) gibt es ein Debug-signiertes APK.
           if [ -n "$APP_KEYSTORE_B64" ]; then
-            echo "$APP_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/app.jks"
+            # Zeilenumbrüche entfernen; kaputte/abgeschnittene Secrets sauber melden
+            # statt mit "base64: invalid input" ohne Kontext abzurstürzen.
+            if ! printf '%s' "$APP_KEYSTORE_B64" | tr -d '\r\n' | base64 -d > "$RUNNER_TEMP/app.jks" 2>/dev/null \
+               || [ ! -s "$RUNNER_TEMP/app.jks" ]; then
+              echo "::error title=Keystore-Secret kaputt::APP_KEYSTORE_B64 dekodiert nicht (Länge ${#APP_KEYSTORE_B64}, durch 4 teilbar: $(( ${#APP_KEYSTORE_B64} % 4 == 0 ))). Secret einzeilig mit 'base64 -w0 app.jks' neu setzen."
+              exit 1
+            fi
             export APP_KEYSTORE="$RUNNER_TEMP/app.jks"
           else
             echo "::warning::Kein APP_KEYSTORE_B64-Secret: APK wird mit Debug-Schlüssel signiert"
@@ -53,6 +62,10 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk watchparty.apk
           cp tv/build/outputs/apk/release/tv-release.apk watchparty-tv.apk
           rm -f "$RUNNER_TEMP/app.jks"
+          # Update-Info für die TV-App (die App vergleicht versionCode und prüft die Prüfsumme)
+          printf '{"versionCode":%s,"versionName":"2.0.%s","sha256":"%s","size":%s,"commit":"%s"}\n' \
+            "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_NUMBER" "$(sha256sum watchparty-tv.apk | cut -d' ' -f1)" "$(stat -c%s watchparty-tv.apk)" "${GITHUB_SHA::7}" > watchparty-tv.json
+          cat watchparty-tv.json
           ls -la watchparty.apk watchparty-tv.apk
 
       # Kompilierfehler als Annotationen am Commit (GitHub zeigt max. 10 je Schritt → in Häppchen)
@@ -80,6 +93,7 @@ jobs:
           path: |
             android/watchparty.apk
             android/watchparty-tv.apk
+            android/watchparty-tv.json
 
       - name: Als „android-latest“ veröffentlichen
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
@@ -94,8 +108,9 @@ jobs:
           Installation: siehe android/README.md."
           if gh release view android-latest >/dev/null 2>&1; then
             gh release upload android-latest android/watchparty.apk android/watchparty-tv.apk --clobber
+            gh release upload android-latest android/watchparty-tv.json --clobber
             gh release edit android-latest --notes "$NOTES"
           else
-            gh release create android-latest android/watchparty.apk android/watchparty-tv.apk --target "$GITHUB_SHA" --prerelease \
+            gh release create android-latest android/watchparty.apk android/watchparty-tv.apk android/watchparty-tv.json --target "$GITHUB_SHA" --prerelease \
               --title "Android-App (aktuell)" --notes "$NOTES"
           fi

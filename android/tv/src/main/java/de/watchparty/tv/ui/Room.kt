@@ -551,7 +551,7 @@ private fun nameColor(name: String): Color {
 @Composable
 private fun Dialog(title: String, content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = Alignment.Center) {
-        Column(Modifier.width(620.dp).clip(RoundedCornerShape(18.dp)).background(C.surface).border(1.dp, C.line, RoundedCornerShape(18.dp)).padding(30.dp),
+        Column(Modifier.trapFocus().width(620.dp).clip(RoundedCornerShape(18.dp)).background(C.surface).border(1.dp, C.line, RoundedCornerShape(18.dp)).padding(30.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             T(title, size = 24.sp, weight = FontWeight.Bold)
             content()

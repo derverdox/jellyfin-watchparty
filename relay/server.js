@@ -787,6 +787,11 @@ async function handle(req, res) {
   }
   if (p === '/healthz') return sendJson(res, 200, { ok: true, agent: tunnel.online });
   // Kurze Links zum Eintippen: /tv → TV-App (Fire TV/Android TV), /app → Handy & Tablet
+  // Update-Info der TV-App (Build-Nummer + Prüfsumme, vom CI neben das APK gelegt)
+  if (req.method === 'GET' && p === '/tv.json') {
+    res.writeHead(302, { Location: TV_APK_URL.replace(/\.apk$/, '.json'), 'Cache-Control': 'no-store' });
+    return res.end();
+  }
   if (req.method === 'GET' && /^\/(tv|firetv)(\.apk|\/)?$/.test(p)) {
     res.writeHead(302, { Location: TV_APK_URL, 'Cache-Control': 'no-store' });
     return res.end();

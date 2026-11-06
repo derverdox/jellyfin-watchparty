@@ -39,6 +39,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -260,6 +262,12 @@ fun AutoFocus(requester: FocusRequester, key: Any? = Unit, delayMs: Long = 80) {
         }
     }
 }
+
+/** Fokus bleibt innerhalb (Dialoge): ◀▲▼▶ laufen nicht auf Elemente dahinter */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+fun Modifier.trapFocus(): Modifier = this
+    .focusProperties { exit = { FocusRequester.Cancel } }
+    .focusGroup()
 
 fun fmtTime(sec: Double): String {
     if (sec.isNaN() || sec < 0) return "0:00"
