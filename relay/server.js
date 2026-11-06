@@ -1501,9 +1501,11 @@ async function handle(req, res) {
       const detail = await getItemDetails(itemId, sourceId);
       const cap = playbackPolicy(detail, acc).maxBitrate;
       if (cap < 500000) throw new HttpError(503, 'Upload-Budget zu klein für Videowiedergabe');
-      const requested = Number(lower.get('maxstreamingbitrate')) || (Number(lower.get('videobitrate')) + (Number(lower.get('audiobitrate')) || 192000)) || 10000000;
+      const requested = Number(lower.get('maxstreamingbitrate')) || (Number(lower.get('videobitrate')) + 320000) || 10000000;
       const br = Math.min(Math.max(500000, requested), cap, 40000000);
-      const tier = tierAt(br);
+      // Keep Jellyfin's requested dimensions even if it chooses a lower video bitrate.
+      // Only the hard budget may narrow them; rounding an encoder bitrate must not drop Full HD.
+      const tier = tierAt(cap);
       const maxHeight = Math.min(Number(lower.get('maxheight')) || Infinity, detail.height || Infinity, tier.height);
       const maxWidth = Math.min(Number(lower.get('maxwidth')) || Infinity, detail.width || Infinity, Math.round(tier.height * 16 / 9));
       const copy = detail.videoCodec === 'h264' && !detail.hdr && detail.bitrate > 0 && detail.bitrate <= br && detail.height <= maxHeight && detail.width <= maxWidth && !lower.has('subtitlestreamindex');

@@ -79,6 +79,14 @@ test('Whole room selects best accessible source; all clients pin it and bandwidt
   assert.equal(request.query.AllowVideoStreamCopy, 'false');
   assert.equal(request.query.AllowAudioStreamCopy, 'false');
   assert.equal(request.query.MaxHeight, '1080');
+  const generatedChild = `/stream/${P.UHD}/main.m3u8?MediaSourceId=${uhdInfo.mediaSourceId}&VideoBitrate=9680000&AudioBitrate=192000&MaxHeight=1080&MaxWidth=1920`;
+  assert.equal((await chef.req('GET', generatedChild)).status, 200);
+  request = fakeJf.requests.filter((r) => r.path === `/Videos/${P.UHD}/main.m3u8`).at(-1);
+  assert.equal(request.query.MaxStreamingBitrate, '10000000', 'reconstruct the requested ceiling including the reserved 320 kbit/s');
+  assert.equal(request.query.MaxHeight, '1080', 'child playlist keeps Full HD rather than dropping a tier due to audio/headroom reservation');
+  assert.equal((await chef.req('GET', generatedChild.replace('9680000', '3680000'))).status, 200);
+  request = fakeJf.requests.filter((r) => r.path === `/Videos/${P.UHD}/main.m3u8`).at(-1);
+  assert.equal(request.query.MaxHeight, '1080', 'a lower encoder bitrate also retains the requested Full HD dimensions');
   assert.equal((await chef.req('GET', `/stream/${P.UHD}/master.m3u8?ms=${uhdInfo.mediaSourceId}&br=500000`)).status, 200);
   request = fakeJf.requests.filter((r) => r.path === `/Videos/${P.UHD}/master.m3u8`).at(-1);
   assert.ok(Number(request.query.VideoBitrate) + Number(request.query.AudioBitrate) <= 500000, 'audio and video jointly stay within a small budget');
