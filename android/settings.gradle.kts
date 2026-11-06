@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "watchparty-android"
 include(":app")
+include(":tv") // eigene Fire-TV-App (nativ, Compose for TV + ExoPlayer)

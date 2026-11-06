@@ -1,9 +1,12 @@
 name: Android-App (Fire TV, Handy, Tablet)
 
-# Baut die Android-App (android/) als signiertes APK, eine App für Fire TV, Android TV, Handy und Tablet.
-# Auf main wird sie unter dem festen Release „android-latest“ veröffentlicht:
+# Baut beide Android-Apps als signierte APKs:
+#   - android/app: Handy & Tablet (Website in einer App)       → watchparty.apk
+#   - android/tv:  native Fire-TV-/Android-TV-App (Compose)    → watchparty-tv.apk
+# Auf main werden sie unter dem festen Release „android-latest“ veröffentlicht:
 #   https://github.com/<owner>/<repo>/releases/download/android-latest/watchparty.apk
-# Das Relay leitet https://deine-domain/app (und /tv) dorthin weiter.
+#   https://github.com/<owner>/<repo>/releases/download/android-latest/watchparty-tv.apk
+# Das Relay leitet https://deine-domain/app auf die Handy-App und /tv auf die TV-App weiter.
 
 on:
   push:
@@ -30,7 +33,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: APK bauen
+      - name: APKs bauen
         working-directory: android
         env:
           APP_KEYSTORE_B64: ${{ secrets.APP_KEYSTORE_B64 }}
@@ -45,15 +48,38 @@ jobs:
             echo "::warning::Kein APP_KEYSTORE_B64-Secret: APK wird mit Debug-Schlüssel signiert"
           fi
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease
+          set -o pipefail
+          ./gradlew --no-daemon :app:assembleRelease :tv:assembleRelease 2>&1 | tee "$RUNNER_TEMP/build.log"
           cp app/build/outputs/apk/release/app-release.apk watchparty.apk
+          cp tv/build/outputs/apk/release/tv-release.apk watchparty-tv.apk
           rm -f "$RUNNER_TEMP/app.jks"
-          ls -la watchparty.apk
+          ls -la watchparty.apk watchparty-tv.apk
+
+      # Kompilierfehler als Annotationen am Commit (GitHub zeigt max. 10 je Schritt → in Häppchen)
+      - name: Fehler sammeln
+        if: failure()
+        run: |
+          L="$RUNNER_TEMP/build.log"; [ -f "$L" ] || exit 0
+          { grep -E '^e: ' "$L" | sed -E 's#^e: (file://)?[^ ]*/android/([^:]+):([0-9]+):([0-9]+) (.*)#::error file=android/\2,line=\3,col=\4::\5#'
+            awk '/What went wrong:/{f=1;n=0} f{printf "%s ", $0; if(++n>12){f=0; print ""}}' "$L" | sed 's/^/::error title=Gradle::/'
+          } > "$RUNNER_TEMP/errors.txt" || true
+          sed -n '1,10p' "$RUNNER_TEMP/errors.txt"
+      - name: Fehler 11–20
+        if: failure()
+        run: sed -n '11,20p' "$RUNNER_TEMP/errors.txt" 2>/dev/null || true
+      - name: Fehler 21–30
+        if: failure()
+        run: sed -n '21,30p' "$RUNNER_TEMP/errors.txt" 2>/dev/null || true
+      - name: Fehler 31–40
+        if: failure()
+        run: sed -n '31,40p' "$RUNNER_TEMP/errors.txt" 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: watchparty-android
-          path: android/watchparty.apk
+          path: |
+            android/watchparty.apk
+            android/watchparty-tv.apk
 
       - name: Als „android-latest“ veröffentlichen
         if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
@@ -62,11 +88,14 @@ jobs:
         run: |
           NOTES="Watchparty für Fire TV, Android TV, Handy und Tablet · Build ${GITHUB_RUN_NUMBER} · ${GITHUB_SHA::7}
 
-          Installation: siehe android/README.md. Kurzlink zum Eintippen: https://deine-domain/app"
+          - watchparty-tv.apk: Fire TV / Android TV (eigene TV-App). Kurzlink: https://deine-domain/tv
+          - watchparty.apk: Handy & Tablet. Kurzlink: https://deine-domain/app
+
+          Installation: siehe android/README.md."
           if gh release view android-latest >/dev/null 2>&1; then
-            gh release upload android-latest android/watchparty.apk --clobber
+            gh release upload android-latest android/watchparty.apk android/watchparty-tv.apk --clobber
             gh release edit android-latest --notes "$NOTES"
           else
-            gh release create android-latest android/watchparty.apk --target "$GITHUB_SHA" --prerelease \
+            gh release create android-latest android/watchparty.apk android/watchparty-tv.apk --target "$GITHUB_SHA" --prerelease \
               --title "Android-App (aktuell)" --notes "$NOTES"
           fi
