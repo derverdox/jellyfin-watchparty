@@ -29,12 +29,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -103,7 +108,8 @@ fun Focusable(
     val src = remember { MutableInteractionSource() }
     val focused by src.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (focused) focusedScale else 1f, tween(120), label = "scale")
-    LaunchedEffect(focused) { if (focused) onFocus?.invoke() }
+    val onFocusNow by rememberUpdatedState(onFocus)
+    LaunchedEffect(focused) { if (focused) onFocusNow?.invoke() }
     Box(
         modifier
             .then(if (requester != null) Modifier.focusRequester(requester) else Modifier)
@@ -135,36 +141,67 @@ fun ButtonRow(modifier: Modifier = Modifier, content: @Composable RowScope.() ->
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically, content = content)
 }
 
-/** Textfeld: OK öffnet die Bildschirmtastatur */
+/**
+ * Textfeld für die Fernbedienung: Beim Drüberfahren passiert nichts (keine Tastatur, keine
+ * gefangenen Pfeiltasten). Erst OK öffnet die Bildschirmtastatur; „Fertig“ oder Zurück schließt sie.
+ */
 @Composable
 fun TvField(
     value: String, onChange: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier,
     password: Boolean = false, url: Boolean = false, requester: FocusRequester? = null, onSubmit: () -> Unit = {},
 ) {
-    val src = remember { MutableInteractionSource() }
-    val focused by src.collectIsFocusedAsState()
-    BasicTextField(
-        value = value, onValueChange = onChange, singleLine = true, interactionSource = src,
-        textStyle = TextStyle(color = C.text, fontSize = 19.sp),
-        cursorBrush = SolidColor(C.accent),
-        visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
-        keyboardOptions = KeyboardOptions(
-            keyboardType = when { password -> KeyboardType.Password; url -> KeyboardType.Uri; else -> KeyboardType.Text },
-            imeAction = ImeAction.Done, autoCorrectEnabled = false,
-        ),
-        keyboardActions = KeyboardActions(onDone = { onSubmit() }, onSearch = { onSubmit() }, onGo = { onSubmit() }),
-        modifier = modifier.then(if (requester != null) Modifier.focusRequester(requester) else Modifier),
-        decorationBox = { inner ->
-            Box(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.surface2)
-                    .border(3.dp, if (focused) C.accent else C.line, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
-            ) {
-                if (value.isEmpty()) T(placeholder, color = C.muted, size = 19.sp, maxLines = 1)
-                inner()
+    var editing by remember { mutableStateOf(false) }
+    var wasEditing by remember { mutableStateOf(false) }
+    var hadFocus by remember { mutableStateOf(false) } // pro Eingabe: erst schließen, nachdem das Feld wirklich Fokus hatte
+    val inner = remember { FocusRequester() }
+    val own = remember { FocusRequester() }
+    val outer = requester ?: own
+    val keyboard = LocalSoftwareKeyboardController.current
+    val shown = if (password) "•".repeat(value.length) else value
+    LaunchedEffect(editing) {
+        if (editing) {
+            wasEditing = true
+            hadFocus = false
+            delay(40)
+            runCatching { inner.requestFocus() }
+            keyboard?.show()
+        } else if (wasEditing) {
+            delay(40)
+            runCatching { outer.requestFocus() }
+        }
+    }
+    Box(modifier) {
+        if (!editing) {
+            Focusable({ editing = true }, Modifier.fillMaxWidth(), RoundedCornerShape(12.dp), 1.02f, outer, background = C.surface2, focusedBackground = C.surface2) { f ->
+                Box(Modifier.fillMaxWidth().border(3.dp, if (f) C.accent else C.line, RoundedCornerShape(12.dp)).padding(horizontal = 18.dp, vertical = 14.dp)) {
+                    if (value.isEmpty()) T(placeholder, color = C.muted, size = 19.sp, maxLines = 1) else T(shown, size = 19.sp, maxLines = 1)
+                }
             }
-        },
-    )
+        } else {
+            BasicTextField(
+                value = value, onValueChange = onChange, singleLine = true,
+                textStyle = TextStyle(color = C.text, fontSize = 19.sp),
+                cursorBrush = SolidColor(C.accent),
+                visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = when { password -> KeyboardType.Password; url -> KeyboardType.Uri; else -> KeyboardType.Text },
+                    imeAction = ImeAction.Done, autoCorrectEnabled = false,
+                ),
+                keyboardActions = KeyboardActions(onDone = { editing = false; keyboard?.hide(); onSubmit() }),
+                modifier = Modifier.fillMaxWidth().focusRequester(inner)
+                    .onFocusChanged { if (it.isFocused) hadFocus = true else if (editing && hadFocus) editing = false },
+                decorationBox = { innerField ->
+                    Box(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.surface2)
+                            .border(3.dp, C.accent, RoundedCornerShape(12.dp)).padding(horizontal = 18.dp, vertical = 14.dp),
+                    ) {
+                        if (value.isEmpty()) T(placeholder, color = C.muted, size = 19.sp, maxLines = 1)
+                        innerField()
+                    }
+                },
+            )
+        }
+    }
 }
 
 /** Fortschrittsbalken (z. B. „Weiterschauen“) */
@@ -216,7 +253,8 @@ fun Qr(text: String, modifier: Modifier = Modifier, sizeDp: Dp = 220.dp) {
 @Composable
 fun AutoFocus(requester: FocusRequester, key: Any? = Unit, delayMs: Long = 80) {
     LaunchedEffect(key) {
-        repeat(10) {
+        // bis zu ~3 s probieren: Inhalte (z. B. Details) kommen erst aus dem Netz
+        repeat(36) {
             delay(delayMs)
             if (runCatching { requester.requestFocus() }.isSuccess) return@LaunchedEffect
         }

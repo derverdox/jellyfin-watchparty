@@ -1,11 +1,41 @@
 # 📺📱 Watchparty für Fire TV, Android TV, Handy und Tablet
 
-Eine App für alles. Sie öffnet deine Watchparty-Seite in einem eigenen Vollbild-Fenster und merkt sich die Anmeldung.
+Es gibt zwei Apps:
 
-- **Auf dem Fernseher** (Fire TV Stick, Fire TV Cube, Android/Google TV) bedienst du alles mit der **Fernbedienung**: Pfeiltasten, OK, Zurück. Das Video läuft im Vollbild, und der Bildschirmschoner bleibt aus, solange etwas läuft.
-- **Auf Handy und Tablet** ist es die normale Touch-Oberfläche. Mit der Zurück-Taste schließt du Fenster, Videos im Vollbild drehen sich ins Querformat.
+| App | Für | Kurzlink zum Eintippen |
+|---|---|---|
+| **Watchparty TV** (`android/tv`) | Fire TV Stick/Cube, Android TV, Google TV | `deine-domain/tv` |
+| **Watchparty** (`android/app`) | Android-Handy und -Tablet | `deine-domain/app` |
 
-Am Relay ist dafür nichts einzustellen. Die App ist dieselbe Website, die nur erkennt, dass sie in der App läuft.
+## Watchparty TV: die App für den Fernseher
+
+Eine eigene, native App, gebaut nur für die Fernbedienung. Sie ist keine Website im Rahmen.
+
+- **Startseite wie bei Netflix:** Links die Navigation. Oben groß der Titel, auf dem du gerade stehst. Darunter Reihen für „Läuft gerade bei Freunden“, „Weiterschauen“, „Meine Liste“, „Neu in …“ und „★ Top bei euch“. Beim Scrollen bleibt die ausgewählte Kachel an ihrem Platz.
+- **Bibliothek, Suche, Details und Serien** mit Staffeln und Folgen, Fortschritt, „Weiter mit S1E3“, Merkliste, „gesehen“, Vorschlagen und Warteschlange.
+- **Player mit ExoPlayer:** spielt fast jede Datei direkt in Originalqualität ab, auch MKV und HEVC, wenn das Gerät es kann. Sonst schaltet er von selbst auf Transcoding. Tonspur, Untertitel und Qualität kann jeder für sich wählen.
+- **Synchron mit allen:** dieselbe Sync-Logik wie Browser und Desktop. Kleine Abweichungen werden weich über die Geschwindigkeit ausgeglichen, größere durch einen Sprung.
+- **Twitch live** über den Restream des Servers, auf das Bild genau synchron, mit Pause, Zurückspulen und „● LIVE“. **YouTube** sowie Twitch-Videos und -Clips laufen im eingebetteten Player.
+- **Räume:** Freunde sehen und beitreten, Raum per Code öffnen, eigenen Raum erstellen. Wer im Raum ist, kann mit dem Handy den QR-Code scannen und dazukommen.
+- **Chat und Reaktionen** im Bild, Schnellantworten, Abstimmung „Was schauen wir?“, Bewertungsrunde nach dem Film, Intro überspringen, nächste Folge.
+- **Anmelden per QR-Code** mit dem Handy, ganz ohne Tippen. Benutzername und Passwort gehen auch.
+
+### Fernbedienung im Player
+
+| Taste | Was passiert |
+|---|---|
+| **OK** / ⏯ | Play/Pause für alle (während Intro/Abspann: überspringen) |
+| ◀ / ▶ | Spulen mit Vorschau: jeder Druck ±10 s, gedrückt halten ±30 s. Nach kurzer Pause wird gesprungen, OK springt sofort |
+| ⏪ / ⏩ | ±30 s |
+| ▼ | Steuerleiste: Zeitleiste (fokussieren, mit ◀/▶ Stelle wählen, OK), Ton & Untertitel, Qualität, Chat, Leute, Warteschlange, Reaktionen |
+| ▲ / ☰ | Chat (mit Reaktionen und Schnellantworten) |
+| Zurück | schließt Schritt für Schritt: Leiste → Spulen → Fenster. Danach die Wahl „Weiterschauen / Zur Startseite (Raum bleibt offen) / Raum verlassen“ |
+
+Textfelder öffnen die Bildschirmtastatur erst nach **OK**. Beim Drüberfahren bleiben die Pfeiltasten frei.
+
+### Installation auf dem Fire TV
+
+Wie unten beschrieben (Downloader), nur mit **`deine-domain/tv`** statt `/app`. Die TV-App hat eine eigene App-ID und läuft neben der alten Watchparty-App, die du danach deinstallieren kannst.
 
 ---
 
@@ -19,19 +49,21 @@ Apps außerhalb des Amazon-Appstores heißen beim Fire TV „Apps unbekannter He
    Auf der Startseite auf die Lupe gehen, **Downloader** suchen (orangenes Symbol, von AFTVnews) und installieren. Die App ist kostenlos.
 3. **Downloader erlauben, Apps zu installieren**
    *Einstellungen → Mein Fire TV → Entwickleroptionen → Apps unbekannter Herkunft installieren → Downloader: **AN***.
-4. **Watchparty herunterladen**
-   Downloader öffnen und ins Adressfeld deine Domain mit **`/app`** eintippen, z. B.
+4. **Watchparty TV herunterladen**
+   Downloader öffnen und ins Adressfeld deine Domain mit **`/tv`** eintippen, z. B.
    ```
-   watchparty.example.com/app
+   watchparty.example.com/tv
    ```
    → **Go**. Die App wird geladen, danach auf **Installieren** und dann auf **Fertig**. Die Frage, ob die Installationsdatei gelöscht werden soll, mit **Löschen** beantworten, die wird nicht mehr gebraucht.
 5. **Starten**
    Die App steht unter *Apps* (das Symbol mit den drei Quadraten) ganz hinten. Mit der Menü-Taste (☰) → *Verschieben* kannst du sie nach vorne holen.
-6. **Erster Start:** Server-Adresse eingeben (z. B. `watchparty.example.com`), dann **Verbinden**. Anmelden wie im Browser, fertig.
+6. **Erster Start:** Server-Adresse eingeben (z. B. `watchparty.example.com`), dann **Verbinden**. Danach den QR-Code mit dem Handy scannen: Watchparty am Handy öffnen, dann **📷 Gerät anmelden**. Fertig.
 
 > **Gleich anderer Server?** In der Lobby unten auf „Server ändern (App)“, oder wenn der Server nicht erreichbar ist, auf „Server ändern“.
 
-### Bedienung mit der Fernbedienung
+### Handy-App auf dem Fernseher (alte Variante)
+
+Die Handy-App läuft auch auf dem Fernseher, ist dort aber nur eine Website mit Fernbedienungs-Steuerung. Besser ist die TV-App oben.
 
 | Taste | Was passiert |
 |---|---|
@@ -53,7 +85,7 @@ Wenn auf dem PC die [Android Platform Tools](https://developer.android.com/tools
 2. Am PC:
    ```bash
    adb connect 192.168.1.50
-   adb install -r watchparty.apk
+   adb install -r watchparty-tv.apk
    ```
    Beim ersten Mal auf dem Fernseher „Erlauben“ drücken.
 

@@ -92,6 +92,7 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
         running = false
         main.removeCallbacks(ticker)
         unload()
+        lastPb = null // beim nächsten start() neu laden
     }
 
     fun release() {
