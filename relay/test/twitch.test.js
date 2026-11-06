@@ -74,7 +74,11 @@ function fakeTwitch() {
       req.on('end', () => {
         const j = JSON.parse(body);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        if (j.operationName === 'PlaybackAccessToken_Template') {
+        if (j.operationName === 'PlaybackAccessToken') {
+          // so fragt der Twitch-Player: gespeicherte Abfrage, Player-Typ „embed“
+          assert.strictEqual(j.extensions.persistedQuery.sha256Hash, 'ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9');
+          assert.strictEqual(j.variables.playerType, 'embed');
+          assert.strictEqual(req.headers['client-id'], 'kimne78kx3ncx6brgo4mv6wki5h1ko');
           if (j.variables.login === 'offline') return res.end(JSON.stringify({ data: { streamPlaybackAccessToken: { value: '{"x":1}', signature: 'sig', authorization: { isForbidden: false } } } }));
           return res.end(JSON.stringify({ data: { streamPlaybackAccessToken: { value: '{"x":1}', signature: 'sig', authorization: { isForbidden: false } } } }));
         }
@@ -82,9 +86,11 @@ function fakeTwitch() {
       });
       return;
     }
-    if (u.pathname.startsWith('/api/channel/hls/')) {
+    if (u.pathname.startsWith('/api/v2/channel/hls/')) {
       if (u.pathname.includes('offline')) { res.writeHead(404); return res.end('[]'); }
       assert.strictEqual(u.searchParams.get('sig'), 'sig');
+      assert.strictEqual(u.searchParams.get('platform'), 'web');
+      assert.strictEqual(u.searchParams.get('supported_codecs'), 'h264');
       res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
       return res.end([
         '#EXTM3U',
@@ -295,4 +301,6 @@ test('Twitch-Restream & YouTube im Raum', { timeout: 90000 }, async (t) => {
   const csp = (await fetch(`${base}/`)).headers.get('content-security-policy');
   assert.match(csp, /frame-src[^;]*youtube-nocookie\.com/);
   assert.match(csp, /script-src[^;]*www\.youtube\.com/);
+  // YouTube braucht den Referer (sonst Fehler 153), aber nur die Domain
+  assert.strictEqual((await fetch(`${base}/`)).headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
 });
