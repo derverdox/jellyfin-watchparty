@@ -114,4 +114,11 @@ function addMovies(n) {
   }
 }
 
-module.exports = { start, addMovies };
+function addMovieVersions(n = 0) {
+  // Far apart in the source list; must be grouped before pagination.
+  ITEMS[id('version-dvd')] = movie(id('version-dvd'), 'Versionsfilm - 576p', I.LIB_M, { height: 576 });
+  addMovies(n);
+  ITEMS[id('version-bd')] = movie(id('version-bd'), 'Versionsfilm - 1080p', I.LIB_M);
+  ITEMS[id('version-uhd')] = movie(id('version-uhd'), 'Versionsfilm - 2160p', I.LIB_K, { height: 2160 });
+}
+module.exports = { start, addMovies, addMovieVersions };
