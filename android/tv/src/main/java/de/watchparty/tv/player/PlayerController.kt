@@ -67,6 +67,10 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
     private var twitch: JSONObject? = null
     private var directFailed = false
     private var lastStatus = 0L
+    private var loadedMediaSourceId: String? = null
+    private var autoQuality: String? = null
+    private var stalledSince = 0L
+    private var lastAutoDrop = 0L
     private var lastUi = 0L
     private var running = false
 
@@ -106,6 +110,8 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
         webA?.stop()
         active = null
         loadedId = null
+        loadedMediaSourceId = null
+        autoQuality = null; stalledSince = 0L; lastAutoDrop = 0L
         info = null
         twitch = null
         sync.reset()
@@ -117,16 +123,17 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
     private fun onPlayback(pb: Playback?) {
         val item = pb?.item
         if (item == null) { if (loadedId != null) unload(); return }
-        if (item.id == loadedId) return
+        if (item.id == loadedId && item.mediaSourceId == loadedMediaSourceId) return
         unload()
         loadedId = item.id
+        loadedMediaSourceId = item.mediaSourceId
         directFailed = false
         _ui.value = PlayerUi(loading = true)
         when {
             item.ext != null -> loadExt(item, pb)
             item.source == "youtube" -> loadWeb(WebSource.YouTube(item.videoId ?: item.id.removePrefix("yt:"), room.expectedPos(pb)))
             item.source == "twitch" -> loadTwitch(item)
-            else -> loadJellyfin(item.id)
+            else -> loadJellyfin(item.id, item.mediaSourceId)
         }
     }
 
@@ -152,7 +159,7 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
         scope.launch {
             try {
                 val t = api.twitch(item.channel ?: id.removePrefix("twitch:"))
-                if (loadedId != id) return@launch
+                if (loadedId != id || loadedMediaSourceId != mediaSourceId) return@launch
                 twitch = t
                 val variants = t.optJSONArray("variants").map { Quality(it.optString("id"), it.optString("name")) }
                 val pref = prefs.twitchQuality
@@ -160,7 +167,7 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
                     ?: throw IllegalStateException("Twitch liefert keine Qualitäten")
                 startTwitch(item.channel ?: "", q, variants)
             } catch (e: Exception) {
-                if (loadedId == id) _ui.value = PlayerUi(error = "Twitch: ${e.message}")
+                if (loadedId == id && loadedMediaSourceId == mediaSourceId) _ui.value = PlayerUi(error = "Twitch: ${e.message}")
             }
         }
     }
@@ -171,12 +178,13 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
         _ui.value = _ui.value.copy(surface = PlayerSurface.EXO, live = true, qualities = variants, quality = variant, loading = true)
     }
 
-    private fun loadJellyfin(id: String) {
+    private fun loadJellyfin(id: String, mediaSourceId: String?) {
         scope.launch {
             try {
-                val pi = PlayInfo.from(api.item(id))
+                val pi = PlayInfo.from(api.item(id, mediaSourceId))
                 if (loadedId != id) return@launch
                 info = pi
+                autoQuality = pi.autoQuality
                 val audio = pickAudio(pi)
                 val sub = pickSub(pi)
                 val q = pickQuality(pi)
@@ -189,16 +197,15 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
         }
     }
 
-    private fun qualityList(pi: PlayInfo) = pi.qualities.filter { it.id != "direct" || (pi.allowDirect && !directFailed) }
+    private fun qualityList(pi: PlayInfo) = listOf(Quality("auto", "Automatisch · " + (pi.qualities.firstOrNull { it.id == (autoQuality ?: pi.autoQuality) }?.label ?: "Bandbreite berücksichtigen"))) + pi.qualities.filter { it.id != "direct" || (pi.allowDirect && !directFailed) }
 
     private fun pickQuality(pi: PlayInfo): String {
         val list = qualityList(pi)
         val want = prefs.quality
         if (list.any { it.id == want }) return want
-        // ExoPlayer spielt fast alles direkt: Original, wenn erlaubt
-        list.firstOrNull { it.id == "direct" }?.let { return it.id }
-        val lower = list.filter { it.id != "direct" && (it.id.toLongOrNull() ?: 0) <= (want.toLongOrNull() ?: Long.MAX_VALUE) }
-        return (lower.firstOrNull() ?: list.firstOrNull { it.id != "direct" } ?: list.firstOrNull())?.id ?: "10000000"
+        if (want == "direct") return pi.autoTranscodeQuality
+        val lower = list.filter { it.id != "direct" && it.id != "auto" && (it.id.toLongOrNull() ?: 0) <= (want.toLongOrNull() ?: Long.MAX_VALUE) }
+        return (lower.firstOrNull() ?: list.firstOrNull { it.id != "direct" && it.id != "auto" } ?: list.firstOrNull())?.id ?: "10000000"
     }
 
     private fun pickAudio(pi: PlayInfo): Int? {
@@ -214,22 +221,23 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
     }
 
     private fun openJellyfin(pi: PlayInfo, q: String, audio: Int?, sub: Int?, start: Double) {
-        val direct = q == "direct"
+        val effective = if (q == "auto") (autoQuality ?: pi.autoQuality) else q
+        val direct = effective == "direct"
         val subTrack = pi.subs.firstOrNull { it.index == sub }
         val burn = subTrack != null && !subTrack.isText
         // Bild-Untertitel (PGS …) gehen nur eingebrannt → Transcode
         val useDirect = direct && !burn
         val textSubs = pi.subs.filter { it.isText }.map { SubTrack(it.index, "${api.base}/subs/${pi.id}/${pi.mediaSourceId}/${it.index}.vtt", it.lang, it.label) }
         val src = if (useDirect) {
-            ExoSource.Jellyfin("${pi.id}|direct|$audio|$sub", "${api.base}/stream/${pi.id}/direct?ms=${pi.mediaSourceId}", false, start,
+            ExoSource.Jellyfin("${pi.id}|${pi.mediaSourceId}|direct|$audio|$sub", "${api.base}/stream/${pi.id}/direct?ms=${pi.mediaSourceId}", false, start,
                 textSubs, pi.audio.indexOfFirst { it.index == audio }.takeIf { it >= 0 }, if (burn) null else sub)
         } else {
-            val br = if (direct) (pi.qualities.firstOrNull { it.id != "direct" }?.id ?: "10000000") else q
+            val br = if (direct) pi.autoTranscodeQuality else effective
             val ps = (1..16).joinToString("") { "%02x".format(Random.nextInt(256)) }
             val qs = StringBuilder("ms=${pi.mediaSourceId}&ps=$ps&br=$br")
             if (audio != null) qs.append("&audio=$audio")
             if (burn) qs.append("&sub=$sub")
-            ExoSource.Jellyfin("${pi.id}|$br|$audio|${if (burn) "b$sub" else ""}|$sub", "${api.base}/stream/${pi.id}/master.m3u8?$qs", true, start,
+            ExoSource.Jellyfin("${pi.id}|${pi.mediaSourceId}|$br|$audio|${if (burn) "b$sub" else ""}|$sub", "${api.base}/stream/${pi.id}/master.m3u8?$qs", true, start,
                 textSubs, null, if (burn) null else sub)
         }
         active = exo
@@ -250,6 +258,7 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
         }
         val pi = info ?: return
         prefs.quality = id
+        autoQuality = pi.autoQuality; stalledSince = 0L; lastAutoDrop = 0L
         _ui.value = _ui.value.copy(quality = id)
         openJellyfin(pi, id, _ui.value.audioIndex, _ui.value.subIndex, if (pos.isNaN()) room.expectedPos() else pos)
     }
@@ -280,7 +289,8 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
             src is ExoSource.Jellyfin && !src.hls && pi != null -> {
                 // Originaldatei kann das Gerät nicht → Transcode
                 directFailed = true
-                val q = pi.qualities.firstOrNull { it.id != "direct" }?.id ?: "10000000"
+                autoQuality = pi.autoTranscodeQuality
+                val q = if (prefs.quality == "auto") "auto" else pi.autoTranscodeQuality
                 _ui.value = _ui.value.copy(qualities = qualityList(pi), quality = q, error = null)
                 openJellyfin(pi, q, _ui.value.audioIndex, _ui.value.subIndex, room.expectedPos())
             }
@@ -343,6 +353,25 @@ class PlayerController(private val ctx: Context, private val api: Api, private v
             !a.ready || a.buffering -> if (pb.playing) "buffering" else "paused"
             a.paused -> "paused"
             else -> "playing"
+        }
+        val pi = info
+        if (pi != null && prefs.quality == "auto" && item.isJellyfin) {
+            val now = SystemClock.elapsedRealtime()
+            if (!pb.playing || state != "buffering") stalledSince = 0L
+            else {
+                if (stalledSince == 0L) stalledSince = now
+                if (now - stalledSince >= 12000 && (lastAutoDrop == 0L || now - lastAutoDrop >= 30000)) {
+                    val current = autoQuality ?: pi.autoQuality
+                    val ceiling = if (current == "direct") minOf(pi.bitrate.takeIf { it > 0 } ?: Long.MAX_VALUE, pi.autoMaxBitrate) else current.toLongOrNull() ?: 0L
+                    val lower = pi.qualities.filter { it.id != "direct" && (it.id.toLongOrNull() ?: Long.MAX_VALUE) < ceiling }.maxByOrNull { it.id.toLongOrNull() ?: 0L }
+                    lastAutoDrop = now; stalledSince = now
+                    if (lower != null) {
+                        autoQuality = lower.id
+                        _ui.value = _ui.value.copy(qualities = qualityList(pi))
+                        openJellyfin(pi, "auto", _ui.value.audioIndex, _ui.value.subIndex, room.expectedPos())
+                    }
+                }
+            }
         }
         val o = JSONObject().put("t", "status").put("pos", if (cur.isNaN()) room.expectedPos(pb) else cur).put("state", state)
             .put("drift", if (cur.isNaN()) 0.0 else room.expectedPos(pb) - cur)

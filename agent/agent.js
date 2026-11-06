@@ -274,7 +274,7 @@ async function announce(sock) {
     try {
       jellyfin = await probeJellyfin();
       await getViews(true).catch(() => {});
-      sock.send(JSON.stringify({ t: 'hello', version: VERSION, userId: jellyfin.userId, userName: jellyfin.userName, serverName: jellyfin.serverName, jfVersion: jellyfin.version }));
+      sock.send(JSON.stringify({ t: 'hello', version: VERSION, userId: jellyfin.userId, userName: jellyfin.userName, serverName: jellyfin.serverName, jfVersion: jellyfin.version, maxUploadMbps: CFG.maxUploadMbps }));
       console.log(`[agent] ✔ Jellyfin "${jellyfin.serverName}" (${jellyfin.version}) bereit, lese als "${jellyfin.userName}"`);
       return;
     } catch (e) {

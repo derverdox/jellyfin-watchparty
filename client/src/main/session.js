@@ -14,7 +14,7 @@ const { Mpv } = require('./mpv');
 
 const SYNC_MS = 250;
 const STATUS_MS = 2000;
-const BITRATES = new Set(['40000000', '20000000', '10000000', '6000000', '3000000', '1500000']);
+const AutoQuality = require('../renderer/auto-quality');
 /** YouTube-Qualitäten (yt-dlp-Format, jeweils höchstens so hoch) */
 const YT_QUALITIES = [
   { id: 'best', label: 'Beste', height: 0 },
@@ -108,6 +108,8 @@ class Session extends EventEmitter {
     this.members = [];
     this.playback = null;
     this.info = null;
+    this.loadedMediaSourceId = null;
+    this.autoQuality = null; this.autoGuard = new AutoQuality.StallGuard();
     this.loadedId = null;
     this.loadedKey = null;
     this.fileReady = false;
@@ -287,19 +289,22 @@ class Session extends EventEmitter {
     }
     // Twitch live (Restream vom Relay) und YouTube (yt-dlp) laufen in mpv
     if (pb.item.id !== this.loadedId && pb.item.source) this.loadExternal(pb.item);
-    else if (pb.item.id !== this.loadedId) this.loadItem(pb.item.id);
+    else if (pb.item.id !== this.loadedId || (pb.item.mediaSourceId && pb.item.mediaSourceId !== this.loadedMediaSourceId)) this.loadItem(pb.item.id, pb.item.mediaSourceId);
     else this.syncTick(true);
   }
 
-  async loadItem(id) {
+  async loadItem(id, mediaSourceId = null) {
     this.stopTwitchMap();
     this.loadedId = id;
+    this.loadedMediaSourceId = mediaSourceId;
+    this.autoQuality = null; this.autoGuard = new AutoQuality.StallGuard();
     this.info = null;
     this.fileReady = false;
     try {
-      const info = await this.relay.item(id);
-      if (this.loadedId !== id) return;
+      const info = await this.relay.item(id, mediaSourceId);
+      if (this.loadedId !== id || this.loadedMediaSourceId !== mediaSourceId) return;
       this.info = info;
+      this.autoQuality = AutoQuality.recommended(info);
       this.ui('room:item', info);
       await this.openSource();
     } catch (e) {
@@ -311,7 +316,8 @@ class Session extends EventEmitter {
   chooseQuality() {
     const info = this.info;
     const list = info.qualities || [];
-    const want = String(this.settings.prefs.quality || 'direct');
+    const want = String(this.settings.prefs.quality || 'auto');
+    if (want === 'auto') return this.autoQuality || AutoQuality.recommended(info);
     if (list.some((x) => x.id === want)) return want;
     if (want === 'direct' || want === 'auto') return list.length ? list[0].id : 'direct';
     const lower = list.filter((x) => x.id !== 'direct' && Number(x.id) <= Number(want));
@@ -322,14 +328,14 @@ class Session extends EventEmitter {
     const info = this.info;
     const q = this.chooseQuality();
     this.activeQuality = q;
-    if (q === 'direct' || !BITRATES.has(String(q))) {
-      return { key: `${info.id}|direct`, url: `${this.relay.base}/stream/${info.id}/direct?ms=${info.mediaSourceId}`, direct: true };
+    if (q === 'direct') {
+      return { key: `${info.id}|${info.mediaSourceId}|direct`, url: `${this.relay.base}/stream/${info.id}/direct?ms=${info.mediaSourceId}`, direct: true };
     }
     const ps = crypto.randomBytes(16).toString('hex');
     const params = new URLSearchParams({ ms: info.mediaSourceId, ps, br: String(q) });
     const audio = this.pickAudioFromInfo();
     if (audio != null) params.set('audio', audio);
-    return { key: `${info.id}|${q}|${audio}`, url: `${this.relay.base}/stream/${info.id}/master.m3u8?${params}`, direct: false };
+    return { key: `${info.id}|${info.mediaSourceId}|${q}|${audio}`, url: `${this.relay.base}/stream/${info.id}/master.m3u8?${params}`, direct: false };
   }
 
   pickAudioFromInfo() {
@@ -708,7 +714,7 @@ class Session extends EventEmitter {
     }
     const prefs = this.settings.setPrefs(patch);
     if (this.info && this.info.source && (patch.twitchQuality || patch.ytQuality)) { this.loadedKey = null; await this.openSource(); }
-    if (patch.quality && patch.quality !== before.quality && this.info && !this.info.source) { this.loadedKey = null; await this.openSource(); }
+    if (patch.quality && patch.quality !== before.quality && this.info && !this.info.source) { this.autoQuality = AutoQuality.recommended(this.info); this.autoGuard = new AutoQuality.StallGuard(); this.loadedKey = null; await this.openSource(); }
     if (patch.volume != null && this.mpv) this.mpv.set('volume', Number(patch.volume)).catch(() => {});
     if (patch.framegen || patch.vsr) { this.updateButtons(); this.applyFilters(); }
     return prefs;
@@ -847,6 +853,11 @@ class Session extends EventEmitter {
   reportStatus() {
     if (!this.code) return;
     if (!this.playback || !this.playback.item) { this.send({ t: 'status', pos: 0, state: 'idle' }); return; }
+    if (this.info && !this.info.source && this.settings.prefs.quality === 'auto' &&
+        this.autoGuard.check({ playing: this.playback.playing, buffering: this.playerStateName() === 'buffering', seeking: !!this.mpv?.props.seeking })) {
+      const lower = AutoQuality.lower(this.info, this.autoQuality);
+      if (lower) { this.autoQuality = lower; this.openSource().catch((e) => this.ui('room:error', e.message)); }
+    }
     const local = this.localPos();
     const pos = Number.isFinite(local) ? local : this.expectedPos();
     const msg = { t: 'status', pos, state: this.playerStateName(), drift: Number.isFinite(local) ? this.expectedPos() - local : 0 };

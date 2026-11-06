@@ -55,7 +55,7 @@ class LibraryStore {
     let h = e.history.find((x) => x.id === item.id);
     if (!h) { h = { id: item.id }; e.history.unshift(h); }
     else { e.history = [h, ...e.history.filter((x) => x !== h)]; }
-    Object.assign(h, { title: item.title, subtitle: item.subtitle || '', type: item.type, runtime: item.runtime || null, pos: Math.round(pos), at: Date.now() });
+    Object.assign(h, { mediaSourceId: item.mediaSourceId || null, title: item.title, subtitle: item.subtitle || '', type: item.type, runtime: item.runtime || null, pos: Math.round(pos), at: Date.now() });
     if (item.runtime && pos / item.runtime >= 0.9 && !this.isWatched(username, item.id)) this.watchedMap(username)[item.id] = Date.now();
     if (e.history.length > MAX_HISTORY) e.history.length = MAX_HISTORY;
     this.dirty = true;

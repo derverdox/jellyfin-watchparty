@@ -24,7 +24,7 @@ class Prefs(ctx: Context) {
         get() = sp.getString("sid", null)
         set(v) { sp.edit().putString("sid", v).apply() }
     var quality: String
-        get() = sp.getString("quality", "direct") ?: "direct"
+        get() = sp.getString("quality", "auto") ?: "auto"
         set(v) { sp.edit().putString("quality", v).apply() }
     var twitchQuality: String
         get() = sp.getString("twitchQuality", "") ?: ""
@@ -117,7 +117,7 @@ class Api(private val prefs: Prefs, version: String) {
     suspend fun search(q: String): JSONObject = get("/api/search?q=${enc(q)}")
     suspend fun details(id: String) = get("/api/details/$id")
     suspend fun show(id: String, room: String?) = get("/api/show/$id" + (room?.let { "?room=$it" } ?: ""))
-    suspend fun item(id: String) = get("/api/item/$id")
+    suspend fun item(id: String, mediaSourceId: String? = null) = get("/api/item/$id" + (mediaSourceId?.let { "?ms=$it" } ?: ""))
     suspend fun activity() = get("/api/activity")
     suspend fun soloRoom(): String = post("/api/rooms", JSONObject().put("solo", true)).getString("code")
     suspend fun newRoom(): String = post("/api/rooms").getString("code")

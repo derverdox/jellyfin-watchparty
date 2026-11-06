@@ -31,6 +31,7 @@ const S = {
   room: null,           // { code, host, allowAllControl }
   members: [],
   playback: null,       // { item, playing, position, updatedAt, seq }
+  loadedMediaSourceId: null, autoQuality: null, autoGuard: new WPQuality.StallGuard(),
   info: null,           // Details zum geladenen Item (Tonspuren, Untertitel …)
   loadedId: null,
   loadedKey: null,
@@ -499,25 +500,28 @@ function setPlayback(pb) {
     return;
   }
   if (window.WPExt && WPExt.active()) WPExt.unload();
-  if (pb.item.id !== S.loadedId) {
+  if (pb.item.id !== S.loadedId || (pb.item.mediaSourceId && pb.item.mediaSourceId !== S.loadedMediaSourceId)) {
     $('#overlay-noaccess').hidden = true;
     if (pb.item.source) loadExternal(pb.item); // Twitch / YouTube (media.js)
-    else loadItem(pb.item.id);
+    else loadItem(pb.item.id, pb.item.mediaSourceId);
   } else {
     syncTick(true);
   }
   updateControls();
 }
 
-async function loadItem(id) {
+async function loadItem(id, mediaSourceId = null) {
   if (S.mode !== 'video') teardownPlayer(); // von Twitch/YouTube zurück auf Jellyfin
   S.loadedId = id;
+  S.loadedMediaSourceId = mediaSourceId;
+  S.autoQuality = null; S.autoGuard = new WPQuality.StallGuard();
   S.info = null;
   $('#overlay-loading').hidden = false;
   try {
-    const info = await api(`/api/item/${id}`);
-    if (S.loadedId !== id) return;
+    const info = await api(`/api/item/${id}${mediaSourceId ? `?ms=${encodeURIComponent(mediaSourceId)}` : ''}`);
+    if (S.loadedId !== id || S.loadedMediaSourceId !== mediaSourceId) return;
     S.info = info;
+    S.autoQuality = WPQuality.recommended(info, qualityList(info));
     chooseTracks();
     fillSettings();
     buildSource();
@@ -560,7 +564,8 @@ function fillSettings() {
   const info = S.info;
   const qs = $('#sel-quality');
   qs.innerHTML = '';
-  qs.append(el('option', { value: 'auto', selected: S.sel.quality === 'auto' }, `Automatisch${info.resolution ? ` (bis ${info.resolution})` : ''}`));
+  const autoLabel = qualityList(info).find((q) => q.id === S.autoQuality)?.label;
+  qs.append(el('option', { value: 'auto', selected: S.sel.quality === 'auto' }, `Automatisch${autoLabel ? ` · ${autoLabel}` : ''}`));
   for (const q of qualityList(info)) qs.append(el('option', { value: q.id, selected: q.id === S.sel.quality }, q.label));
   const as = $('#sel-audio');
   as.innerHTML = '';
@@ -584,8 +589,9 @@ function buildSource() {
   const burn = sub && !sub.isText;
   // Direktwiedergabe geht nur ohne Spurwechsel / eingebrannte Untertitel
   const audioIsDefault = S.sel.audio == null || S.sel.audio === info.defaultAudioIndex;
-  const direct = (S.sel.quality === 'direct' || S.sel.quality === 'auto') && info.directPlayable && audioIsDefault && !burn;
-  const key = [info.id, direct ? 'direct' : S.sel.quality, S.sel.audio, burn ? sub.index : ''].join('|');
+  const effectiveQuality = S.sel.quality === 'auto' ? S.autoQuality : S.sel.quality;
+  const direct = effectiveQuality === 'direct' && info.directPlayable && audioIsDefault && !burn;
+  const key = [info.id, info.mediaSourceId, direct ? 'direct' : effectiveQuality, S.sel.audio, burn ? sub.index : ''].join('|');
 
   if (key !== S.loadedKey) {
     S.loadedKey = key;
@@ -597,7 +603,7 @@ function buildSource() {
       url = `/stream/${info.id}/direct?ms=${info.mediaSourceId}`;
     } else {
       S.playSession = randHex(16);
-      const q = new URLSearchParams({ ms: info.mediaSourceId, ps: S.playSession, br: S.sel.quality === 'direct' || S.sel.quality === 'auto' ? bestTranscode(info) : S.sel.quality });
+      const q = new URLSearchParams({ ms: info.mediaSourceId, ps: S.playSession, br: effectiveQuality === 'direct' ? (info.autoTranscodeQuality || bestTranscode(info)) : effectiveQuality });
       if (S.sel.audio != null) q.set('audio', S.sel.audio);
       if (burn) q.set('sub', sub.index);
       url = `/stream/${info.id}/master.m3u8?${q}`;
@@ -741,6 +747,11 @@ function reportStatus(forceState) {
     else if (!S.loadedKey || video.readyState < 3 || video.seeking) state = S.playback.playing ? 'buffering' : (video.readyState < 1 ? 'buffering' : 'paused');
     else state = video.paused ? 'paused' : 'playing';
   }
+  if (S.mode === 'video' && S.info && S.sel.quality === 'auto' && !S.blocked &&
+      S.autoGuard.check({ playing: S.playback.playing, buffering: state === 'buffering', seeking: S.seeking })) {
+    const lower = WPQuality.lower(S.info, S.autoQuality, qualityList(S.info));
+    if (lower) { S.autoQuality = lower; fillSettings(); buildSource(); toast('Verbindung langsam – Übertragungsqualität reduziert.'); }
+  }
   const cur = curPos();
   const pos = Number.isFinite(cur) ? cur : expectedPos();
   const msg = { t: 'status', pos, state, drift: Number.isFinite(cur) ? expectedPos() - cur : 0 };
@@ -762,7 +773,8 @@ video.addEventListener('error', () => {
   $('#overlay-loading').hidden = true;
   if (S.loadedKey.includes('|direct|')) {
     toast('Direktwiedergabe klappt hier nicht – wechsle auf Transcoding.');
-    S.sel.quality = bestTranscode(S.info);
+    if (S.sel.quality === 'auto') S.autoQuality = S.info.autoTranscodeQuality || bestTranscode(S.info);
+    else S.sel.quality = bestTranscode(S.info);
     fillSettings();
     buildSource();
   } else toast('Video konnte nicht abgespielt werden.');
@@ -922,6 +934,7 @@ document.addEventListener('click', () => { $('#settings-menu').hidden = true; })
 $('#sel-quality').addEventListener('change', (e) => {
   if (S.mode === 'twitch') { setTwitchVariant(e.target.value); return; }
   S.sel.quality = e.target.value;
+  if (S.info && e.target.value === 'auto') { S.autoQuality = WPQuality.recommended(S.info, qualityList(S.info)); S.autoGuard = new WPQuality.StallGuard(); fillSettings(); }
   S.prefs.quality = e.target.value;
   savePrefs();
   buildSource();

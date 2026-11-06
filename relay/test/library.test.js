@@ -91,14 +91,16 @@ test('Suche, Merkliste, Verlauf, Qualität', { timeout: 60000 }, async (t) => {
 
   /* Qualitätsstufen aus der Quelle */
   const q4k = (await req('GET', `/api/item/${I.M_RUECK}`)).data;
-  assert.strictEqual(q4k.qualities[0].label, 'Original · 4K HDR · 60 Mbit/s');
-  assert.deepStrictEqual(q4k.qualities.map((q) => q.id), ['direct', '40000000', '20000000', '10000000', '6000000', '3000000', '1500000']);
-  assert.match(q4k.qualities[1].label, /^4K · 40 Mbit\/s$/);
+  assert.strictEqual(q4k.allowDirect, false, '60 Mbit/s original exceeds the group cap');
+  assert.strictEqual(q4k.resolution, '4K HDR');
+  assert.strictEqual(q4k.autoQuality, '10000000');
+  assert.deepStrictEqual(q4k.qualities.map((q) => q.id), ['40000000', '20000000', '10000000', '6000000', '3000000', '1500000']);
+  assert.match(q4k.qualities[0].label, /^4K · bis 40 Mbit\/s$/);
   const q720 = (await req('GET', `/api/item/${I.M_4K}`)).data;
-  assert.deepStrictEqual(q720.qualities.map((q) => q.id), ['direct', '3000000', '1500000'], '720p mit 4 Mbit/s: nichts darüber');
+  assert.deepStrictEqual(q720.qualities.map((q) => q.id), ['direct', '6000000', '3000000', '1500000'], '720p can use an HD output ceiling even below 6 Mbit/s input');
   assert.strictEqual(q720.qualities[0].label, 'Original · HD · 4 Mbit/s');
   const q1080 = (await req('GET', `/api/item/${I.M_NEU}`)).data;
-  assert.deepStrictEqual(q1080.qualities.map((q) => q.id), ['direct', '6000000', '3000000', '1500000'], '1080p mit 8 Mbit/s');
+  assert.deepStrictEqual(q1080.qualities.map((q) => q.id), ['direct', '20000000', '10000000', '6000000', '3000000', '1500000'], '1080p remains selectable at 8 Mbit/s input');
 
   /* Merkliste */
   assert.strictEqual((await req('POST', '/api/watchlist', { itemId: I.M_RUECK })).data.on, true);
@@ -119,6 +121,7 @@ test('Suche, Merkliste, Verlauf, Qualität', { timeout: 60000 }, async (t) => {
   let hist = [];
   for (let i = 0; i < 140 && !hist.length; i++) { await sleep(100); hist = (await req('GET', '/api/history')).data.items; }
   assert.strictEqual(hist[0].title, 'Neuer Film');
+  assert.strictEqual(hist[0].mediaSourceId, q1080.mediaSourceId, 'resume records the actual source');
   assert.ok(hist[0].pos >= 20 && hist[0].progress > 30, `Fortschritt ${hist[0].progress} %`);
   assert.ok((await req('GET', `/api/item/${I.M_NEU}`)).data.resume >= 20);
   await req('DELETE', `/api/history/${I.M_NEU}`);

@@ -19,7 +19,8 @@ const { Telemetry, TICK_MS } = require('./lib/telemetry');
 const { handleAdmin } = require('./lib/admin');
 const { Guard } = require('./lib/guard');
 const { LibraryStore, variants, parseQuery, score, fold } = require('./lib/library');
-const { groupMovies, qualities: movieQualities } = require('./lib/movie-versions');
+const { groupMovies, movieTitle, qualities: movieQualities } = require('./lib/movie-versions');
+const { displayHeight, sourceHeight, bestSource, compareItems, tierAt, deliveryPolicy, resolutionName } = require('./lib/playback-quality');
 const { WishStore } = require('./lib/wishes');
 const { WishSearch } = require('./lib/wishsearch');
 const { Pairing } = require('./lib/pair');
@@ -37,6 +38,8 @@ const CONFIG = {
   cacheDir: path.resolve(__dirname, process.env.CACHE_DIR || './cache'),
   cacheBytes: Math.max(0.5, Number(process.env.CACHE_MAX_GB || 10)) * 1024 ** 3,
   trustProxy: process.env.TRUST_PROXY === 'true',
+  streamMaxMbps: Math.max(0, Number(process.env.STREAM_MAX_MBPS) || 0),
+  autoMaxMbps: Math.max(0.5, Number(process.env.AUTO_MAX_MBPS) || 10),
   secureCookies: process.env.SECURE_COOKIES === 'true',
 };
 
@@ -202,11 +205,13 @@ function itemLite(id) {
   return jsonCache.get(`li|${id}`, () => jf(`/Users/${uid()}/Items/${id}?Fields=${ITEM_FIELDS},Genres`));
 }
 
-function getItemDetails(id) {
-  return jsonCache.get(`item|${id}`, async () => {
-    const u = uid();
-    const it = await jf(`/Users/${u}/Items/${id}`);
-    const ms = (it.MediaSources || [])[0];
+function itemFull(id) { return jsonCache.get(`raw-item|${id}`, () => jf(`/Users/${uid()}/Items/${id}`)); }
+
+function getItemDetails(id, mediaSourceId = null) {
+  return jsonCache.get(`item|${id}|${mediaSourceId || 'best'}`, async () => {
+    const it = await itemFull(id);
+    const ms = mediaSourceId ? (it.MediaSources || []).find((source) => source.Id === mediaSourceId) : bestSource(it);
+    if (mediaSourceId && !ms) throw new HttpError(400, 'Diese Quelle gehört nicht zum gewählten Titel');
     if (!ms) throw new HttpError(400, 'Dieses Element hat keine abspielbare Datei');
     const streams = ms.MediaStreams || [];
     const video = streams.find((s) => s.Type === 'Video');
@@ -245,11 +250,13 @@ function getItemDetails(id) {
       ...mapItem(it),
       ...displayTitle(it),
       mediaSourceId: ms.Id,
+      runtime: ms.RunTimeTicks ? ms.RunTimeTicks / 1e7 : (it.RunTimeTicks ? it.RunTimeTicks / 1e7 : null),
       defaultAudioIndex: ms.DefaultAudioStreamIndex ?? (defAudio ? defAudio.index : null),
       defaultSubIndex: ms.DefaultSubtitleStreamIndex ?? -1,
       audio,
       subs,
       directPlayable,
+      sourceDisplayHeight: sourceHeight(ms, it.Name),
       width: video ? video.Width : null,
       height: video ? video.Height : null,
       bitrate: ms.Bitrate || (video && video.BitRate) || null,
@@ -260,7 +267,7 @@ function getItemDetails(id) {
       seriesId: it.SeriesId || null,
       seasonId: it.SeasonId || null,
       genres: it.Genres || [],
-      segments: await mediaSegments(it.Id),
+      segments: (it.MediaSources || []).length > 1 && ms.Id !== it.MediaSources[0].Id ? [] : await mediaSegments(it.Id),
     };
   });
 }
@@ -741,53 +748,10 @@ async function serveDirect(req, res, itemId, ms) {
   }
 }
 
-const BITRATES = new Set([1500000, 3000000, 6000000, 10000000, 20000000, 40000000]);
-
-/** Transcode-Stufen: Bitrate → Auflösung und Name. */
-const TIERS = [
-  { br: 40000000, height: 2160, name: '4K' },
-  { br: 20000000, height: 1080, name: 'Full HD' },
-  { br: 10000000, height: 1080, name: 'Full HD', note: 'sparsam' },
-  { br: 6000000, height: 720, name: 'HD' },
-  { br: 3000000, height: 480, name: 'SD' },
-  { br: 1500000, height: 360, name: 'Mobil' },
-];
-const TIER_HEIGHT = Object.fromEntries(TIERS.map((t) => [t.br, t.height]));
-
-function resName(h) {
-  if (!h) return '';
-  if (h >= 1900) return '4K';
-  if (h >= 1300) return 'QHD';
-  if (h >= 1000) return 'Full HD';
-  if (h >= 700) return 'HD';
-  return 'SD';
+function streamSettings() {
+  return { maxMbps: CONFIG.streamMaxMbps, autoMbps: CONFIG.autoMaxMbps, uploadMbps: tunnel.info && tunnel.info.maxUploadMbps || 0 };
 }
-function mbitLabel(br) { return `${(br / 1e6).toFixed(br < 10e6 ? 1 : 0).replace('.', ',').replace(',0', '')} Mbit/s`; }
-
-/**
- * Wählbare Qualitäten für eine Datei: nie mehr als das Original hergibt
- * (Bitrate und Auflösung) und nie mehr als die Gruppe darf.
- */
-function qualityOptions(d, acc) {
-  const out = [];
-  const srcH = d.height || 0;
-  const srcBr = d.bitrate || 0;
-  if (acc.perms.direct) {
-    out.push({ id: 'direct', label: `Original · ${[resName(srcH), d.hdr ? 'HDR' : ''].filter(Boolean).join(' ')}${srcBr ? ` · ${mbitLabel(srcBr)}` : ''}`, height: srcH, br: srcBr || null, original: true });
-  }
-  for (const t of TIERS) {
-    if (t.br > acc.maxBitrate) continue;
-    if (srcH && t.height > srcH * 1.05) continue;       // nicht hochskalieren
-    if (srcBr && t.br >= srcBr * 0.95) continue;         // nicht mehr als das Original
-    out.push({ id: String(t.br), label: `${t.name}${t.note ? ` (${t.note})` : ''} · ${mbitLabel(t.br)}`, height: t.height, br: t.br });
-  }
-  // Ganz ohne Stufe (z. B. sehr kleine Datei, keine Originalqualität erlaubt): kleinste erlaubte nehmen
-  if (!out.length) {
-    const t = [...TIERS].reverse().find((x) => x.br <= acc.maxBitrate) || TIERS[TIERS.length - 1];
-    out.push({ id: String(t.br), label: `${t.name} · ${mbitLabel(t.br)}`, height: t.height, br: t.br });
-  }
-  return out;
-}
+function playbackPolicy(d, access) { return deliveryPolicy(d, access, streamSettings()); }
 
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
@@ -1438,11 +1402,15 @@ async function handle(req, res) {
   if ((m = p.match(/^\/api\/item\/([a-f0-9-]+)$/i))) {
     if (!ID_RE.test(m[1])) throw new HttpError(400, 'Ungültige ID');
     await assertAccess(session, m[1]);
-    const d = await getItemDetails(m[1]);
+    const requestedSource = url.searchParams.get('ms');
+    if (requestedSource && !ID_RE.test(requestedSource)) throw new HttpError(400, 'Ungültige Quelle');
+    const d = await getItemDetails(m[1], requestedSource);
     const a = accessOf(session);
+    const policy = playbackPolicy(d, a);
+    if (!policy.autoQuality) throw new HttpError(503, 'Upload-Budget zu klein für Videowiedergabe');
     return sendJson(res, 200, {
-      ...d, directPlayable: d.directPlayable && a.perms.direct, maxBitrate: a.maxBitrate, allowDirect: a.perms.direct,
-      qualities: qualityOptions(d, a), resolution: [resName(d.height), d.hdr ? 'HDR' : ''].filter(Boolean).join(' '),
+      ...d, ...policy, directPlayable: d.directPlayable && policy.allowDirect,
+      resolution: [resolutionName(displayHeight(d.width, d.height) || d.sourceDisplayHeight), d.hdr ? 'HDR' : ''].filter(Boolean).join(' '),
       inWatchlist: library.has(session.username, d.id),
       resume: (library.history(session.username).find((h) => h.id === d.id) || {}).pos || 0,
     });
@@ -1461,6 +1429,7 @@ async function handle(req, res) {
   if ((m = p.match(/^\/subs\/([a-f0-9-]+)\/([a-f0-9-]+)\/(\d{1,3})\.vtt$/i))) {
     if (!ID_RE.test(m[1]) || !ID_RE.test(m[2])) throw new HttpError(400, 'Ungültige ID');
     await assertAccess(session, m[1]);
+    await getItemDetails(m[1], m[2]);
     return serveCached(res, `sub|${m[1]}|${m[2]}|${m[3]}`, `/Videos/${m[1]}/${m[2]}/Subtitles/${m[3]}/Stream.vtt`, { maxAge: 3600 });
   }
 
@@ -1475,11 +1444,17 @@ async function handle(req, res) {
     if (sub === 'master.m3u8') {
       const ms = sp.get('ms');
       if (!ID_RE.test(ms || '')) throw new HttpError(400, 'Parameter fehlen');
-      const br = Math.min(BITRATES.has(toInt(sp.get('br'), 0)) ? toInt(sp.get('br'), 0) : 10000000, acc.maxBitrate);
-      const maxH = TIER_HEIGHT[br] || 1080;
+      const detail = await getItemDetails(itemId, ms);
+      const policy = playbackPolicy(detail, acc);
+      if (policy.maxBitrate < 500000) throw new HttpError(503, 'Upload-Budget zu klein für Videowiedergabe');
+      const requestedBr = toInt(sp.get('br'), 10000000);
+      const br = Math.min(requestedBr >= 500000 ? requestedBr : 10000000, policy.maxBitrate, 40000000);
+      const tier = tierAt(br);
+      const maxH = detail.height ? Math.min(tier.height, detail.height) : tier.height;
       const audio = /^\d{1,3}$/.test(sp.get('audio') || '') ? sp.get('audio') : '';
       const subIdx = /^\d{1,3}$/.test(sp.get('sub') || '') ? sp.get('sub') : '';
       // Alle Zuschauer mit gleichen Einstellungen teilen sich EINEN Transcode
+      const copyVideo = detail.videoCodec === 'h264' && !detail.hdr && detail.bitrate > 0 && detail.bitrate <= br && (!detail.height || detail.height <= maxH) && (!detail.width || detail.width <= Math.round(tier.height * 16 / 9)) && !subIdx;
       const variant = crypto.createHash('sha256').update([itemId, ms, br, audio, subIdx].join('|')).digest('hex');
       const q = new URLSearchParams({
         MediaSourceId: ms,
@@ -1489,15 +1464,16 @@ async function handle(req, res) {
         AudioCodec: 'aac,mp3',
         MaxStreamingBitrate: String(br),
         MaxHeight: String(maxH),
-        VideoBitrate: String(Math.max(br - 320000, 500000)),
+        MaxWidth: String(Math.min(detail.width || Infinity, Math.round(tier.height * 16 / 9))),
+        VideoBitrate: String(Math.max(br - 320000, 100000)),
         AudioBitrate: '192000',
         TranscodingMaxAudioChannels: '2',
         SegmentContainer: 'ts',
         MinSegments: '1',
         BreakOnNonKeyFrames: 'True',
-        EnableAutoStreamCopy: 'true',
-        AllowVideoStreamCopy: 'true',
-        AllowAudioStreamCopy: 'true',
+        EnableAutoStreamCopy: copyVideo ? 'true' : 'false',
+        AllowVideoStreamCopy: copyVideo ? 'true' : 'false',
+        AllowAudioStreamCopy: copyVideo ? 'true' : 'false',
       });
       if (audio) q.set('AudioStreamIndex', audio);
       if (subIdx) { q.set('SubtitleStreamIndex', subIdx); q.set('SubtitleMethod', 'Encode'); }
@@ -1508,6 +1484,8 @@ async function handle(req, res) {
       if (!acc.perms.direct) throw new HttpError(403, 'Originalqualität ist für dich nicht freigeschaltet');
       const ms = sp.get('ms');
       if (!ID_RE.test(ms || '')) throw new HttpError(400, 'Parameter fehlen');
+      const detail = await getItemDetails(itemId, ms);
+      if (!playbackPolicy(detail, acc).allowDirect) throw new HttpError(403, 'Original überschreitet das verfügbare Bitratenbudget');
       return serveDirect(req, res, itemId, ms);
     }
 
@@ -1515,6 +1493,23 @@ async function handle(req, res) {
     const q = new URLSearchParams(sp);
     q.delete('api_key'); q.delete('ApiKey');
     if (/^[A-Za-z0-9_]+\.m3u8$/.test(sub)) {
+      // Jellyfin puts encoding parameters into the child playlist URL too.
+      // Normalize their casing and enforce the same cap on direct requests to that URL.
+      const lower = new Map([...q].map(([k, v]) => [k.toLowerCase(), v]));
+      const sourceId = lower.get('mediasourceid');
+      if (!ID_RE.test(sourceId || '')) throw new HttpError(400, 'Quelle fehlt');
+      const detail = await getItemDetails(itemId, sourceId);
+      const cap = playbackPolicy(detail, acc).maxBitrate;
+      if (cap < 500000) throw new HttpError(503, 'Upload-Budget zu klein für Videowiedergabe');
+      const requested = Number(lower.get('maxstreamingbitrate')) || (Number(lower.get('videobitrate')) + (Number(lower.get('audiobitrate')) || 192000)) || 10000000;
+      const br = Math.min(Math.max(500000, requested), cap, 40000000);
+      const tier = tierAt(br);
+      const maxHeight = Math.min(Number(lower.get('maxheight')) || Infinity, detail.height || Infinity, tier.height);
+      const maxWidth = Math.min(Number(lower.get('maxwidth')) || Infinity, detail.width || Infinity, Math.round(tier.height * 16 / 9));
+      const copy = detail.videoCodec === 'h264' && !detail.hdr && detail.bitrate > 0 && detail.bitrate <= br && detail.height <= maxHeight && detail.width <= maxWidth && !lower.has('subtitlestreamindex');
+      const forced = { MediaSourceId: sourceId, MaxStreamingBitrate: String(br), VideoBitrate: String(Math.max(br - 320000, 100000)), AudioBitrate: '192000', MaxHeight: String(maxHeight), MaxWidth: String(maxWidth), VideoCodec: 'h264', AudioCodec: 'aac,mp3', AllowVideoStreamCopy: String(copy), AllowAudioStreamCopy: String(copy), EnableAutoStreamCopy: String(copy), Static: 'false' };
+      for (const key of [...q.keys()]) if (Object.keys(forced).some((name) => name.toLowerCase() === key.toLowerCase())) q.delete(key);
+      for (const [key, value] of Object.entries(forced)) q.set(key, value);
       return serveCached(res, `pl|${ps}|${sub}|${q}`, `/Videos/${itemId}/${sub}?${q}`, { playlist: true });
     }
     if (/^hls1\/[A-Za-z0-9_]+\/-?\d+\.(ts|mp4|m4s|aac|vtt)$/.test(sub)) {
@@ -1760,7 +1755,7 @@ function onConnection(ws, session, room, req) {
           if (!rateOk(client.ctrlTimes, 12, 3000)) break;
           if (!(await canAccess(session, msg.itemId))) { send({ t: 'error', text: 'Darauf hast du keinen Zugriff.' }); break; }
           // play: sofort los (Alleine-Schauen); sonst wie bisher pausiert laden, damit alle bereit sind
-          const ok = await startItem(room, msg.itemId, session.name, { position: Number(msg.position) || 0, play: msg.play === true && room.clients.size === 1 });
+          const ok = await startItem(room, msg.itemId, session.name, { session, position: Number(msg.position) || 0, play: msg.play === true && room.clients.size === 1 });
           if (!ok) send({ t: 'error', text: 'Das kann man nicht abspielen.' });
           break;
         }
@@ -1819,7 +1814,7 @@ function onConnection(ws, session, room, req) {
             room.queue.splice(i, 1); room.queue.splice(to, 0, entry);
           } else if (msg.t === 'queue-play') {
             room.queue.splice(i, 1);
-            await startItem(room, entry.id, session.name, { play: true });
+            await startItem(room, entry.id, session.name, { play: true, session });
           }
           room.broadcast({ t: 'queue', queue: room.queue });
           break;
@@ -1960,6 +1955,7 @@ function mayLoad(room, session) {
 
 /** Twitch-Kanal oder YouTube-Video für den Raum starten. Gibt bei Erfolg null zurück, sonst eine Fehlermeldung. */
 async function startExternal(room, src, byName, { play = false } = {}) {
+  const loadRevision = room.loadRevision = (room.loadRevision || 0) + 1;
   let item, position = 0;
   if (src.twitch) {
     const login = src.twitch;
@@ -1980,6 +1976,7 @@ async function startExternal(room, src, byName, { play = false } = {}) {
     item = { id: `yt:${id}`, source: 'youtube', videoId: id, title: info.title, subtitle: info.author ? `YouTube · ${info.author}` : 'YouTube', type: 'Video', runtime: null, thumb: `https://i.ytimg.com/vi/${id}/mqdefault.jpg` };
     position = start || 0;
   }
+  if (room.loadRevision !== loadRevision) return null;
   room.item = item;
   room.ratePrompted = true; // keine Bewertungsrunde für externe Videos
   room.round = null;
@@ -2002,11 +1999,45 @@ function posLabel(room, pos) {
   return behind > 2 ? `−${fmtTime(behind)} (hinter live)` : 'live';
 }
 
+/** Pick once for the whole room, only on a fresh start. Never swap files during adaptation. */
+async function selectRoomItem(room, requested, session) {
+  if (requested.Type !== 'Movie' || !session) return requested;
+  try {
+    const views = ((await jsonCache.get('views', () => jf(`/Users/${uid()}/Views`))).Items) || [];
+    const all = new Map([[requested.Id, requested]]);
+    for (const view of views.filter((v) => v.CollectionType === 'movies')) {
+      for (const it of await libCatalog(view.Id, 'movies')) all.set(it.Id, it);
+    }
+    const baseName = movieTitle(requested.Name).toLowerCase();
+    const matchingTitles = [...all.values()].filter((it) => it.Id === requested.Id || (it.Type === 'Movie' && movieTitle(it.Name).toLowerCase() === baseName));
+    const allowed = await filterAllowed(session, matchingTitles);
+    const group = groupMovies(allowed, mapItem).find((g) => g.versions && g.versions.some((v) => v.id === requested.Id));
+    if (!group) return requested;
+    const candidates = group.versions.map((v) => all.get(v.id)).filter((it) =>
+      movieTitle(it.Name).toLowerCase() === movieTitle(requested.Name).toLowerCase());
+    const fullCandidates = await Promise.all(candidates.map((it) => itemFull(it.Id).catch(() => null)));
+    for (const it of fullCandidates.filter(Boolean).sort(compareItems)) {
+      let common = true;
+      for (const c of room.clients.values()) if (!(await canAccess(c.session, it.Id))) { common = false; break; }
+      if (common && bestSource(it)) return it;
+    }
+  } catch (e) { console.warn('[playback] Quellenauswahl fehlgeschlagen, verwende gewählten Titel:', e.message); }
+  return requested;
+}
+
 /** Titel für den ganzen Raum starten (Auswahl, Warteschlange, Abstimmung). */
-async function startItem(room, itemId, byName, { play = false, position = 0 } = {}) {
-  const d = await getItemDetails(itemId);
+async function startItem(room, itemId, byName, { play = false, position = 0, session = null } = {}) {
+  const loadRevision = room.loadRevision = (room.loadRevision || 0) + 1;
+  const actor = session || [...room.clients.values()].find((c) => c.session.id === room.hostSid)?.session;
+  const requested = await itemFull(itemId);
+  // Resume positions belong to the original file, not to an unverified alternative timeline.
+  const selected = position > 0 ? requested : await selectRoomItem(room, requested, actor);
+  const history = actor && library.history(actor.username).find((h) => h.id === itemId);
+  const resumeSource = position > 0 ? (history && history.mediaSourceId || (requested.MediaSources || [])[0]?.Id) : null;
+  const d = await getItemDetails(selected.Id, resumeSource);
   if (!d.playable) return false;
-  room.item = { id: d.id, title: d.title, subtitle: d.subtitle, type: d.type, runtime: d.runtime, nextEpisodeId: d.nextEpisodeId, seriesId: d.seriesId, seriesName: d.seriesName };
+  if (room.loadRevision !== loadRevision) return true;
+  room.item = { id: d.id, mediaSourceId: d.mediaSourceId, title: d.title, subtitle: d.subtitle, type: d.type, runtime: d.runtime, nextEpisodeId: d.nextEpisodeId, seriesId: d.seriesId, seriesName: d.seriesName };
   room.ratePrompted = false;
   room.round = null;
   room.advancing = 0;
@@ -2023,7 +2054,9 @@ async function startItem(room, itemId, byName, { play = false, position = 0 } = 
 
 /** YouTube/Twitch für den ganzen Raum starten (läuft sofort los). */
 async function startExt(room, ext, byName) {
+  const loadRevision = room.loadRevision = (room.loadRevision || 0) + 1;
   const info = await extInfo(ext);
+  if (room.loadRevision !== loadRevision) return true;
   room.item = { id: extKey(ext), ext, title: info.title, subtitle: info.subtitle, type: 'External', runtime: null };
   room.ratePrompted = true; // keine Bewertungsrunde
   room.round = null;

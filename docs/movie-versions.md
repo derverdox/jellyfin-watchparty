@@ -31,7 +31,7 @@ können daher weniger vollständig sein als im gesamten A–Z-Katalog.
 Qualitäten und Laufzeit. Mehrere Blu-rays derselben Auflösung bleiben darin
 separat erhalten. Die alphabetisch kleinste Jellyfin-ID ist innerhalb einer
 Gruppe der Vertreter; bestehende Detail- und Wiedergabeaufrufe verwenden diese
-reale ID. Es gibt noch keine Versionsauswahl im Player. Bereits in Jellyfin
+reale ID. Beim Neustart eines Films wird die Wiedergabequelle inzwischen separat ausgewählt (siehe unten); die Kachel-ID bleibt stabil. Eine manuelle Versionsauswahl im Player gibt es noch nicht. Bereits in Jellyfin
 kombinierte MediaSources erscheinen in diesem ersten Schritt als ein Filmeintrag.
 Verlauf, Merkliste und Bewertungen bleiben an die bisherigen Item-IDs gebunden;
 eine Zusammenführung dieser Daten ist Teil der nächsten Phase.
@@ -66,6 +66,92 @@ Agent-Verwaltung, dazu Qualität, Laufzeit, Bibliothek, Audio-/Untertitelspuren
 mit ihren jeweiligen Indizes und `syncStatus: unverified`. Es handelt sich um
 eine Metadatenanalyse ohne Lesen oder Verändern der Mediendateien. Gleiche
 Qualität bedeutet nicht gleiche Datei oder gleiche Zeitachse.
+
+## Umgesetzt: hochwertige Quelle und begrenzte Übertragung
+
+Die bisherige feste Gruppen-ID bleibt für Kacheln, Bilder, Merkliste und Details
+erhalten. Beim Start bei Position 0 sucht der Relay innerhalb dieser Filmgruppe
+die höchste verfügbare Auflösung für denselben Titel ohne Qualitätssuffix.
+Ein anders benannter Schnitt (z. B. Extended) wird dabei nicht automatisch
+gewählt. Es werden nur Kandidaten berücksichtigt, die der auswählende Benutzer
+und alle aktuell verbundenen Raumteilnehmer sehen dürfen. Scheitert diese
+zusätzliche Suche, bleibt der ausdrücklich gewählte Titel der Rückfall.
+Die Suche nutzt die vorhandenen Bibliotheks-Caches; die vollständigen Quelldetails
+werden separat 60 Sekunden gecacht.
+
+Innerhalb eines Jellyfin-Items wird ebenfalls die höchste MediaSource-Auflösung
+gewählt; bei gleicher Auflösung die niedrigere bekannte Bitrate, danach die ID.
+Die echten Videomaße haben Vorrang vor Qualitätsnamen, mit Berücksichtigung von
+beschnittenem Breitbild (1920 × 800 bleibt Full HD). Bei fehlenden Maßen helfen
+die vorhandenen Qualitätssuffixe. Audio-/Untertitelindizes, Laufzeit, Codec und
+Direct-Play-Eignung stammen aus dieser konkreten Quelle.
+
+Der Raum veröffentlicht die gewählte Item-ID UND MediaSource-ID. Web, Desktop
+und native Fire-TV-App fordern die Details dieser Quelle an und behalten sie
+auch bei einer Änderung der Übertragungsqualität. Der Relay validiert, dass eine
+angeforderte Quelle zum Item gehört. Ein erneuter Ladeauftrag verdrängt eine
+ältere, noch laufende Quellensuche. Bei einer alternativen MediaSource werden
+keine ungeprüften Intro-/Abspannmarker der ersten Quelle übernommen.
+
+Beim Fortsetzen ab einer Position größer 0 wird KEINE andere Datei gewählt.
+Neue Verlaufseinträge speichern die MediaSource-ID; ohne diese Information wird
+die früher verwendete erste MediaSource beibehalten. Das vermeidet die Übernahme
+eines Zeitstempels auf einen anderen Schnitt, beweist aber keine Gleichheit von
+Dateien. Auch innerhalb eines Items können Schnitte verschieden sein: Die neue
+Quelle wird deshalb nur beim Start für den gesamten Raum festgelegt.
+
+### Automatisch und manuell
+
+Die angebotene Auflösung hängt von den Bildmaßen ab, unabhängig davon, ob ein
+1080p-Encode 4, 8 oder 30 Mbit/s benötigt. Die angebotenen Transcode-Stufen sind
+Obergrenzen der Ausgabe; eine niedrige Quellbitrate blendet Full HD nicht mehr aus.
+Es wird nicht über die tatsächlichen Quellmaße hochskaliert. Gruppen- und
+Serverlimits können die Ausgabeauflösung weiterhin begrenzen.
+
+„Automatisch“ ist die Voreinstellung für neue Clients und startet mit höchstens
+`AUTO_MAX_MBPS` (Relay, Standard 10 Mbit/s). Eine kompatible Originaldatei innerhalb
+dieses Budgets benötigt kein Video-Transcoding. Sonst fordert der Client eine
+passende HLS-Stufe an; passende H.264-Dateien dürfen unterhalb der Grenze auch
+nur umgepackt werden. Eine höhere Auflösung, ein anderes Codec-Profil, HDR oder
+Bilduntertitel können Video-Transcoding in Jellyfin erfordern. Bei ursprünglichen
+Direct-Play-Fehlern fällt der native TV-Client auf die begrenzte Transcode-Stufe
+zurück. Bestehende manuelle Qualitätseinstellungen bleiben erhalten.
+
+Nach mindestens zwölf Sekunden fortlaufendem Puffern in einem laufenden Film
+senkt „Automatisch“ die Übertragungsstufe ab, frühestens 30 Sekunden nach der
+letzten Absenkung. Pausen lösen keine Absenkung aus; die JS-Clients berücksichtigen
+auch Such-/Spulvorgänge. Der Client lädt dieselbe Quelle neu und folgt danach
+wieder der aktuellen Raumposition. Es gibt keine automatische Höherstufung
+während desselben Films und keine Garantie eines unterbrechungsfreien Wechsels.
+Eine manuell gewählte Stufe wird nicht automatisch geändert.
+
+Das harte Budget ist das Minimum aus Gruppenlimit, optionalem `STREAM_MAX_MBPS`
+(Relay, 0 = kein zusätzliches Limit) und 80 % des gemeldeten `MAX_UPLOAD_MBPS`
+eines aktualisierten Agents. Originaldateien oberhalb dieses Budgets werden
+nicht angeboten und bei direkten HTTP-Anfragen abgewiesen; unbekannte Bitrate
+nutzt eine begrenzte HLS-Ausgabe. Auch nachgelagerte HLS-Playlist-Anfragen werden
+begrenzt. Unter 0,5 Mbit/s verfügbarem Budget wird ein ausdrücklicher Fehler
+zurückgegeben. Die zusätzlichen 20 % lassen Luft für Schwankungen und andere
+Anfragen; sie sind keine Messung der tatsächlichen Client-Verbindung.
+
+Beispiel: Ein 60-Mbit/s-UHD-Film bleibt die gemeinsame Quelle. Bei Auto-Budget
+10 Mbit/s wird daraus Full HD mit begrenzter Bitrate, mit kleinerem Budget eine
+entsprechend niedrigere Stufe. Ein 8-Mbit/s-Full-HD-MP4 kann dagegen direkt laufen.
+Bei 15 Mbit/s Agent-Upload beträgt die zusätzliche Obergrenze 12 Mbit/s.
+Für die automatische 4K-Stufe muss das Auto-Budget mindestens 40 Mbit/s sein und
+das Gruppen-/Server-/Agentbudget dies erlauben.
+
+Jellyfin übernimmt das eigentliche Transcoding auf dem Heimserver. Insbesondere
+UHD/HDR nach H.264 benötigt geeignete Hardwarebeschleunigung und gegebenenfalls
+Tone Mapping in Jellyfin. Der Agent führt kein eigenes Re-Encoding aus; seine
+bestehende Token-Drossel regelt den Gesamt-Upload. Gleiche Ausgabevarianten teilen
+wie bisher einen Relay-Cache. Mehrere verschiedene Filme/Spuren/Qualitäten teilen
+sich die Gesamtleitung und können zusammen das verfügbare Budget überschreiten;
+die automatische Absenkung reagiert dann auf die jeweiligen Pufferprobleme.
+Es gibt noch keine zentrale Aufteilung des Gesamtbudgets über alle aktiven Varianten.
+
+Jellyfin-Dokumentation zu [Transcoding](https://jellyfin.org/docs/general/post-install/transcoding/)
+und [Hardwarebeschleunigung](https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/).
 
 ## Vorschlag: Film → Schnitt/Zeitachse → Quelldatei → Spuren
 
@@ -140,9 +226,8 @@ mit Video aus Datei A zu kombinieren kann zu Versatz oder Drift führen.
 Eine dateiübergreifende Spurauswahl erfordert später einen serverseitigen Remux-/
 Transcodingpfad mit geprüfter Zeitabbildung, gemeinsamem Zeitstempelursprung und
 korrektem Seek-Verhalten. Untertitel brauchen ebenfalls Offset-/Zeitabbildung;
-Bitmap-Untertitel zusätzlich einen passenden Client oder Burn-in. Der bestehende
-Player wählt bislang die erste MediaSource; dieser Daten- und Streamvertrag muss
-vor einer solchen UI erweitert werden. Cache-Schlüssel müssen Quell-ID, MediaSource,
+Bitmap-Untertitel zusätzlich einen passenden Client oder Burn-in. Die Raumquelle ist inzwischen über Item- und MediaSource-ID festgelegt. Für
+eine solche UI braucht es zusätzlich den beschriebenen serverseitigen Spurenpfad. Cache-Schlüssel müssen Quell-ID, MediaSource,
 Audio-/Untertitelwahl und gegebenenfalls Zeitabbildungsrevision enthalten.
 
 ## Reihenfolge und Abnahme für den Player-Ausbau

@@ -99,6 +99,7 @@ data class RoomItem(
     val videoId: String?,
     val thumb: String?,
     val ext: JSONObject?,    // eingebetteter Player (Twitch-VOD/Clip): { kind, video, clip, start }
+    val mediaSourceId: String? = null,
 ) {
     val isJellyfin get() = source == null && ext == null
 
@@ -109,7 +110,7 @@ data class RoomItem(
                 id = j.optString("id"), title = j.str("title") ?: "", subtitle = j.str("subtitle"), type = j.str("type"),
                 runtime = j.num("runtime"), nextEpisodeId = j.str("nextEpisodeId"), seriesId = j.str("seriesId"),
                 source = j.str("source"), live = j.bool("live"), channel = j.str("channel"), videoId = j.str("videoId"),
-                thumb = j.str("thumb"), ext = j.optJSONObject("ext"),
+                thumb = j.str("thumb"), ext = j.optJSONObject("ext"), mediaSourceId = j.str("mediaSourceId"),
             )
         }
     }
@@ -197,6 +198,8 @@ data class PlayInfo(
     val id: String, val title: String, val subtitle: String?, val mediaSourceId: String,
     val audio: List<Track>, val subs: List<Track>, val defaultAudioIndex: Int?, val qualities: List<Quality>,
     val allowDirect: Boolean, val maxBitrate: Long, val resume: Double, val segments: List<Segment>, val runtime: Double?,
+    val autoQuality: String = "10000000", val autoTranscodeQuality: String = "10000000",
+    val bitrate: Long = 0, val autoMaxBitrate: Long = 10000000,
 ) {
     companion object {
         fun from(j: JSONObject) = PlayInfo(
@@ -208,6 +211,9 @@ data class PlayInfo(
             allowDirect = j.bool("allowDirect"), maxBitrate = j.optLong("maxBitrate", 40_000_000L), resume = j.optDouble("resume", 0.0),
             segments = j.optJSONArray("segments").map { Segment(it.optString("type"), it.optDouble("start"), it.optDouble("end")) },
             runtime = j.num("runtime"),
+            autoQuality = j.str("autoQuality") ?: "10000000",
+            autoTranscodeQuality = j.str("autoTranscodeQuality") ?: "10000000",
+            bitrate = j.optLong("bitrate", 0), autoMaxBitrate = j.optLong("autoMaxBitrate", 10000000),
         )
     }
 }

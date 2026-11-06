@@ -712,8 +712,10 @@ $('#sel-quality').addEventListener('change', (e) => setPrefs({ quality: e.target
 /** Qualitäten der aktuellen Datei: nie mehr als das Original hergibt (kommt vom Server). */
 function renderQuality() {
   const sel = $('#sel-quality');
-  const list = (S.item && S.item.qualities) || [{ id: 'direct', label: 'Original' }];
-  const active = (S.player && S.player.quality) || (S.prefs && String(S.prefs.quality)) || 'direct';
+  const available = (S.item && S.item.qualities) || [{ id: 'direct', label: 'Original' }];
+  const autoLabel = available.find((q) => q.id === S.player?.quality)?.label;
+  const list = [{ id: 'auto', label: `Automatisch${autoLabel ? ` · ${autoLabel}` : ''}` }, ...available];
+  const active = S.prefs?.quality === 'auto' ? 'auto' : (S.player && S.player.quality) || (S.prefs && String(S.prefs.quality)) || 'auto';
   sel.innerHTML = '';
   for (const q of list) sel.append(el('option', { value: q.id }, q.label));
   sel.value = list.some((q) => q.id === active) ? active : list[0].id;

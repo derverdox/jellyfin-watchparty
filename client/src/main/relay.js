@@ -76,7 +76,7 @@ class RelayClient extends EventEmitter {
   roomInfo(code) { return this.request('GET', `/api/rooms/${encodeURIComponent(code)}`); }
   libraries() { return this.request('GET', '/api/libraries'); }
   items(params) { return this.request('GET', `/api/items?${new URLSearchParams(params)}`); }
-  item(id) { return this.request('GET', `/api/item/${encodeURIComponent(id)}`); }
+  item(id, mediaSourceId = null) { return this.request('GET', `/api/item/${encodeURIComponent(id)}${mediaSourceId ? `?ms=${encodeURIComponent(mediaSourceId)}` : ''}`); }
   createInvite() { return this.request('POST', '/api/invites', {}); }
   inviteValid(code) { return this.request('GET', `/api/invite/${encodeURIComponent(code)}`); }
   register(code, username, password) { return this.request('POST', `/api/invite/${encodeURIComponent(code)}`, { username, password }); }
