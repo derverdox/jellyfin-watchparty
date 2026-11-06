@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import tempfile
+import sys
 from pathlib import Path
 
 
@@ -16,15 +17,22 @@ def certificate_digests(output):
 
 
 def certificate(apk, signer):
-    result = subprocess.run([str(signer), 'verify', '--print-certs', str(apk)], text=True, capture_output=True, check=True)
-    return certificate_digests(result.stdout)
+    java = str(Path(os.environ['JAVA_HOME']) / 'bin/java')
+    result = subprocess.run([java, '-jar', str(signer), 'verify', '--print-certs', str(apk)], text=True, capture_output=True, check=True)
+    try:
+        return certificate_digests(result.stdout)
+    except RuntimeError:
+        print(result.stdout, file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        raise
 
 
 def main():
     sdk = Path(os.environ.get('ANDROID_HOME') or os.environ['ANDROID_SDK_ROOT'])
-    tools = sorted(sdk.glob('build-tools/*/apksigner'))
-    if not tools:
-        raise SystemExit('::error::apksigner ist im Android-SDK nicht verfügbar.')
+    signer = sdk / 'build-tools/35.0.0/lib/apksigner.jar'
+    if not signer.is_file():
+        raise SystemExit('::error::Android Build Tools 35.0.0 fehlen für die Signaturprüfung.')
+    print('Signaturprüfung mit Android Build Tools 35.0.0', flush=True)
     with tempfile.TemporaryDirectory(prefix='previous-android-', dir=os.environ['RUNNER_TEMP']) as tmp:
         subprocess.run(['gh', 'release', 'download', 'android-latest', '--repo', os.environ['GITHUB_REPOSITORY'],
                         '--pattern', 'watchparty*.apk', '--dir', tmp], check=True)
@@ -32,7 +40,10 @@ def main():
             previous = Path(tmp) / name
             if not previous.exists():
                 raise SystemExit('::error::Die bisherige APK fehlt: ' + name)
-            if certificate(previous, tools[-1]) != certificate(Path(name), tools[-1]):
+            old = certificate(previous, signer)
+            new = certificate(Path(name), signer)
+            print(name + ': bisherige Signatur ' + ', '.join(old) + '; neue Signatur ' + ', '.join(new), flush=True)
+            if old != new:
                 raise SystemExit('::error::' + name + ' wurde mit einem anderen Schlüssel signiert. Für installierbare Updates muss der bisherige Signierschlüssel verwendet werden.')
             print(name + ': Signatur mit bisherigem Release kompatibel.')
 
