@@ -93,6 +93,8 @@ fun RoomScreen(app: AppState) {
     val overlayChat = remember { mutableStateListOf<ChatMsg>() }
     val catcher = remember { FocusRequester() }
     val playBtn = remember { FocusRequester() }
+    val pollOpen = rs.poll != null && dismissedPoll != rs.poll?.id
+    val dialogOpen = pollOpen || rs.ratePrompt != null
 
     // Abspielen nur, solange dieser Bildschirm offen ist (beim Stöbern bleibt man im Raum, das Video ruht)
     DisposableEffect(Unit) {
@@ -142,11 +144,11 @@ fun RoomScreen(app: AppState) {
         seekTarget = null
     }
     // Fokus dorthin, wo er hingehört
-    LaunchedEffect(controls, panel, exit, item?.id) {
+    LaunchedEffect(controls, panel, exit, item?.id, dialogOpen) {
         delay(60)
         runCatching {
             when {
-                exit || panel != null -> Unit
+                exit || panel != null || dialogOpen -> Unit
                 controls -> playBtn.requestFocus()
                 item != null -> catcher.requestFocus()
             }
@@ -170,6 +172,8 @@ fun RoomScreen(app: AppState) {
     BackHandler(true) {
         when {
             exit -> exit = false
+            pollOpen -> dismissedPoll = rs.poll?.id
+            rs.ratePrompt != null -> app.room.clearRatePrompt()
             panel != null -> panel = null
             seekTarget != null -> seekTarget = null
             controls -> controls = false
@@ -208,7 +212,7 @@ fun RoomScreen(app: AppState) {
         }
 
         // Unsichtbarer Tastenfänger, solange keine Leiste offen ist
-        if (item != null && !controls && panel == null && !exit) {
+        if (item != null && !controls && panel == null && !exit && !dialogOpen) {
             Box(Modifier.fillMaxSize().focusRequester(catcher).focusable().onKeyEvent { ev -> hiddenKeys(ev, ::togglePlay, ::seekBy, ::skipSegment,
                 hasSegment = ui.segment != null, seeking = seekTarget != null,
                 commitSeek = { seekTarget?.let { t -> app.control("seek", t) }; seekTarget = null },
@@ -276,7 +280,7 @@ fun RoomScreen(app: AppState) {
 
         /* ---------- Abstimmung, Bewertung, Weiter ---------- */
         val poll = rs.poll
-        if (poll != null && dismissedPoll != poll.id && !exit) PollDialog(app, poll) { dismissedPoll = poll.id }
+        if (poll != null && pollOpen && !exit) PollDialog(app, poll) { dismissedPoll = poll.id }
         rs.ratePrompt?.let { (id, title) -> if (!exit) RateDialog(app, id, title) }
         rs.advancing?.let { n ->
             T("⏭ Gleich: ${n.title}", Modifier.align(Alignment.TopEnd).padding(top = 30.dp, end = 40.dp).clip(RoundedCornerShape(10.dp)).background(C.surface2).padding(horizontal = 16.dp, vertical = 10.dp), size = 16.sp)
@@ -446,7 +450,7 @@ private fun SidePanel(app: AppState, p: Panel, ui: de.watchparty.tv.player.Playe
     val first = remember { FocusRequester() }
     AutoFocus(first, key = p)
     Column(modifier.width(420.dp).fillMaxHeight().background(Color(0xF2121218)).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (p == Panel.CHAT || p == Panel.PEOPLE || p == Panel.QUEUE) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for ((pp, label) in listOf(Panel.CHAT to "Chat", Panel.PEOPLE to "Leute", Panel.QUEUE to "Liste")) {
                 Btn(label, { set(pp) }, small = true, primary = p == pp, requester = if (pp == p) first else null)
             }
@@ -487,14 +491,14 @@ private fun SidePanel(app: AppState, p: Panel, ui: de.watchparty.tv.player.Playe
             }
             Panel.TRACKS -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item("ah") { T("Tonspur", size = 17.sp, weight = FontWeight.Bold) }
-                items(ui.audio, key = { "a${it.index}" }) { a -> Btn((if (a.index == ui.audioIndex) "✓ " else "") + a.label, { app.player.setAudio(a.index); set(null) }, small = true) }
+                itemsIndexed(ui.audio, key = { _, a -> "a${a.index}" }) { i, a -> Btn((if (a.index == ui.audioIndex) "✓ " else "") + a.label, { app.player.setAudio(a.index); set(null) }, small = true, requester = if (i == 0) first else null) }
                 item("sh") { T("Untertitel", Modifier.padding(top = 10.dp), size = 17.sp, weight = FontWeight.Bold) }
-                item("off") { Btn((if (ui.subIndex == null) "✓ " else "") + "Aus", { app.player.setSub(null); set(null) }, small = true) }
+                item("off") { Btn((if (ui.subIndex == null) "✓ " else "") + "Aus", { app.player.setSub(null); set(null) }, small = true, requester = if (ui.audio.isEmpty()) first else null) }
                 items(ui.subs, key = { "s${it.index}" }) { s -> Btn((if (s.index == ui.subIndex) "✓ " else "") + s.label + (if (s.isText) "" else " (eingebrannt)"), { app.player.setSub(s.index); set(null) }, small = true) }
             }
             Panel.QUALITY -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item("h") { T("Qualität (nur für dich)", size = 17.sp, weight = FontWeight.Bold) }
-                items(ui.qualities, key = { it.id }) { q -> Btn((if (q.id == ui.quality) "✓ " else "") + q.label, { app.player.setQuality(q.id); set(null) }, small = true) }
+                itemsIndexed(ui.qualities, key = { _, q -> q.id }) { i, q -> Btn((if (q.id == ui.quality) "✓ " else "") + q.label, { app.player.setQuality(q.id); set(null) }, small = true, requester = if (i == 0) first else null) }
             }
         }
     }
