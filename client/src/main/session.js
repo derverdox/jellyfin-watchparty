@@ -15,6 +15,15 @@ const { Mpv } = require('./mpv');
 const SYNC_MS = 250;
 const STATUS_MS = 2000;
 const BITRATES = new Set(['40000000', '20000000', '10000000', '6000000', '3000000', '1500000']);
+/** YouTube-Qualitäten (yt-dlp-Format, jeweils höchstens so hoch) */
+const YT_QUALITIES = [
+  { id: 'best', label: 'Beste', height: 0 },
+  { id: '2160', label: '4K', height: 2160 },
+  { id: '1440', label: '1440p', height: 1440 },
+  { id: '1080', label: '1080p', height: 1080 },
+  { id: '720', label: '720p', height: 720 },
+  { id: '480', label: '480p', height: 480 },
+];
 
 /** Oberfläche für mpv (uosc + Schriften + Einstellungen), wird bei jedem Start in den Config-Ordner kopiert. */
 const UI_DIR = path.join(__dirname, '..', '..', 'mpv-ui').replace('app.asar', 'app.asar.unpacked');
@@ -112,6 +121,9 @@ class Session extends EventEmitter {
     this.lastPlanKey = null;
     this.trackSel = null;     // Spurwahl nach selectTracks(); spätere Änderungen kamen vom Nutzer
     this.lastButtons = {};
+    this.stopTwitchMap();
+    this.twMap = null;
+    this.lastReopen = 0;
   }
 
   ui(channel, payload) { this.emit('ui', channel, payload); }
@@ -180,6 +192,7 @@ class Session extends EventEmitter {
         this.fileReady = false;
         break;
       case 'kicked': this.ui('room:kicked', { text: msg.text }); this.leave(); break;
+      case 'load-url': this.ui('room:loadurl', msg); break;
       // Warteschlange, Abstimmung, Bewertungsrunde → an die Oberfläche (extras.js)
       case 'queue': case 'poll': case 'rate-prompt': case 'round': case 'round-end': case 'advancing':
         this.ui('room:extra', msg);
@@ -242,6 +255,7 @@ class Session extends EventEmitter {
     const pb = this.playback;
     if (!pb) return 0;
     let p = pb.playing ? pb.position + (this.relay.serverNow() - pb.updatedAt) / 1000 : pb.position;
+    if (pb.item && pb.item.live) return p; // Twitch: Zeitstempel, kein Ende
     const dur = (pb.item && pb.item.runtime) || (this.mpv && this.mpv.props.duration);
     if (Number.isFinite(dur) && dur > 0) p = Math.min(p, dur);
     return Math.max(0, p);
@@ -261,20 +275,13 @@ class Session extends EventEmitter {
       this.loadedId = null; this.loadedKey = null; this.info = null; this.fileReady = false;
       return;
     }
-    if (pb.item.id !== this.loadedId && pb.item.source) this.showExternal(pb.item);
+    if (pb.item.id !== this.loadedId && pb.item.source) this.loadExternal(pb.item);
     else if (pb.item.id !== this.loadedId) this.loadItem(pb.item.id);
-    else if (!pb.item.source) this.syncTick(true);
-  }
-
-  /** Twitch/YouTube laufen (noch) nur im Browser bzw. in der TV-App – mpv kennt deren Zeitachse nicht. */
-  showExternal(item) {
-    this.loadedId = item.id; this.loadedKey = null; this.info = null; this.fileReady = false;
-    const what = item.source === 'twitch' ? 'Twitch-Livestreams' : 'YouTube-Videos';
-    if (this.mpv) { this.mpv.command('stop').catch(() => {}); this.mpv.osd(`📺 ${what} gibt es im Desktop-Client noch nicht – bitte im Browser mitschauen`, 8000); }
-    this.ui('room:error', `${what} laufen im Desktop-Client noch nicht synchron. Öffne den Raum im Browser oder in der TV-App.`);
+    else this.syncTick(true);
   }
 
   async loadItem(id) {
+    this.stopTwitchMap();
     this.loadedId = id;
     this.info = null;
     this.fileReady = false;
@@ -323,7 +330,9 @@ class Session extends EventEmitter {
 
   async openSource() {
     if (!this.info) return;
+    if (this.info.source) return this.openExternal();
     await this.ensurePlayer();
+    await this.setLiveMode(false);
     const src = this.sourceUrl();
     if (src.key === this.loadedKey) return;
     this.loadedKey = src.key;
@@ -428,6 +437,205 @@ class Session extends EventEmitter {
     setTimeout(() => this.ui('player:tracks', this.tracks()), 200);
   }
 
+  /* ---------- Twitch & YouTube ---------- */
+
+  isLive() { return !!(this.info && this.info.source === 'twitch'); }
+
+  async loadExternal(item) {
+    this.stopTwitchMap();
+    this.loadedId = item.id;
+    this.loadedKey = null;
+    this.info = null;
+    this.fileReady = false;
+    this.twMap = null;
+    try {
+      let info;
+      if (item.source === 'twitch') {
+        const t = await this.relay.request('GET', `/api/twitch/${encodeURIComponent(item.channel)}`);
+        const qualities = (t.variants || []).map((v) => ({ id: v.id, label: v.name }));
+        if (!qualities.length) throw new Error('Twitch liefert keine Qualitäten');
+        info = { id: item.id, source: 'twitch', channel: item.channel, title: item.title, subtitle: item.subtitle, qualities, defaultId: t.defaultId, delay: t.delay || 4, thumb: item.thumb };
+      } else if (item.source === 'youtube') {
+        info = { id: item.id, source: 'youtube', videoId: item.videoId, title: item.title, subtitle: item.subtitle, qualities: YT_QUALITIES.map(({ id, label }) => ({ id, label })), thumb: item.thumb };
+      } else throw new Error('Unbekannte Quelle');
+      if (this.loadedId !== item.id) return;
+      this.info = info;
+      this.ui('room:item', info);
+      await this.openExternal();
+    } catch (e) {
+      this.ui('room:error', `Konnte den Stream nicht laden: ${e.message}`);
+    }
+  }
+
+  chooseExternalQuality() {
+    const info = this.info;
+    const ids = info.qualities.map((q) => q.id);
+    const want = String((info.source === 'twitch' ? this.settings.prefs.twitchQuality : this.settings.prefs.ytQuality) || '');
+    if (ids.includes(want)) return want;
+    if (info.source === 'twitch') return ids.includes(info.defaultId) ? info.defaultId : ids[0];
+    return 'best';
+  }
+
+  /** Twitch braucht die rohen Zeitstempel des Streams (kein Umrechnen auf 0) und den Start am Anfang der Playlist. */
+  async setLiveMode(on) {
+    const mpv = this.mpv;
+    if (!mpv || this.liveMode === on) return;
+    this.liveMode = on;
+    await mpv.set('rebase-start-time', on ? 'no' : 'yes').catch(() => {});
+    await mpv.set('demuxer-lavf-o', on ? 'live_start_index=0' : '').catch(() => {});
+    await mpv.set('demuxer-lavf-linearize-timestamps', on ? 'no' : 'auto').catch(() => {});
+    // Springen im Puffer auch bei Livestreams (die sind für ffmpeg nicht „seekable“)
+    await mpv.set('demuxer-seekable-cache', on ? 'yes' : 'auto').catch(() => {});
+  }
+
+  async openExternal(fromPos) {
+    const info = this.info;
+    if (!info) return;
+    const mpv = await this.ensurePlayer();
+    const q = this.chooseExternalQuality();
+    this.activeQuality = q;
+    let url, key;
+    const start = Number.isFinite(fromPos) ? fromPos : this.expectedPos();
+    if (info.source === 'twitch') {
+      key = `${info.id}|${q}|${Math.round(start)}`;
+      if (!Number.isFinite(fromPos) && this.loadedKey && this.loadedKey.startsWith(`${info.id}|${q}|`)) return;
+      this.twVariant = q;
+      await this.refreshTwitchMap();
+      this.startTwitchMap();
+      // Im Segment knapp vor dem Ziel anfangen: mpv springt dann im Puffer nach vorn
+      // oder holt das kurze Stück notfalls über die Geschwindigkeit auf
+      url = `${this.relay.base}/live/twitch/${encodeURIComponent(info.channel)}/${encodeURIComponent(q)}.m3u8?from=${Math.round((start - 0.5) * 1000)}`;
+      this.twOpenedAt = Date.now();
+      this.twNoSeek = false;
+    } else {
+      key = `${info.id}|${q}`;
+      if (key === this.loadedKey) return;
+      this.stopTwitchMap();
+      const yt = this.installer.ytdlpPath();
+      if (yt !== 'yt-dlp' && !fs.existsSync(yt)) {
+        // yt-dlp fehlt noch → nachinstallieren (nur Windows, ein paar MB)
+        this.ui('room:error', 'yt-dlp wird für YouTube eingerichtet …');
+        try { await this.installer.ensureYtDlp(); } catch (e) { this.ui('room:error', `yt-dlp ließ sich nicht installieren: ${e.message}`); return; }
+      }
+      const h = (YT_QUALITIES.find((x) => x.id === q) || YT_QUALITIES[0]).height;
+      const lim = h ? `[height<=${h}]` : '';
+      await mpv.set('ytdl-format', `bv*${lim}+ba/b${lim}/bv*+ba/b`).catch(() => {});
+      url = `ytdl://${info.videoId}`;
+    }
+    this.loadedKey = key;
+    this.source = { key, url, direct: false, external: info.source };
+    this.fileReady = false;
+    this.trackSel = null;
+    this.lastPlanKey = null;
+    await this.setLiveMode(info.source === 'twitch');
+    const playing = !!(this.playback && this.playback.playing);
+    await mpv.set('http-header-fields', info.source === 'twitch' ? [`Cookie: ${this.relay.cookieHeader}`] : []).catch(() => {});
+    await mpv.command('vf', 'clr', '').catch(() => {});
+    this.ourPause = !playing;
+    await mpv.set('pause', !playing).catch(() => {});
+    // YouTube: normale Zeitachse → direkt an die Stelle; Twitch springt nach dem Laden über die Zuordnung
+    await mpv.set('start', info.source === 'youtube' && start > 0 ? `+${start.toFixed(3)}` : 'none').catch(() => {});
+    this.ourSeekAt = Date.now();
+    await mpv.set('force-media-title', `${info.title}${info.subtitle ? ` – ${info.subtitle}` : ''}`).catch(() => {});
+    await mpv.command('loadfile', url, 'replace').catch((e) => this.ui('room:error', `mpv: ${e.message}`));
+  }
+
+  startTwitchMap() {
+    this.stopTwitchMap();
+    this.twTimer = setInterval(() => this.refreshTwitchMap().catch(() => {}), 2000);
+  }
+
+  stopTwitchMap() {
+    if (this.twTimer) clearInterval(this.twTimer);
+    this.twTimer = null;
+  }
+
+  async refreshTwitchMap() {
+    if (!this.isLive()) return;
+    const m = await this.relay.request('GET', `/api/twitch/${encodeURIComponent(this.info.channel)}/map?v=${encodeURIComponent(this.twVariant || '')}`, undefined, { timeout: 8000 });
+    if (m && Array.isArray(m.segments)) this.twMap = m;
+  }
+
+  /** mpv-Zeit (roher PTS des Streams) → Zeitstempel. Berücksichtigt den 33-Bit-Überlauf. */
+  twPdtAt(t) {
+    const m = this.twMap;
+    if (!m || !Number.isFinite(t)) return NaN;
+    const W = m.wrap;
+    let best = null;
+    let near = null;
+    for (const s of m.segments) {
+      if (s.pts == null) continue;
+      let d = ((t - s.pts) % W + W) % W;
+      if (d > W / 2) d -= W;
+      if (d >= 0 && d < s.dur + 0.3 && (!best || d < best.d)) best = { s, d };
+      else if (d < 0 && d > -0.08 && (!near || d > near.d)) near = { s, d };
+    }
+    const hit = best || near;
+    return hit ? hit.s.pdt / 1000 + hit.d : NaN;
+  }
+
+  /** Zeitstempel → mpv-Zeit, auf dieselbe Überlauf-Runde wie die aktuelle Position. */
+  twCtAt(p) {
+    const m = this.twMap;
+    if (!m) return NaN;
+    const segs = m.segments.filter((s) => s.pts != null);
+    if (!segs.length) return NaN;
+    let s = segs[0];
+    for (const x of segs) { if (x.pdt <= p * 1000 + 1) s = x; else break; }
+    const last = segs[segs.length - 1];
+    const d = Math.max(0, Math.min(p - s.pdt / 1000, s === last ? s.dur - 0.1 : s.dur - 0.02));
+    const raw = s.pts + d;
+    const ref = this.mpv && this.mpv.props['time-pos'];
+    if (!Number.isFinite(ref)) return raw;
+    return raw + Math.round((ref - raw) / m.wrap) * m.wrap;
+  }
+
+  /** Im Puffer springen, wenn möglich – sonst den Stream an der Stelle neu öffnen. */
+  async twSeek(p) {
+    const ct = this.twCtAt(p);
+    const mpv = this.mpv;
+    if (!mpv) return;
+    if (Number.isFinite(ct)) {
+      const cache = await mpv.get('demuxer-cache-state').catch(() => null);
+      const ranges = (cache && cache['seekable-ranges']) || [];
+      if (ranges.some((r) => ct >= r.start - 0.05 && ct <= r.end - 0.3)) { this.seekTo(ct); return; }
+    }
+    // Gerade erst geöffnet und trotzdem nicht im Puffer → mpv kann hier nicht springen.
+    // Dann nicht immer neu öffnen, sondern über die Geschwindigkeit aufholen (siehe syncTick).
+    const now = Date.now();
+    if (now - (this.twOpenedAt || 0) < 15000) { this.twNoSeek = true; return; }
+    if (now - this.lastReopen < 4000) return;
+    this.lastReopen = now;
+    await this.openExternal(p);
+  }
+
+  pushLiveState() {
+    const p = (this.mpv && this.mpv.props) || {};
+    const segs = (this.twMap && this.twMap.segments) || [];
+    const local = this.localPos();
+    const cur = Number.isFinite(local) ? local : this.expectedPos();
+    const start = segs.length ? segs[0].pdt / 1000 : cur;
+    const end = segs.length ? segs[segs.length - 1].pdt / 1000 + segs[segs.length - 1].dur : cur;
+    const delay = (this.info && this.info.delay) || 4;
+    this.ui('player:state', {
+      running: !!(this.mpv && this.mpv.running),
+      ready: this.fileReady,
+      quality: this.activeQuality || null,
+      nextEpisodeId: null,
+      pos: Math.max(0, cur - start),
+      expected: Math.max(0, this.expectedPos() - start),
+      duration: Math.max(0, end - start),
+      live: { start, end, behind: Math.max(0, end - delay - cur) },
+      state: this.playerStateName(),
+      speed: p.speed || 1,
+      cache: p['demuxer-cache-time'] || 0,
+      vfFps: p['estimated-vf-fps'] || null,
+      displayFps: p['display-fps'] || null,
+      hwdec: p['hwdec-current'] || null,
+      rtt: this.relay.rtt,
+    });
+  }
+
   /* ---------- Framegen & VSR ---------- */
 
   async applyFilters(force = false) {
@@ -481,8 +689,15 @@ class Session extends EventEmitter {
 
   async setPrefs(patch) {
     const before = this.settings.prefs;
+    // Qualität bei Twitch/YouTube getrennt merken, sonst wäre die Jellyfin-Wahl weg
+    if (patch.quality && this.info && this.info.source) {
+      const key = this.info.source === 'twitch' ? 'twitchQuality' : 'ytQuality';
+      const { quality, ...rest } = patch;
+      patch = { ...rest, [key]: quality };
+    }
     const prefs = this.settings.setPrefs(patch);
-    if (patch.quality && patch.quality !== before.quality && this.info) { this.loadedKey = null; await this.openSource(); }
+    if (this.info && this.info.source && (patch.twitchQuality || patch.ytQuality)) { this.loadedKey = null; await this.openSource(); }
+    if (patch.quality && patch.quality !== before.quality && this.info && !this.info.source) { this.loadedKey = null; await this.openSource(); }
     if (patch.volume != null && this.mpv) this.mpv.set('volume', Number(patch.volume)).catch(() => {});
     if (patch.framegen || patch.vsr) { this.updateButtons(); this.applyFilters(); }
     return prefs;
@@ -546,6 +761,19 @@ class Session extends EventEmitter {
     this.mpv.command('seek', pos, 'absolute+exact').catch(() => {});
   }
 
+  /** Eigene Position auf der Zeitachse des Raums (bei Twitch: Zeitstempel). */
+  localPos() {
+    const t = this.mpv && this.mpv.props['time-pos'];
+    if (!Number.isFinite(t)) return NaN;
+    return this.isLive() ? this.twPdtAt(t) : t;
+  }
+
+  /** An eine Raum-Position springen. */
+  seekLocal(p) {
+    if (this.isLive()) this.twSeek(p);
+    else this.seekTo(p);
+  }
+
   setSpeed(v) {
     if (!this.mpv) return;
     const cur = this.mpv.props.speed || 1;
@@ -558,7 +786,7 @@ class Session extends EventEmitter {
     const mpv = this.mpv;
     const pb = this.playback;
     if (!mpv || !pb || !pb.item || !this.fileReady) return;
-    const pos = mpv.props['time-pos'];
+    const pos = this.localPos();
     if (!Number.isFinite(pos)) return;
     const exp = this.expectedPos();
     const fgOn = !!(this.planInfo && this.planInfo.framegen && this.planInfo.framegen.state === 'on');
@@ -567,12 +795,12 @@ class Session extends EventEmitter {
       this.setPause(true);
       this.setSpeed(1);
       this.correcting = false;
-      if (!mpv.props.seeking && !this.pendingSeeks && Math.abs(pos - exp) > 0.15) this.seekTo(exp);
+      if (!mpv.props.seeking && !this.pendingSeeks && Math.abs(pos - exp) > 0.15) this.seekLocal(exp);
       return;
     }
 
     const dur = mpv.props.duration;
-    if (mpv.props['eof-reached'] && Number.isFinite(dur) && exp >= dur - 1) return;
+    if (!this.isLive() && mpv.props['eof-reached'] && Number.isFinite(dur) && exp >= dur - 1) return;
     this.setPause(false);
     if (mpv.props.seeking || mpv.props['paused-for-cache']) return;
 
@@ -580,17 +808,20 @@ class Session extends EventEmitter {
     const ad = Math.abs(diff);
     const now = Date.now();
     const hard = fgOn ? 2.5 : 1.5;
-    if (ad > hard && (force || now - this.lastHardSeek > 4000 || ad > 10)) {
+    // Twitch ohne Sprung-Möglichkeit: bis 8 s über die Geschwindigkeit (max. ±25 %) statt springen
+    const catchUp = this.isLive() && this.twNoSeek && ad < 8;
+    if (!catchUp && ad > hard && (force || now - this.lastHardSeek > 4000 || ad > 10)) {
       this.lastHardSeek = now;
       this.setSpeed(1);
       this.correcting = false;
-      this.seekTo(exp + (diff > 0 ? 0.3 : 0));
+      this.seekLocal(exp + (diff > 0 ? 0.3 : 0));
       return;
     }
     if (ad > 0.25) this.correcting = true;
     if (this.correcting && ad < 0.05) this.correcting = false;
     // Verstärkung 0,4: ein Player, der dauerhaft 5 % zu langsam läuft, bleibt so unter ~0,15 s Abweichung
-    this.setSpeed(this.correcting ? 1 + Math.max(-0.06, Math.min(0.06, diff * 0.4)) : 1);
+    const maxAdj = catchUp && ad > 0.5 ? 0.25 : 0.06;
+    this.setSpeed(this.correcting ? 1 + Math.max(-maxAdj, Math.min(maxAdj, diff * 0.4)) : 1);
   }
 
   playerStateName() {
@@ -604,9 +835,13 @@ class Session extends EventEmitter {
 
   reportStatus() {
     if (!this.code) return;
-    const pos = (this.mpv && this.mpv.props['time-pos']) || 0;
     if (!this.playback || !this.playback.item) { this.send({ t: 'status', pos: 0, state: 'idle' }); return; }
-    this.send({ t: 'status', pos, state: this.playerStateName(), drift: this.expectedPos() - pos });
+    const local = this.localPos();
+    const pos = Number.isFinite(local) ? local : this.expectedPos();
+    const msg = { t: 'status', pos, state: this.playerStateName(), drift: Number.isFinite(local) ? this.expectedPos() - local : 0 };
+    // YouTube: die Länge kennt nur der Player
+    if (this.info && this.info.source === 'youtube' && Number.isFinite(this.mpv && this.mpv.props.duration)) msg.dur = this.mpv.props.duration;
+    this.send(msg);
   }
 
   pushPlayerState() {
@@ -614,6 +849,7 @@ class Session extends EventEmitter {
     this.checkSegment();
     const mpv = this.mpv;
     const p = (mpv && mpv.props) || {};
+    if (this.isLive()) return this.pushLiveState();
     this.ui('player:state', {
       running: !!(mpv && mpv.running),
       ready: this.fileReady,
@@ -642,6 +878,7 @@ class Session extends EventEmitter {
       this.syncTick(true);
       return;
     }
+    if (action === 'live') { this.send({ t: 'control', action }); return; } // Server kennt die Live-Kante
     const pos = Number.isFinite(position) ? position : this.expectedPos();
     this.playback = {
       ...this.playback,
@@ -656,8 +893,8 @@ class Session extends EventEmitter {
 
   togglePlay() {
     if (!this.playback || !this.playback.item) return;
-    const pos = this.mpv && Number.isFinite(this.mpv.props['time-pos']) ? this.mpv.props['time-pos'] : this.expectedPos();
-    this.control(this.playback.playing ? 'pause' : 'play', pos);
+    const local = this.localPos();
+    this.control(this.playback.playing ? 'pause' : 'play', Number.isFinite(local) ? local : this.expectedPos());
   }
 
   seekBy(d) {
@@ -699,7 +936,10 @@ class Session extends EventEmitter {
       '--hr-seek=yes',
       '--network-timeout=60',
       '--user-agent=watchparty-desktop/1.0',
-      '--ytdl=no',
+      // yt-dlp nur für YouTube (ytdl://-Adressen); Jellyfin- und Twitch-Streams öffnet mpv selbst
+      '--ytdl=yes',
+      `--script-opts-append=ytdl_hook-ytdl_path=${this.installer.ytdlpPath()}`,
+      '--script-opts-append=ytdl_hook-try_ytdl_first=no',
       '--sub-auto=no',
       '--audio-file-auto=no',
       '--save-position-on-quit=no',
@@ -720,6 +960,7 @@ class Session extends EventEmitter {
       logFile: path.join(this.logDir, 'mpv.log'),
     });
     this.mpv = mpv;
+    this.liveMode = null; // neuer Prozess → Optionen neu setzen
     mpv.on('prop', (name, value) => this.onProp(name, value));
     mpv.on('event', (e) => this.onMpvEvent(e));
     mpv.on('exit', (info) => {
@@ -741,7 +982,10 @@ class Session extends EventEmitter {
     try {
       await this.ensurePlayer();
       if (this.info && !this.loadedKey) await this.openSource();
-      else if (this.playback && this.playback.item && !this.info) await this.loadItem(this.playback.item.id);
+      else if (this.playback && this.playback.item && !this.info) {
+        if (this.playback.item.source) await this.loadExternal(this.playback.item);
+        else await this.loadItem(this.playback.item.id);
+      }
     } catch (e) { this.ui('room:error', e.message); }
   }
 
@@ -760,7 +1004,7 @@ class Session extends EventEmitter {
       if (value && this.mpv.props['eof-reached']) { this.ourPause = value; return; } // keep-open pausiert am Ende selbst
       // Pause/Play kam aus mpv selbst (Mausklick auf die Leiste o. Ä.)
       this.ourPause = value;
-      this.control(value ? 'pause' : 'play', this.mpv.props['time-pos']);
+      this.control(value ? 'pause' : 'play', this.localPos());
     } else if (name === 'sid' || name === 'aid') {
       this.onTrackProp(name, value);
     } else if (name === 'track-list') {
@@ -785,11 +1029,11 @@ class Session extends EventEmitter {
         this.pendingSeeks = 0; // mpv fasst schnelle Sprünge zusammen
         if (this.userSeek) {
           this.userSeek = false;
-          const pos = this.mpv && this.mpv.props['time-pos'];
+          const pos = this.localPos();
           if (Number.isFinite(pos)) {
             // kurz warten, bis time-pos aktuell ist
             setTimeout(() => {
-              const p = this.mpv && this.mpv.props['time-pos'];
+              const p = this.localPos();
               this.control('seek', Number.isFinite(p) ? p : pos);
             }, 50);
           }
@@ -797,7 +1041,9 @@ class Session extends EventEmitter {
         break;
       case 'end-file':
         if (e.reason === 'error') {
-          this.ui('room:error', 'mpv konnte die Datei nicht öffnen. Mit einer niedrigeren Qualität klappt es vielleicht.');
+          this.ui('room:error', this.info && this.info.source === 'youtube'
+            ? 'YouTube-Video ließ sich nicht öffnen (yt-dlp). Eine niedrigere Qualität oder ein Update von yt-dlp hilft oft.'
+            : 'mpv konnte die Datei nicht öffnen. Mit einer niedrigeren Qualität klappt es vielleicht.');
           this.loadedKey = null;
         }
         break;

@@ -131,6 +131,38 @@ function parseMedia(text, baseUrl) {
   return res;
 }
 
+/**
+ * Kleinster PTS (Sekunden, 33 Bit wie im Stream) der ersten Ton- und Bild-PES eines
+ * MPEG-TS-Segments. Damit kann der Desktop-Client (mpv) seine Videozeit auf die
+ * Zeitstempel abbilden – genau wie hls.js im Browser (Fragmentstart = kleinster PTS).
+ */
+function firstPts(buf) {
+  let min = null;
+  const seen = new Set();
+  let off = 0;
+  while (off < buf.length && buf[off] !== 0x47) off++;
+  for (let i = off; i + 188 <= buf.length && seen.size < 4; i += 188) {
+    if (buf[i] !== 0x47) break;
+    const pusi = buf[i + 1] & 0x40;
+    const pid = ((buf[i + 1] & 0x1f) << 8) | buf[i + 2];
+    if (!pusi || pid === 0 || pid === 0x1fff || seen.has(pid)) continue;
+    const afc = (buf[i + 3] >> 4) & 3;
+    let p = i + 4;
+    if (afc === 2) continue;
+    if (afc === 3) p += 1 + buf[p];
+    if (p + 14 > i + 188) continue;
+    if (buf[p] !== 0 || buf[p + 1] !== 0 || buf[p + 2] !== 1) continue; // keine PES (z. B. PAT/PMT)
+    const sid = buf[p + 3];
+    if (!((sid >= 0xc0 && sid <= 0xef) || sid === 0xbd)) continue;
+    seen.add(pid);
+    if (!(buf[p + 7] & 0x80)) continue;
+    const b = buf.subarray(p + 9, p + 14);
+    const pts = ((b[0] & 0x0e) * 536870912) + (b[1] << 22) + ((b[2] & 0xfe) << 14) + (b[3] << 7) + (b[4] >> 1);
+    if (min === null || pts < min) min = pts;
+  }
+  return min === null ? null : min / 90000;
+}
+
 function isAd(seg, ads) {
   if (/amazon|stitched/i.test(seg.title)) return true;
   if (!Number.isFinite(seg.pdt)) return false;
@@ -271,7 +303,8 @@ class Variant {
   async fetchSeg(seg) {
     try {
       if (seg.mapId) { const m = this.maps.get(seg.mapId); if (m && m.ready) await m.ready; }
-      await this.download(seg.key, seg.uri);
+      const buf = await this.download(seg.key, seg.uri);
+      if (seg.ext === 'ts') seg.pts = firstPts(buf);
       seg.state = 'ready';
     } catch {
       seg.tries++;
@@ -288,6 +321,7 @@ class Variant {
     this.relay.bytesIn += buf.length;
     await this.relay.cache.write(key, buf, { type: r.headers.get('content-type') || 'video/mp2t' });
     if (!this.relay.cache.index.has(key)) this.relay.mem.set(key, buf); // zu groß für den Cache → im Speicher halten
+    return buf;
   }
 
   trim() {
@@ -324,8 +358,18 @@ class Variant {
     return { start: r[0].pdt, end: last.pdt + last.dur * 1000 };
   }
 
-  playlist(base) {
-    const r = this.readySegments();
+  /** Zeitstempel ↔ PTS je Segment (für den Desktop-Client). */
+  map() {
+    return this.readySegments().map((s) => ({ seq: s.seq, pdt: s.pdt, dur: s.dur, pts: s.pts == null ? null : Math.round(s.pts * 1e6) / 1e6 }));
+  }
+
+  /** @param {number} [fromMs] nur Segmente ab diesem Zeitstempel (mpv startet am Anfang der Playlist) */
+  playlist(base, fromMs) {
+    let r = this.readySegments();
+    if (Number.isFinite(fromMs)) {
+      const i = r.findIndex((s) => s.pdt + s.dur * 1000 > fromMs);
+      r = i < 0 ? r.slice(-2) : r.slice(i);
+    }
     const out = ['#EXTM3U', `#EXT-X-VERSION:${this.maps.size ? 6 : 3}`, `#EXT-X-TARGETDURATION:${Math.max(1, Math.ceil(Math.max(this.targetDuration, ...r.map((s) => s.dur))))}`];
     out.push(`#EXT-X-MEDIA-SEQUENCE:${r.length ? r[0].seq : this.nextSeq}`);
     out.push(`#EXT-X-DISCONTINUITY-SEQUENCE:${this.headDisc}`);
@@ -338,7 +382,7 @@ class Variant {
       out.push(`#EXTINF:${s.dur.toFixed(3)},`);
       out.push(`${base}/${s.seq}.${s.ext}`);
     }
-    if (this.offline && r.length && r.length === this.segs.length) out.push('#EXT-X-ENDLIST');
+    if (this.offline && r.length && r[r.length - 1] === this.segs[this.segs.length - 1]) out.push('#EXT-X-ENDLIST');
     return `${out.join('\n')}\n`;
   }
 
@@ -586,4 +630,4 @@ class TwitchRelay {
   }
 }
 
-module.exports = { TwitchRelay, TwitchError, parseChannel, parseMaster, parseMedia, CLIENT_ID };
+module.exports = { TwitchRelay, TwitchError, parseChannel, parseMaster, parseMedia, firstPts, CLIENT_ID };

@@ -27,7 +27,10 @@ const props = {
   'estimated-vf-fps': null, 'container-fps': null, fullscreen: false, volume: Number(arg('volume') || 100), mute: false,
   'idle-active': true, vf: [], 'hwdec-current': 'no', 'demuxer-cache-time': 0,
   'http-header-fields': [], start: 'none', 'force-media-title': '', hwdec: 'auto', aid: 1, sid: 'no',
+  'rebase-start-time': 'yes', 'demuxer-lavf-o': '', 'ytdl-format': '', 'demuxer-cache-state': { 'seekable-ranges': [] },
 };
+const W = 2 ** 33 / 90000;
+let live = false;
 const observers = new Map(); // name -> [ {sock, id} ]
 const clients = new Set();
 let loaded = false;
@@ -46,17 +49,57 @@ function doSeek(pos, fromUser) {
   event('seek');
   log({ ev: 'seek', pos, fromUser: !!fromUser });
   setTimeout(() => {
-    setProp('time-pos', Math.max(0, Math.min(pos, props.duration || pos)));
+    setProp('time-pos', live ? pos : Math.max(0, Math.min(pos, props.duration || pos)));
     setProp('seeking', false);
     event('playback-restart');
   }, SEEK_MS);
 }
 
+/**
+ * Twitch wie echtes mpv mit rebase-start-time=no + live_start_index=0: Playlist holen,
+ * erstes Segment laden, Zeit = roher PTS (wie libavformat: nahe am 33-Bit-Überlauf negativ).
+ */
+async function loadLive(url, headers) {
+  const { firstPts } = require('../../../relay/lib/twitch');
+  const pl = await (await fetch(url, { headers })).text();
+  const segUrl = new URL(pl.split('\n').find((l) => l && !l.startsWith('#')), url).toString();
+  const r = await fetch(segUrl, { headers });
+  const buf = Buffer.from(await r.arrayBuffer());
+  let pts = firstPts(buf);
+  if (pts > W / 2) pts -= W;
+  log({ ev: 'loadfile', url, status: r.status, bytes: buf.length, cookie: headers.Cookie || null, pause: props.pause, rebase: props['rebase-start-time'], lavf: props['demuxer-lavf-o'], firstSeg: segUrl.split('/').pop(), pts });
+  live = true;
+  setProp('duration', null);
+  setProp('video-params', { w: 320, h: 180, pixelformat: 'yuv420p', colormatrix: 'bt.709', colorlevels: 'limited' });
+  setProp('track-list', [{ id: 1, type: 'video', codec: 'h264', selected: true, 'ff-index': 0 }]);
+  setProp('time-pos', pts);
+  setProp('demuxer-cache-state', { 'seekable-ranges': [{ start: pts, end: pts + 120 }] });
+  loaded = true;
+  event('file-loaded');
+  setTimeout(() => event('playback-restart'), 100);
+}
+
 async function loadfile(url) {
   loaded = false;
+  live = false;
   setProp('idle-active', false);
+  setProp('eof-reached', false);
+  if (url.startsWith('ytdl://')) {
+    // YouTube über yt-dlp: normale Zeitachse ab 0
+    log({ ev: 'loadfile', url, ytdlFormat: props['ytdl-format'], start: props.start, pause: props.pause, rebase: props['rebase-start-time'] });
+    setProp('duration', 212.5);
+    setProp('video-params', { w: 1920, h: 1080, pixelformat: 'yuv420p', colormatrix: 'bt.709', colorlevels: 'limited' });
+    setProp('track-list', [{ id: 1, type: 'video', codec: 'vp9', selected: true, 'ff-index': 0 }]);
+    const st = String(props.start);
+    setProp('time-pos', st === 'none' ? 0 : Number(st.replace('+', '')) || 0);
+    loaded = true;
+    event('file-loaded');
+    setTimeout(() => event('playback-restart'), 100);
+    return;
+  }
   const headers = {};
   for (const h of props['http-header-fields'] || []) { const i = h.indexOf(':'); headers[h.slice(0, i).trim()] = h.slice(i + 1).trim(); }
+  if (props['rebase-start-time'] === 'no' && /\.m3u8/.test(url)) { try { await loadLive(url, headers); } catch (e) { log({ ev: 'loadfile', url, error: e.message }); event('end-file', { reason: 'error' }); } return; }
   headers.Range = 'bytes=0-65535';
   let status = 0, bytes = 0, type = '';
   try {

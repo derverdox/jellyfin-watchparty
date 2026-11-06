@@ -71,6 +71,7 @@ app.whenReady().then(async () => {
     logDir: path.join(userData, 'logs'),
   });
   installer.syncScripts();
+  installer.updateYtDlp(); // YouTube ändert oft etwas → yt-dlp aktuell halten
 
   if (settings.data.server) { try { relay.setServer(settings.data.server); } catch { /* egal */ } }
   relay.setSession(settings.getSession());
@@ -203,7 +204,7 @@ app.whenReady().then(async () => {
     if (!API_ALLOW.some(([mm, re]) => mm === m && re.test(ps))) throw new Error('Nicht erlaubt');
     return relay.request(m, ps, m === 'GET' ? undefined : (body || {}));
   });
-  const SEND_ALLOW = new Set(['load', 'suggest', 'queue-add', 'queue-remove', 'queue-move', 'queue-clear', 'queue-play', 'poll-start', 'poll-vote', 'poll-end']);
+  const SEND_ALLOW = new Set(['load', 'load-url', 'suggest', 'queue-add', 'queue-remove', 'queue-move', 'queue-clear', 'queue-play', 'poll-start', 'poll-vote', 'poll-end']);
   handle('room:send', (msg) => {
     if (!msg || !SEND_ALLOW.has(msg.t)) throw new Error('Nicht erlaubt');
     return session.send(msg);

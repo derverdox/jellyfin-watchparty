@@ -146,7 +146,8 @@ Im Raum oben auf **📺 Twitch/YouTube** klicken und einen Link einfügen (`twit
 - **Qualität pro Person** (⚙): Alle Twitch-Qualitäten haben dieselben Zeitstempel, deshalb bleibt der Sync auch bei unterschiedlicher Qualität erhalten. Jede Qualität wird nur geholt, solange sie jemand schaut.
 - **Werbefrei/eigener Zugang:** `TWITCH_OAUTH` in der `relay/.env` (siehe `.env.example`). Ohne Token schaut das Relay anonym, Werbesegmente werden dann übersprungen.
 - **YouTube** läuft im offiziellen YouTube-Player und synchronisiert über dieselbe Raum-Position. YouTube kennt nur feste Geschwindigkeitsstufen, deshalb liegt die Genauigkeit hier etwa bei 0,1 s statt im Bild-Bereich.
-- **Grenzen:** Twitch-VODs/Clips gehen noch nicht, nur Live-Kanäle. Im Desktop-Client (mpv) laufen Twitch und YouTube noch nicht, sondern im Browser und in der Android-/TV-App.
+- **Desktop-Client:** Twitch und YouTube laufen auch in mpv (mit Framegen/VSR), synchron mit Browser und TV-App. YouTube braucht dort yt-dlp, das richtet der Client selbst ein.
+- **Grenzen:** Twitch-VODs/Clips gehen noch nicht, nur Live-Kanäle.
 
 > Twitch-Streams weiterzuverteilen ist nach den Twitch-Nutzungsbedingungen nicht erlaubt. Das ist für einen kleinen privaten Kreis gedacht, nicht für öffentliche Räume.
 

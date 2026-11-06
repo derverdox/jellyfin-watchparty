@@ -1496,6 +1496,14 @@ async function handle(req, res) {
       delay: twitch.delay,
     });
   }
+  // Zuordnung Zeitstempel ↔ PTS (Desktop-Client mit mpv)
+  if ((m = p.match(/^\/api\/twitch\/([a-z0-9_]{2,25})\/map$/i))) {
+    const ch = twitch.channel(m[1].toLowerCase());
+    let v;
+    try { v = await ch.variant(String(url.searchParams.get('v') || ch.defaultId() || '')); } catch (e) { throw new HttpError(e.status || 502, e.message); }
+    if (!v) throw new HttpError(404, 'Diese Qualität gibt es nicht');
+    return sendJson(res, 200, { segments: v.map(), wrap: 2 ** 33 / 90000, delay: twitch.delay, offline: v.offline });
+  }
   if ((m = p.match(/^\/live\/twitch\/([a-z0-9_]{2,25})\/([A-Za-z0-9_]{1,40})(?:\.m3u8|\/(\d{1,12})\.(ts|mp4|m4s|aac)|\/init-(m\d{1,4})\.mp4)$/))) {
     const [, login, vid, seq, , mapId] = m;
     const ch = twitch.channel(login);
@@ -1505,7 +1513,8 @@ async function handle(req, res) {
     if (!seq && !mapId) {
       // Neue Variante: kurz auf die ersten Segmente warten
       if (!v.readySegments().length) await v.waitFor(() => v.readySegments().length >= 2 || v.offline, 10000);
-      const body = Buffer.from(v.playlist(`/live/twitch/${login}/${vid}`));
+      const from = Number(url.searchParams.get('from'));
+      const body = Buffer.from(v.playlist(`/live/twitch/${login}/${vid}`, from > 0 ? from : undefined));
       telemetry.out(body.length, true);
       res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Content-Length': body.length, 'Cache-Control': 'no-store' });
       return res.end(body);
