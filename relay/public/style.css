@@ -643,3 +643,26 @@ body.pip .player video::cue { font-size: .8em; }
 .nf-az-group { scroll-margin-top: 110px; }
 .nf-az-letter { font-size: 22px; font-weight: 900; color: var(--accent); margin: 14px 0 4px; }
 @media (max-width: 700px) { .nf-az-bar { top: 96px; } .nf-az-bar button { min-width: 24px; padding: 3px 4px; font-size: 12px; } }
+
+/* YouTube/Twitch im Raum (ext.js) */
+.ext-player { display: none; position: absolute; inset: 0; z-index: 1; background: #000; }
+.player.ext .ext-player { display: block; }
+.player.ext video { visibility: hidden; }
+.ext-frame, .ext-host, .ext-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.ext-shield { position: absolute; inset: 0; z-index: 2; }
+.player.ext-free .ext-shield { display: none; }
+.ext-start { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 3; }
+.ext-interact { position: absolute; top: 10px; right: 10px; z-index: 5; opacity: .75; }
+.player.idle .ext-interact { opacity: 0; pointer-events: none; }
+.player.ext-live .seek { visibility: hidden; }
+.player.ext-live #btn-back, .player.ext-live #btn-fwd { display: none; }
+#btn-ext { white-space: nowrap; }
+
+/* Reiter „YouTube & Twitch“ */
+.nf-ext { display: grid; gap: 12px; max-width: 760px; }
+.nf-ext p { margin: 0; }
+.nf-ext-form { display: flex; gap: 8px; }
+.nf-ext-form input { flex: 1; min-width: 0; background: #000a; border: 1px solid #ffffff2e; color: #fff; border-radius: 8px; padding: 10px 12px; font: inherit; }
+.nf-ext-form input:focus { border-color: var(--accent); outline: none; }
+.nf-ext-hints { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+.nf-ext-recent { display: flex; flex-wrap: wrap; gap: 8px; }

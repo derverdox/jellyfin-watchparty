@@ -261,6 +261,15 @@ class Session extends EventEmitter {
       this.loadedId = null; this.loadedKey = null; this.info = null; this.fileReady = false;
       return;
     }
+    // YouTube/Twitch: läuft nicht in mpv, sondern im Fenster mit der Website
+    if (pb.item.ext) {
+      if (pb.item.id !== this.loadedId) {
+        if (this.mpv) this.mpv.command('stop').catch(() => {});
+        this.loadedId = pb.item.id; this.loadedKey = null; this.info = null; this.fileReady = false;
+        this.ui('room:ext', { item: pb.item, code: this.code });
+      }
+      return;
+    }
     if (pb.item.id !== this.loadedId) this.loadItem(pb.item.id);
     else this.syncTick(true);
   }
@@ -548,7 +557,7 @@ class Session extends EventEmitter {
   syncTick(force) {
     const mpv = this.mpv;
     const pb = this.playback;
-    if (!mpv || !pb || !pb.item || !this.fileReady) return;
+    if (!mpv || !pb || !pb.item || pb.item.ext || !this.fileReady) return;
     const pos = mpv.props['time-pos'];
     if (!Number.isFinite(pos)) return;
     const exp = this.expectedPos();

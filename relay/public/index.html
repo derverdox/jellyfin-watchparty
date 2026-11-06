@@ -80,6 +80,7 @@
         <button data-tab="movies">Filme</button>
         <button data-tab="series">Serien</button>
         <button data-tab="list">Meine Liste</button>
+        <button data-tab="ext">▶ YouTube &amp; Twitch</button>
         <button data-tab="wishes">📌 Wünsche</button>
       </nav>
       <input class="nf-search" id="nf-search" type="search" placeholder="🔍 Suchen" autocomplete="off">
@@ -148,6 +149,7 @@
       <div class="now" id="now-playing"><span class="muted">Noch nichts ausgewählt</span></div>
       <div class="actions">
         <button class="btn small" id="btn-library">🎞 <span class="hide-sm">Bibliothek</span></button>
+        <button class="btn small" id="btn-ext" title="YouTube- oder Twitch-Link zusammen schauen">▶ <span class="hide-sm">YouTube/Twitch</span></button>
         <button class="btn small" id="btn-invite" title="Einladungslink kopieren">🔗 <span class="hide-sm">Einladen</span> <code id="room-code"></code></button>
       </div>
     </header>
@@ -276,6 +278,18 @@
     </div>
   </div>
 
+  <!-- YouTube/Twitch-Link im Raum starten -->
+  <div class="modal" id="ext-modal" hidden>
+    <div class="modal-box scan-box">
+      <div class="lib-head"><b>▶ YouTube oder Twitch zusammen schauen</b><div class="grow"></div><button class="icon" id="ext-close" aria-label="Schließen">✕</button></div>
+      <form id="ext-form" class="row">
+        <input name="url" placeholder="Link einfügen, z. B. youtube.com/watch?v=… oder twitch.tv/kanal" autocomplete="off" required>
+        <button class="btn primary" type="submit">Los</button>
+      </form>
+      <p class="muted tiny">Jeder schaut direkt bei YouTube/Twitch, mit seinem eigenen Konto. Wer dort angemeldet ist und Premium bzw. Turbo hat, sieht keine Werbung.</p>
+    </div>
+  </div>
+
   <!-- QR-Code scannen (Gerät anmelden) -->
   <div class="modal" id="scan-modal" hidden>
     <div class="modal-box scan-box">
@@ -295,6 +309,7 @@
 
   <script src="/vendor/hls.min.js"></script>
   <script src="/app.js"></script>
+  <script src="/ext.js"></script>
   <script src="/extras.js"></script>
   <script src="/qrcode.js"></script>
   <script src="/pair.js"></script>
