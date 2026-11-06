@@ -20,6 +20,7 @@ const { handleAdmin } = require('./lib/admin');
 const { Guard } = require('./lib/guard');
 const { LibraryStore, variants, parseQuery, score, fold } = require('./lib/library');
 const { WishStore } = require('./lib/wishes');
+const { WishSearch } = require('./lib/wishsearch');
 const { Pairing } = require('./lib/pair');
 const { TwitchRelay, TwitchError, parseChannel } = require('./lib/twitch');
 const { parseYouTube, youtubeInfo } = require('./lib/youtube');
@@ -56,6 +57,8 @@ const groups = new GroupStore(CONFIG.dataDir);
 const telemetry = new Telemetry(CONFIG.dataDir);
 const library = new LibraryStore(CONFIG.dataDir);
 const wishes = new WishStore(CONFIG.dataDir);
+// Titelvorschläge fürs Brett (TMDb). Ohne Zugang in der .env bleibt es aus.
+const wishSearch = new WishSearch({ apiKey: process.env.tmdb_api_key || '' });
 const pairing = new Pairing();
 // Twitch: ein Zugang auf dem Relay, alle im Raum bekommen exakt dieselben Segmente
 const twitch = new TwitchRelay({
@@ -591,7 +594,7 @@ const SECURITY_HEADERS = {
   'X-Frame-Options': 'SAMEORIGIN',
   // YouTube/Twitch: eingebettete Player (Twitch-VODs/Clips, YouTube) + deren Skripte und Vorschaubilder.
   // Twitch live kommt dagegen als Restream vom Relay selbst (media-src 'self').
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://www.youtube.com https://s.ytimg.com https://player.twitch.tv https://embed.twitch.tv; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.twitch.tv https://embed.twitch.tv https://clips.twitch.tv; img-src 'self' data: https://i.ytimg.com https://static-cdn.jtvnw.net; media-src 'self' blob:; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'",
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://www.youtube.com https://s.ytimg.com https://player.twitch.tv https://embed.twitch.tv; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.twitch.tv https://embed.twitch.tv https://clips.twitch.tv; img-src 'self' data: https://i.ytimg.com https://static-cdn.jtvnw.net https://image.tmdb.org; media-src 'self' blob:; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'",
   'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(), payment=(), usb=()', // Kamera: QR-Code scannen
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Resource-Policy': 'same-origin',
@@ -1326,6 +1329,14 @@ async function handle(req, res) {
         lib = (await filterAllowed(session, d.Items || [])).slice(0, 5).map(mapItem);
       } catch { /* offline */ }
       return sendJson(res, 200, { wishes: similar, library: lib });
+    }
+    if (p === '/api/wishes/titles') {
+      // Titelvorschläge (TMDb) fürs Formular – reine Lesehilfe, deshalb ohne wish-Erlaubnis
+      const q = String(url.searchParams.get('q') || '').trim();
+      const type = ['movie', 'series'].includes(url.searchParams.get('type')) ? url.searchParams.get('type') : '';
+      if (q.length < 2) return sendJson(res, 200, { titles: [], enabled: wishSearch.enabled });
+      if (!guard.limit(`wish-titles|${session.username}`, 60, 60000)) throw new HttpError(429, 'Langsam – zu viele Suchanfragen');
+      return sendJson(res, 200, { titles: await wishSearch.search(q, type), enabled: wishSearch.enabled });
     }
     if (p === '/api/wishes/seen' && req.method === 'POST') { wishes.markSeen(session.username); return sendJson(res, 200, { ok: true }); }
     if (p === '/api/wishes' && req.method === 'POST') {

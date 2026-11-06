@@ -105,6 +105,17 @@ test('Neue Funktionen', { timeout: 120000 }, async (t) => {
   const board = (await lea.req('GET', '/api/wishes')).data;
   assert.strictEqual(board.wishes[0].title, 'Blade Runner');
   assert.ok(board.tags.find((x) => x.tag === 'sci-fi'));
+  // TMDb-Vorschlaege: ohne Zugang im Test abgeschaltet, aber der Endpunkt existiert
+  const ts = (await lea.req('GET', '/api/wishes/titles?q=blade')).data;
+  assert.deepStrictEqual(ts.titles, []);
+  assert.strictEqual(ts.enabled, false, 'ohne Zugang aus');
+  // Uebernommener Vorschlag: TMDB-ID + Poster am Wunsch, Dup-Erkennung ueber die ID
+  const w3 = (await chef.req('POST', '/api/wishes', { title: 'Dune', year: 2021, type: 'movie', tmdbId: 693111, imdbId: 'tt1145584', poster: 'https://image.tmdb.org/w154/xyz.jpg' })).data.wish;
+  assert.strictEqual(w3.poster, 'https://image.tmdb.org/w154/xyz.jpg');
+  assert.strictEqual(w3.imdbId, 'tt1145584');
+  assert.strictEqual((await lea.req('POST', '/api/wishes', { title: 'DUNE – Teil 2', tmdbId: 693111 })).status, 400, 'Duplikat ueber TMDB-ID, auch bei anderem Titel');
+  const bogus = (await chef.req('POST', '/api/wishes', { title: 'Poster-Fake', poster: 'https://evil.example/x.jpg' })).data.wish;
+  assert.strictEqual(bogus.poster, null, 'Poster nur von TMDb');
   const chk = (await lea.req('GET', '/api/wishes/check?q=ritter')).data;
   assert.ok(chk.library.some((x) => x.name === 'Ritter der Nacht'), 'zeigt, was schon da ist');
   assert.strictEqual((await lea.req('PATCH', `/api/wishes/${w1.id}`, { status: 'done' })).status, 400, 'Status nur für Admins');
