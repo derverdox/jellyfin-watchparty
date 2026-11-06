@@ -43,8 +43,8 @@ jobs:
           APP_KEY_ALIAS: ${{ secrets.APP_KEY_ALIAS }}
           APP_KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
         run: |
-          source ../.github/scripts/prepare-android-signing.sh
           trap 'rm -f "$RUNNER_TEMP/app.jks" "$RUNNER_TEMP/signing-info.txt"' EXIT
+          source ../.github/scripts/prepare-android-signing.sh
           chmod +x gradlew
           set -o pipefail
           ./gradlew --no-daemon :app:assembleRelease :tv:assembleRelease 2>&1 | tee "$RUNNER_TEMP/build.log"
@@ -56,6 +56,13 @@ jobs:
             "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_NUMBER" "$(sha256sum watchparty-tv.apk | cut -d' ' -f1)" "$(stat -c%s watchparty-tv.apk)" "${GITHUB_SHA::7}" > watchparty-tv.json
           cat watchparty-tv.json
           ls -la watchparty.apk watchparty-tv.apk
+
+      - name: Update-Signaturen gegen veröffentlichtes Release prüfen
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        working-directory: android
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 ../.github/scripts/verify-android-update.py
 
       # Kompilierfehler als Annotationen am Commit (GitHub zeigt max. 10 je Schritt → in Häppchen)
       - name: Fehler sammeln
