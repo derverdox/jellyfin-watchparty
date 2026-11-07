@@ -14,6 +14,9 @@ class CertificateOutputTests(unittest.TestCase):
     def test_approved_debug_key_migration_requires_reinstall(self):
         self.assertTrue(verify.requires_reinstall([verify.LEGACY_DEBUG_CERTIFICATE], [verify.RELEASE_CERTIFICATE]))
 
+    def test_lost_permanent_key_rotation_requires_reinstall(self):
+        self.assertTrue(verify.requires_reinstall([verify.PREVIOUS_RELEASE_CERTIFICATE], [verify.RELEASE_CERTIFICATE]))
+
     def test_other_key_transitions_are_rejected(self):
         for old, new in [([verify.RELEASE_CERTIFICATE], [verify.LEGACY_DEBUG_CERTIFICATE]),
                          (['a' * 64], [verify.RELEASE_CERTIFICATE]),

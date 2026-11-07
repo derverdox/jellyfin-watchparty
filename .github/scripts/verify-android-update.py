@@ -9,17 +9,21 @@ from pathlib import Path
 # Approved migration from the ephemeral runner debug key to the permanent
 # keystore in GitHub Secrets. Existing debug-signed installs need reinstalling.
 LEGACY_DEBUG_CERTIFICATE = 'b2fedcc79f5793a8bf7cbe762b563f8953f4d6de179f8903eda48117730eba0a'
-RELEASE_CERTIFICATE = 'df67a7193375424ff46dc80c33a5fb3c96b1e0cfe73fadad4d343169d9602815'
+# Der urspruengliche dauerhafte Schluessel lag nur in den Secrets des stillgelegten
+# Original-Repo (PlatzZuDemHalter) und ist nicht wiederherstellbar.
+# Rotation am 2026-11-07 auf den neuen dauerhaften Schluessel (d0347356...).
+PREVIOUS_RELEASE_CERTIFICATE = 'df67a7193375424ff46dc80c33a5fb3c96b1e0cfe73fadad4d343169d9602815'
+RELEASE_CERTIFICATE = 'd0347356d1806597a8e1f25b67dcdd14ec6cdab9c9cf39ee338d4fe6514e575f'
 
 
 def requires_reinstall(old, new):
     if new != [RELEASE_CERTIFICATE]:
-        raise RuntimeError('Die neue APK muss mit dem festgelegten Release-Schlüssel signiert sein.')
+        raise RuntimeError('Die neue APK muss mit dem festgelegten Release-Schluessel signiert sein.')
     if old == new:
         return False
-    if old == [LEGACY_DEBUG_CERTIFICATE]:
+    if old in ([LEGACY_DEBUG_CERTIFICATE], [PREVIOUS_RELEASE_CERTIFICATE]):
         return True
-    raise RuntimeError('Nicht freigegebener Wechsel des Android-Signierschlüssels.')
+    raise RuntimeError('Nicht freigegebener Wechsel des Android-Signierschluessels.')
 
 
 def certificate_digests(output):
@@ -49,8 +53,11 @@ def main():
         raise SystemExit('::error::Android Build Tools 35.0.0 fehlen für die Signaturprüfung.')
     print('Signaturprüfung mit Android Build Tools 35.0.0', flush=True)
     with tempfile.TemporaryDirectory(prefix='previous-android-', dir=os.environ['RUNNER_TEMP']) as tmp:
-        subprocess.run(['gh', 'release', 'download', 'android-latest', '--repo', os.environ['GITHUB_REPOSITORY'],
-                        '--pattern', 'watchparty*.apk', '--dir', tmp], check=True)
+        first = subprocess.run(['gh', 'release', 'download', 'android-latest', '--repo', os.environ['GITHUB_REPOSITORY'],
+                                '--pattern', 'watchparty*.apk', '--dir', tmp], check=False)
+        if first.returncode != 0:
+            print('::notice::Kein bisheriges android-latest-Release – Erstveroeffentlichung, Signaturvergleich entfaellt.', flush=True)
+            return
         for name in ['watchparty.apk', 'watchparty-tv.apk']:
             previous = Path(tmp) / name
             if not previous.exists():
@@ -63,7 +70,7 @@ def main():
             except RuntimeError as error:
                 raise SystemExit('::error::' + name + ': ' + str(error))
             if reinstall:
-                print('::warning::' + name + ': Freigegebener Wechsel vom alten Debug-Schlüssel. Bestehende Installationen müssen einmal deinstalliert und neu installiert werden; lokale App-Daten gehen verloren.')
+                print('::warning::' + name + ': Freigegebener Schluesselwechsel (Debug/Alter Permanent-Schluessel). Bestehende Installationen muessen einmal deinstalliert und neu installiert werden; lokale App-Daten gehen verloren.')
             else:
                 print(name + ': Signatur mit bisherigem Release kompatibel.')
 
