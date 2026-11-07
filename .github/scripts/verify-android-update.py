@@ -72,7 +72,7 @@ def main():
             except RuntimeError as error:
                 raise SystemExit('::error::' + name + ': ' + str(error))
             if reinstall:
-                print('::warning::' + name + ': Freigegebener Schluesselwechsel (Debug/Alter Permanent-Schluessel). Bestehende Installationen muessen einmal deinstalliert und neu installiert werden; lokale App-Daten gehen verloren.')
+                print('::warning::' + name + ': Freigegebener Schluesselwechsel (Debug- oder Rotations-Schluessel). Bestehende Installationen muessen einmal deinstalliert und neu installiert werden; lokale App-Daten gehen verloren.')
             else:
                 print(name + ': Signatur mit bisherigem Release kompatibel.')
 
