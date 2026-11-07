@@ -9,11 +9,13 @@ from pathlib import Path
 # Approved migration from the ephemeral runner debug key to the permanent
 # keystore in GitHub Secrets. Existing debug-signed installs need reinstalling.
 LEGACY_DEBUG_CERTIFICATE = 'b2fedcc79f5793a8bf7cbe762b563f8953f4d6de179f8903eda48117730eba0a'
-# Der urspruengliche dauerhafte Schluessel lag nur in den Secrets des stillgelegten
-# Original-Repo (PlatzZuDemHalter) und ist nicht wiederherstellbar.
-# Rotation am 2026-11-07 auf den neuen dauerhaften Schluessel (d0347356...).
-PREVIOUS_RELEASE_CERTIFICATE = 'df67a7193375424ff46dc80c33a5fb3c96b1e0cfe73fadad4d343169d9602815'
-RELEASE_CERTIFICATE = 'd0347356d1806597a8e1f25b67dcdd14ec6cdab9c9cf39ee338d4fe6514e575f'
+# Der zeitweise rotierte Schluessel vom 2026-11-07 (d0347356...): wurde einen Tag
+# lang fuer android-latest gebaut, bevor der Original-Keystore aus Lukas' Backup
+# wiederhergestellt wurde. Als Vorgaenger akzeptiert; diese Installationen 1x neu installieren.
+PREVIOUS_RELEASE_CERTIFICATE = 'd0347356d1806597a8e1f25b67dcdd14ec6cdab9c9cf39ee338d4fe6514e575f'
+# Der originale dauerhafte Release-Schluessel (df67a719...) - nach der Reaktivierung
+# des deaktivierten Accounts aus Backup wiederhergestellt; Massstab fuer alle künftigen Builds.
+RELEASE_CERTIFICATE = 'df67a7193375424ff46dc80c33a5fb3c96b1e0cfe73fadad4d343169d9602815'
 
 
 def requires_reinstall(old, new):
