@@ -130,9 +130,9 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const REACTIONS = ['😂', '😮', '❤️', '👍', '🔥', '😱', '👏', '💀'];
 const ID_RE = /^[a-f0-9]{32}$|^[a-f0-9-]{36}$/i;
 const CHUNK = 4 * 1024 * 1024;
-const APP_APK_URL = process.env.APP_APK_URL || 'https://github.com/PlatzZuDemHalter/jellyfin-watchparty/releases/download/android-latest/watchparty.apk';
+const APP_APK_URL = process.env.APP_APK_URL || 'https://github.com/derverdox/jellyfin-watchparty/releases/download/android-latest/watchparty.apk';
 // Eigene TV-App (Fire TV / Android TV), nativ mit ExoPlayer
-const TV_APK_URL = process.env.TV_APK_URL || 'https://github.com/PlatzZuDemHalter/jellyfin-watchparty/releases/download/android-latest/watchparty-tv.apk';
+const TV_APK_URL = process.env.TV_APK_URL || 'https://github.com/derverdox/jellyfin-watchparty/releases/download/android-latest/watchparty-tv.apk';
 const ROUND_MS = Math.max(5, Number(process.env.ROUND_SECONDS) || 120) * 1000; // Dauer der Bewertungsrunde nach dem Film
 
 // Erstes Admin-Konto aus der Umgebung anlegen, falls noch keins existiert

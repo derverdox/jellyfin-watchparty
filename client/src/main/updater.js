@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { Readable } = require('stream');
 
-const REPO = process.env.WATCHPARTY_UPDATE_REPO || 'PlatzZuDemHalter/jellyfin-watchparty';
+const REPO = process.env.WATCHPARTY_UPDATE_REPO || 'derverdox/jellyfin-watchparty';
 const TAG_RE = /^client-v(\d+)\.(\d+)\.(\d+)$/;
 const CHECK_EVERY = 6 * 3600 * 1000;
 
