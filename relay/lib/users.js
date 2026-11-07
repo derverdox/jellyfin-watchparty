@@ -192,10 +192,12 @@ class UserStore {
     // abgelaufene/verbrauchte nach 30 Tagen wegräumen
     d.invites = (d.invites || []).filter((i) => this.inviteValid(i) || now - (i.expires || 0) < 30 * 86400000);
     const code = crypto.randomBytes(12).toString('base64url');
+    const days = Math.min(Math.max(Number(opts.expiresDays) || 0, 0), 3650);
     d.invites.push({
       code, by, created: now, expires: now + hours * 3600 * 1000,
       maxUses: Math.min(Math.max(Number(opts.uses) || 1, 1), 100),
       group: opts.group || null, note: String(opts.note || '').slice(0, 200), usedBy: [],
+      expiresDays: days || null,
     });
     this.db.save();
     return code;
@@ -205,6 +207,7 @@ class UserStore {
     return (this.data.invites || []).map((i) => ({
       code: i.code, by: i.by, created: i.created, expires: i.expires, maxUses: i.maxUses || 1,
       usedBy: this.inviteUses(i), group: i.group || null, note: i.note || '', revoked: !!i.revoked, valid: this.inviteValid(i),
+      expiresDays: i.expiresDays || null,
     })).sort((a, b) => b.created - a.created);
   }
 
@@ -222,7 +225,10 @@ class UserStore {
   async redeemInvite(code, username, password, defaultGroups = []) {
     if (!this.checkInvite(code)) throw new Error('Einladung ungültig oder abgelaufen');
     const inv = this.data.invites.find((x) => x.code === code);
-    const u = await this.create(username, password, { groups: inv.group ? [inv.group] : defaultGroups, createdBy: `Einladung von ${inv.by}` });
+    const expires = inv.expiresDays ? Date.now() + inv.expiresDays * 86400000 : null;
+    const u = await this.create(username, password, {
+      groups: inv.group ? [inv.group] : defaultGroups, createdBy: `Einladung von ${inv.by}`, expires,
+    });
     const i = this.data.invites.find((x) => x.code === code);
     i.usedBy = [...this.inviteUses(i), u.username];
     i.usedAt = Date.now();

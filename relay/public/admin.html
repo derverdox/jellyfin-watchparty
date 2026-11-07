@@ -29,6 +29,7 @@
         <button data-view="users"><span class="ico">☺</span>Benutzer</button>
         <button data-view="groups"><span class="ico">◈</span>Gruppen</button>
         <button data-view="invites"><span class="ico">✉</span>Einladungen</button>
+        <button data-view="waitlist"><span class="ico">✎</span>Bewerbungen <span class="badge-n" id="nav-wl"></span></button>
         <button data-view="stats"><span class="ico">▤</span>Statistik</button>
         <button data-view="security"><span class="ico">⛨</span>Sicherheit <span class="badge-n" id="nav-sec"></span></button>
         <button data-view="audit"><span class="ico">☰</span>Protokoll</button>
@@ -164,7 +165,19 @@
         </div>
       </section>
 
-      <!-- Statistik -->
+      <!-- Bewerbungen (Warteliste) -->
+      <section class="view" id="v-waitlist" hidden>
+        <div class="card">
+          <p class="muted tiny">Leute ohne Konto konnten sich auf der Login-Seite bewerben. „Annehmen“ erzeugt einen einmaligen Einladungslink (optional mit Laufzeit in Tagen) – den schickst du dem Bewerber privat. Automatische Registrierung gibt es weiterhin nicht. Zahlungen laufen komplett extern; im Konto-Panel kannst du Laufzeiten gegen Notiz verlängern.</p>
+        </div>
+        <div class="card table-card">
+          <table class="tbl" id="waitlist-table">
+            <thead><tr><th>Bewerber</th><th>Kontakt</th><th>Nachricht</th><th>Eingegangen</th><th>Status</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="view" id="v-stats" hidden>
         <div class="stats-row" id="stat-kpis"></div>
         <div class="card chart-card">
@@ -257,6 +270,10 @@
           <div class="set-row">
             <div><strong>Einladungen</strong><p class="muted tiny">Neue Konten per Einladungslink erlauben.</p></div>
             <label class="switch"><input type="checkbox" name="invitesEnabled"><span></span></label>
+          </div>
+          <div class="set-row">
+            <div><strong>Bewerbungen</strong><p class="muted tiny">Login-Seite zeigt „Bewerben“ – Interessenten landen auf einer Warteliste, du entscheidest im Panel. Konten entstehen trotzdem nur per Invite-Link.</p></div>
+            <label class="switch"><input type="checkbox" name="waitlistEnabled"><span></span></label>
           </div>
           <div class="set-row">
             <div><strong>Räume pro Konto</strong><p class="muted tiny">Wie viele offene Räume jemand gleichzeitig haben darf (0 = unbegrenzt). Gilt nicht für Admins.</p></div>

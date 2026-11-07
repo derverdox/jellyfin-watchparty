@@ -22,7 +22,7 @@
 html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); }
 body { font-size: 15px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
 [hidden] { display: none !important; }
-button, input, select { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .muted { color: var(--muted); }
 .tiny { font-size: 12px; }
@@ -49,10 +49,11 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 }
 .icon:hover { background: #ffffff14; }
 .icon:disabled, .btn:disabled { opacity: .4; cursor: not-allowed; }
-input[type=text], input:not([type]), input[type=password], input[type=search], select {
+input[type=text], input:not([type]), input[type=password], input[type=search], select, textarea {
   background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; outline: none;
 }
-input:focus, select:focus { border-color: var(--accent); }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+textarea { resize: vertical; }
 label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
 .row { display: flex; gap: 8px; }
 .row input { flex: 1; min-width: 0; }

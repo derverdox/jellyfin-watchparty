@@ -22,6 +22,7 @@ const { LibraryStore, variants, parseQuery, score, fold } = require('./lib/libra
 const { groupMovies, movieTitle, qualities: movieQualities } = require('./lib/movie-versions');
 const { displayHeight, sourceHeight, bestSource, compareItems, tierAt, deliveryPolicy, resolutionName } = require('./lib/playback-quality');
 const { WishStore } = require('./lib/wishes');
+const { WaitlistStore, GrantStore } = require('./lib/waitlist');
 const { WishSearch } = require('./lib/wishsearch');
 const { Pairing } = require('./lib/pair');
 const { TwitchRelay, TwitchError, parseChannel } = require('./lib/twitch');
@@ -61,6 +62,8 @@ const groups = new GroupStore(CONFIG.dataDir);
 const telemetry = new Telemetry(CONFIG.dataDir);
 const library = new LibraryStore(CONFIG.dataDir);
 const wishes = new WishStore(CONFIG.dataDir);
+const waitlist = new WaitlistStore(CONFIG.dataDir);   // Bewerbungen ohne Konto
+const grants = new GrantStore(CONFIG.dataDir);        // Förder-Heft: Laufzeiten, Geld fließt extern
 // Titelvorschläge fürs Brett (TMDb). Ohne Zugang in der .env bleibt es aus.
 const wishSearch = new WishSearch({ apiKey: process.env.tmdb_api_key || '' });
 const pairing = new Pairing();
@@ -842,6 +845,19 @@ async function handle(req, res) {
       console.log(`[users] "${user.username}" hat sich per Einladung registriert`);
       return sendJson(res, 200, me(s), { 'Set-Cookie': sessionCookie(req, s.token) });
     }
+  }
+
+  // --- Bewerbung für die Warteliste (ohne Konto, von der Login-Seite) ---
+  if (p === '/api/waitlist' && req.method === 'POST') {
+    if (!groups.settings.waitlistEnabled) throw new HttpError(403, 'Bewerbungen sind gerade ausgeschaltet.');
+    if (!guard.limit(`wl|${ip}`, 5, 24 * 60 * 60 * 1000)) { guard.fail(ip, '(bewerbung)'); throw new HttpError(429, 'Zu viele Bewerbungen von deiner Adresse – meld dich anderswo.'); }
+    const body = await readJson(req);
+    let entry;
+    try { entry = waitlist.add({ name: body.name, contact: body.contact, message: body.message }); }
+    catch (e) { throw new HttpError(400, e.message); }
+    telemetry.audit({ type: 'waitlist-add', target: entry.name, ip });
+    telemetry.event('waitlist', `${entry.name} hat sich beworben`, { level: 'info' });
+    return sendJson(res, 200, { ok: true, position: waitlist.pendingCount() });
   }
 
   // --- Anmelden per QR-Code: Gerät ohne Konto (start/poll) ---
@@ -2224,12 +2240,24 @@ setInterval(() => {
     }
   }
 }, TICK_MS).unref();
+
+// Abgelaufene Konten (Laufzeit „auf Zeit“) aktiv trennen – nicht erst beim nächsten API-Ruf rausfallen lassen
+setInterval(() => {
+  const now = Date.now();
+  for (const u of users.list()) {
+    if (!u.expires || now < u.expires || u.admin) continue;
+    if (!sessions.forUser(u.username).length) continue;
+    sessions.deleteForUser(u.username);
+    disconnectUser(u.username, 'Dein Zugang ist abgelaufen.');
+    telemetry.audit({ type: 'access-expired', user: u.username });
+  }
+}, 5 * 60 * 1000).unref();
 function shutdown() { telemetry.dirty = true; telemetry.save(); library.flush(true); sessions.flush(true); process.exit(0); }
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 const adminCtx = {
-  users, sessions, groups, telemetry, rooms, tunnel, cache, jf, uid, readJson, sendJson, HttpError, guard,
+  users, sessions, groups, telemetry, rooms, tunnel, cache, waitlist, grants, jf, uid, readJson, sendJson, HttpError, guard,
   disconnectUser, closeRoom, bumpAccess, mapItem, getItemDetails, publicRoom, fmtTime, ID_RE, ITEM_FIELDS, clientIp,
 };
 

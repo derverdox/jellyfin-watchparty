@@ -28,7 +28,7 @@ const A = {
   lastOk: 0,
 };
 
-const TITLES = { overview: 'Übersicht', rooms: 'Räume', users: 'Benutzer', groups: 'Gruppen', invites: 'Einladungen', stats: 'Statistik', security: 'Sicherheit', audit: 'Protokoll', settings: 'Einstellungen' };
+const TITLES = { overview: 'Übersicht', rooms: 'Räume', users: 'Benutzer', groups: 'Gruppen', invites: 'Einladungen', waitlist: 'Bewerbungen', stats: 'Statistik', security: 'Sicherheit', audit: 'Protokoll', settings: 'Einstellungen' };
 const STATE = { playing: ['spielt', 'ok'], paused: ['pausiert', ''], buffering: ['lädt', 'warn'], idle: ['wartet', ''], blocked: ['blockiert', 'warn'], error: ['Fehler', 'bad'] };
 const KIND = { web: '🌐 Browser', desktop: '🖥️ Desktop', mobile: '📱 Mobil', tv: '📺 TV' };
 const BITRATE_LABEL = { 1500000: '1,5 Mbit/s (mobil)', 3000000: '3 Mbit/s', 6000000: '6 Mbit/s (720p)', 10000000: '10 Mbit/s', 20000000: '20 Mbit/s (1080p)', 40000000: '40 Mbit/s (max.)' };
@@ -295,6 +295,7 @@ function go(view) {
   if (view === 'users') { loadUsers(); A.timer = setInterval(() => { if ($('#drawer').hidden) loadUsers(); }, 10000); }
   if (view === 'groups') loadGroups().then(renderGroups);
   if (view === 'invites') loadInvites();
+  if (view === 'waitlist') loadWaitlist();
   if (view === 'stats') loadStats();
   if (view === 'audit') loadAudit();
   if (view === 'security') { loadSecurity(); A.timer = setInterval(loadSecurity, 5000); }
@@ -319,6 +320,7 @@ async function refreshOverview() {
   }
   $('#maint-flag').hidden = !A.ov.settings.maintenance;
   $('#nav-rooms').textContent = A.ov.counts.rooms || '';
+  $('#nav-wl').textContent = A.ov.counts.waitlist || '';
   if (A.view === 'overview') renderOverview();
   if (A.view === 'rooms') renderRooms();
 }
@@ -609,6 +611,7 @@ function openUser(name) {
     el('section', {}, el('span', { class: 'section-title' }, 'Gruppen'), u.admin ? el('p', { class: 'tiny muted' }, 'Admins dürfen alles, Gruppen spielen keine Rolle.') : groupsBox,
       u.admin ? null : el('p', { class: 'tiny muted' }, 'Keine Gruppe gewählt = Standardgruppe.')),
     el('section', {}, el('div', { class: 'form-grid' }, el('label', {}, 'Läuft ab', expiresIn), el('label', {}, 'Notiz', noteIn))),
+    (u.owner || u.admin && !A.owner) ? null : grantSection(u),
     locked ? null : el('div', { class: 'row end' }, el('button', { class: 'btn primary', onclick: () => patch({
       groups: $$('input:checked', groupsBox).map((x) => x.value), note: noteIn.value,
       ...(u.owner ? {} : { expires: expiresIn.value ? new Date(`${expiresIn.value}T23:59:59`).getTime() : null }),
@@ -801,6 +804,133 @@ $('#invite-form').addEventListener('submit', async (e) => {
   } catch (ex) { toast(ex.message, true); }
 });
 
+/* ---------------- Bewerbungen (Warteliste) ---------------- */
+
+async function loadWaitlist() {
+  try {
+    if (!A.groups.length) await loadGroups();
+    const d = await api('/waitlist');
+    A.waitlist = d.entries;
+    $('#nav-wl').textContent = d.pending || '';
+    const tb = $('#waitlist-table tbody');
+    tb.innerHTML = '';
+    if (!A.waitlist.length) { tb.append(el('tr', {}, el('td', { colspan: 6, class: 'empty' }, 'Keine Bewerbungen offen.'))); return; }
+    for (const e of A.waitlist) {
+      const status = e.status === 'pending' ? el('span', { class: 'tag on' }, 'offen')
+        : e.status === 'accepted' ? el('span', { class: 'tag', title: e.grantedDays ? `Konto läuft nach ${e.grantedDays} Tagen ab` : 'ohne Laufzeit' }, 'angenommen')
+        : el('span', { class: 'tag off' }, 'abgelehnt');
+      tb.append(el('tr', { class: e.status === 'pending' ? '' : 'dim' },
+        el('td', {}, e.name, e.suggestedUser ? el('div', { class: 'tiny muted' }, e.suggestedUser) : null),
+        el('td', { class: 'muted' }, e.contact || '–'),
+        el('td', {}, el('div', { class: 'wl-msg' }, e.message), e.reviewNote ? el('div', { class: 'tiny muted' }, `Notiz: ${e.reviewNote}${e.reviewedBy ? ` (${e.reviewedBy})` : ''}`) : null),
+        el('td', { class: 'muted' }, when(e.created)),
+        el('td', {}, status),
+        el('td', { class: 'num' }, el('div', { class: 'row end' },
+          e.status !== 'accepted' ? el('button', { class: 'btn small primary', onclick: () => acceptApply(e) }, '✓ Annehmen') : null,
+          e.inviteCode ? el('button', { class: 'btn small', onclick: () => copy(`${location.origin}/invite/${e.inviteCode}`) }, 'Link kopieren') : null,
+          e.status === 'pending' ? el('button', { class: 'btn small', onclick: () => rejectApply(e) }, 'Ablehnen') : null,
+          el('button', { class: 'btn small danger', onclick: async () => {
+            if (!(await confirmBox('Bewerbung löschen?', `${e.name} von der Liste entfernen.`, 'Löschen', true))) return;
+            try { await api(`/waitlist/${e.id}`, { method: 'DELETE' }); loadWaitlist(); } catch (ex) { toast(ex.message, true); }
+          } }, '✕')))));
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+function acceptApply(e) {
+  const card = $('#modal-card');
+  card.innerHTML = '';
+  const guess = String(e.name || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '').replace(/^[.-]+|[.-]+$/g, '').slice(0, 24);
+  const f = el('form', { class: 'invite-form' },
+    el('h2', {}, `Bewerbung annehmen: ${e.name}`),
+    el('p', { class: 'muted tiny' }, 'Es entsteht ein einmaliger Einladungslink. Den schickst du dem Bewerber privat – ein Konto legt er sich selbst damit an.'),
+    el('div', { class: 'form-grid' },
+      el('label', {}, 'Benutzername vorschlagen', el('input', { name: 'username', maxlength: 24, value: guess, placeholder: 'optional', autocomplete: 'off' })),
+      el('label', {}, 'Gruppe', el('select', { name: 'group' }, el('option', { value: '' }, 'Standard'), A.groups.map((g) => el('option', { value: g.id, selected: g.id === A.defaultGroup }, g.name)))),
+      el('label', {}, 'Konto-Laufzeit', el('select', { name: 'days' },
+        el('option', { value: '0', selected: true }, 'unbegrenzt'),
+        el('option', { value: '7' }, '7 Tage'), el('option', { value: '30' }, '30 Tage'),
+        el('option', { value: '90' }, '90 Tage'), el('option', { value: '180' }, 'halbes Jahr'), el('option', { value: '365' }, '1 Jahr'))),
+      el('label', { class: 'span2' }, 'Notiz', el('input', { name: 'note', maxlength: 300, placeholder: 'z. B. „Kennt Max, Beitrag besprochen“' }))),
+    el('p', { class: 'error bad tiny', hidden: true }),
+    el('div', { class: 'row end' }, el('button', { class: 'btn', type: 'button', onclick: () => { $('#modal').hidden = true; } }, 'Abbrechen'), el('button', { class: 'btn primary', type: 'submit' }, 'Einladungslink erzeugen')));
+  f.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    try {
+      const r = await api(`/waitlist/${e.id}/accept`, { method: 'POST', body: { username: f.username.value.trim(), group: f.group.value || undefined, days: Number(f.days.value), note: f.note.value } });
+      const link = `${location.origin}${r.path}`;
+      copy(link);
+      showSecret('Einladungslink erzeugt', `Einmalig, ${r.days ? `Konto läuft nach ${r.days} Tagen ab. ` : ''}Link privat an ${e.name} schicken:`, link);
+      loadWaitlist();
+    } catch (ex) { const p = $('.error', f); p.textContent = ex.message; p.hidden = false; }
+  });
+  card.append(f);
+  $('#modal').hidden = false;
+  f.username.focus();
+}
+
+async function rejectApply(e) {
+  if (!(await confirmBox('Bewerbung ablehnen?', `${e.name} wird als abgelehnt markiert und bleibt zur Nachvollziehbarkeit auf der Liste.`, 'Ablehnen'))) return;
+  try { await api(`/waitlist/${e.id}/reject`, { method: 'POST', body: {} }); toast('Abgelehnt'); loadWaitlist(); } catch (ex) { toast(ex.message, true); }
+}
+
+/* ---------------- Förder-Heft (Laufzeit gegen Notiz) ---------------- */
+
+function grantSection(u) {
+  const hist = el('div', {});
+  api(`/grants?user=${encodeURIComponent(u.username)}`).then((d) => {
+    hist.replaceChildren(...(d.grants.length
+      ? d.grants.slice(0, 10).map((g) => el('div', { class: 'grant-row' },
+          el('span', {}, `+${g.days} Tage${g.amount ? ` · ${g.amount}` : ''} · ${g.method}`),
+          el('span', { class: 'muted' }, `${new Date(g.at).toLocaleDateString('de-DE')} · ${g.by}${g.ref ? ` · Ref: ${g.ref}` : ''}`)))
+      : [el('p', { class: 'tiny muted' }, 'Noch keine Einträge – Zahlungen laufen extern, hier steht nur die Notiz.')]));
+  }).catch(() => { /* egal */ });
+  return el('section', {},
+    el('span', { class: 'section-title' }, 'Laufzeit & Förderung'),
+    el('p', { class: 'tiny muted' }, 'Beiträge laufen bei uns komplett extern (Überweisung, PayPal an Freunde, bar …). Hier verlängerst du nur die Laufzeit und notierst den Beitrag – es wird nichts automatisiert abgebucht.'),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn small', onclick: () => grantBox(u, 30) }, '+30 Tage'),
+      el('button', { class: 'btn small', onclick: () => grantBox(u, 90) }, '+90 Tage'),
+      el('button', { class: 'btn small', onclick: () => grantBox(u, 365) }, '+1 Jahr'),
+      u.expires ? el('button', { class: 'btn small danger', onclick: async () => {
+        try { await api(`/users/${encodeURIComponent(u.username)}`, { method: 'PATCH', body: { expires: null } }); toast('Laufzeit entfernt'); await loadUsers(); openUser(u.username); } catch (e) { toast(e.message, true); }
+      } }, 'Laufzeit aufheben') : null),
+    hist);
+}
+
+function grantBox(u, days) {
+  const card = $('#modal-card');
+  card.innerHTML = '';
+  const f = el('form', { class: 'invite-form' },
+    el('h2', {}, `Laufzeit verlängern: ${u.username}`),
+    el('p', { class: 'muted tiny' }, u.expires ? `Läuft gerade ab: ${new Date(u.expires).toLocaleDateString('de-DE')} – die Tage werden davongerechnet.` : 'Keine laufende Beschränkung – sie startet jetzt.'),
+    el('div', { class: 'form-grid' },
+      el('label', {}, 'Tage', el('input', { name: 'days', type: 'number', min: '1', max: '3650', value: String(days), required: true })),
+      el('label', {}, 'Beitrag weg', el('select', { name: 'method' },
+        ['überwiesen', 'PayPal (Freunde)', 'bar', 'gegenleistung', 'sonstiges'].map((x, i) => el('option', { value: x, selected: i === 0 }, x)))),
+      el('label', {}, 'Betrag (optional)', el('input', { name: 'amount', maxlength: 40, placeholder: 'z. B. 10 €' })),
+      el('label', {}, 'Referenz (optional)', el('input', { name: 'ref', maxlength: 120, placeholder: 'Transaktionskürzel o. Ä.' })),
+      el('label', { class: 'span2' }, 'Notiz', el('input', { name: 'note', maxlength: 300 }))),
+    el('p', { class: 'error bad tiny', hidden: true }),
+    el('div', { class: 'row end' }, el('button', { class: 'btn', type: 'button', onclick: () => { $('#modal').hidden = true; } }, 'Abbrechen'), el('button', { class: 'btn primary', type: 'submit' }, 'Verlängern & notieren')));
+  f.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    try {
+      await api(`/users/${encodeURIComponent(u.username)}/grant`, { method: 'POST', body: {
+        days: Number(f.days.value), method: f.method.value, amount: f.amount.value, ref: f.ref.value, note: f.note.value,
+      } });
+      $('#modal').hidden = true;
+      toast('Laufzeit verlängert');
+      await loadUsers(); openUser(u.username);
+    } catch (ex) { const p = $('.error', f); p.textContent = ex.message; p.hidden = false; }
+  });
+  card.append(f);
+  $('#modal').hidden = false;
+  f.days.focus();
+}
+
+/* ---------------- Förder-Heft Ende ---------------- */
+
 /* ---------------- Statistik ---------------- */
 
 async function loadStats() {
@@ -965,6 +1095,7 @@ async function loadSettings() {
     for (const g of d.groups) f.defaultGroup.append(el('option', { value: g.id }, g.name));
     f.defaultGroup.value = d.settings.defaultGroup;
     f.invitesEnabled.checked = !!d.settings.invitesEnabled;
+    f.waitlistEnabled.checked = !!d.settings.waitlistEnabled;
     f.maintenance.checked = !!d.settings.maintenance;
     f.maxRoomsPerUser.value = d.settings.maxRoomsPerUser;
     f.motd.value = d.settings.motd || '';
@@ -976,7 +1107,7 @@ $('#settings-form').addEventListener('submit', async (e) => {
   const f = e.target;
   if (f.maintenance.checked && !(A.ov && A.ov.settings.maintenance) && !(await confirmBox('Wartungsmodus einschalten?', 'Alle Nicht-Admins werden sofort getrennt und können sich erst wieder anmelden, wenn du ihn ausschaltest.', 'Einschalten', true))) return;
   try {
-    const r = await api('/settings', { method: 'PATCH', body: { defaultGroup: f.defaultGroup.value, invitesEnabled: f.invitesEnabled.checked, maintenance: f.maintenance.checked, maxRoomsPerUser: Number(f.maxRoomsPerUser.value), motd: f.motd.value } });
+    const r = await api('/settings', { method: 'PATCH', body: { defaultGroup: f.defaultGroup.value, invitesEnabled: f.invitesEnabled.checked, waitlistEnabled: f.waitlistEnabled.checked, maintenance: f.maintenance.checked, maxRoomsPerUser: Number(f.maxRoomsPerUser.value), motd: f.motd.value } });
     A.defaultGroup = r.settings.defaultGroup;
     if (A.ov) A.ov.settings = r.settings;
     $('#maint-flag').hidden = !r.settings.maintenance;
