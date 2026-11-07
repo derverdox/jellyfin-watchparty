@@ -285,3 +285,7 @@ input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
 .toolbar form.row { flex-wrap: nowrap; }
 .toolbar form.row input, .announce-row input { flex: 1; min-width: 0; }
 .sec-list { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 6px; line-height: 1.5; }
+
+/* Bewerbungen + Förder-Heft */
+.wl-msg { max-width: 360px; }
+.grant-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; padding: 5px 0; border-top: 1px solid var(--line); }

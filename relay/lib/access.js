@@ -45,7 +45,7 @@ const DEFAULT_DATA = {
       maxBitrate: 10000000, access: { mode: 'all', ids: [] },
     },
   ],
-  settings: { defaultGroup: 'standard', maintenance: false, motd: '', invitesEnabled: true, maxRoomsPerUser: 3 },
+  settings: { defaultGroup: 'standard', maintenance: false, motd: '', invitesEnabled: true, waitlistEnabled: true, maxRoomsPerUser: 3 },
 };
 
 function cleanGroup(input, existing = {}) {
@@ -126,6 +126,7 @@ class GroupStore {
     }
     if ('maintenance' in patch) s.maintenance = !!patch.maintenance;
     if ('invitesEnabled' in patch) s.invitesEnabled = !!patch.invitesEnabled;
+    if ('waitlistEnabled' in patch) s.waitlistEnabled = !!patch.waitlistEnabled;
     if ('motd' in patch) s.motd = String(patch.motd || '').slice(0, 500);
     if ('maxRoomsPerUser' in patch) s.maxRoomsPerUser = Math.min(Math.max(parseInt(patch.maxRoomsPerUser, 10) || 0, 0), 50);
     this.db.save();

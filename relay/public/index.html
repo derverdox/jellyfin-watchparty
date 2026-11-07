@@ -23,6 +23,7 @@
       <button class="btn primary" type="submit">Weiter</button>
       <p class="error" id="login-error" hidden></p>
       <button class="link" type="button" id="btn-pair-qr">📱 Mit dem Handy anmelden (QR-Code)</button>
+      <button class="link" type="button" id="btn-apply">📝 Noch kein Konto? Bewerben</button>
     </form>
     <!-- Anmelden per QR-Code: wird auf Fernsehern automatisch gezeigt -->
     <div class="card pair-box" id="pair-box" hidden>
@@ -69,6 +70,31 @@
       <button class="btn primary" type="submit">Konto erstellen</button>
       <p class="error" id="register-error" hidden></p>
     </form>
+  </section>
+
+  <!-- Bewerbung für die Warteliste (ohne Konto) -->
+  <section id="view-apply" class="view center" hidden>
+    <form id="apply-form" class="card auth">
+      <div class="brand big"><span class="logo">▶</span> Watchparty</div>
+      <p class="muted" id="apply-hint">Bewerbung für einen Zugang – ein Admin schaut drüber und meldet sich bei dir.</p>
+      <label>Wie heißt du?
+        <input name="name" maxlength="40" autocomplete="name" required>
+      </label>
+      <label>Kontakt <span class="tiny">(E-Mail, Nummer oder @username – damit der Admin dich erreichen kann)</span>
+        <input name="contact" maxlength="120" autocomplete="email">
+      </label>
+      <label>Warum willst du reinschauen?
+        <textarea name="message" rows="4" maxlength="1000" required placeholder="Wer du bist, woher du uns kennst …"></textarea>
+      </label>
+      <button class="btn primary" type="submit">Bewerbung abschicken</button>
+      <button class="link" type="button" id="btn-apply-back">← Zurück zum Login</button>
+      <p class="error" id="apply-error" hidden></p>
+    </form>
+    <div class="card auth" id="apply-done" hidden>
+      <div class="brand big"><span class="logo">▶</span> Watchparty</div>
+      <p>📨 Bewerbung ist raus! Ein Admin schaut drüber und meldet sich bei dir.</p>
+      <button class="btn" type="button" id="btn-apply-done-back">Zurück zum Login</button>
+    </div>
   </section>
 
   <!-- Startseite (Streaming-Stil, home.js) -->

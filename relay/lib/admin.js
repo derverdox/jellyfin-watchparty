@@ -21,7 +21,7 @@ function sessionView(s, onlineSids) {
 }
 
 async function handleAdmin(ctx, req, res, url, me) {
-  const { users, sessions, groups, telemetry, rooms, tunnel, cache, readJson, sendJson, HttpError } = ctx;
+  const { users, sessions, groups, telemetry, rooms, tunnel, cache, waitlist, grants, readJson, sendJson, HttpError } = ctx;
   const p = url.pathname.slice('/api/admin'.length);
   const method = req.method;
   const ok = (data = { ok: true }) => sendJson(res, 200, data);
@@ -68,6 +68,7 @@ async function handleAdmin(ctx, req, res, url, me) {
         viewers, users: onlineUsers.size, rooms: roomList.filter((r) => !r.empty).length, roomsTotal: roomList.length,
         playing: roomList.reduce((s, r) => s + r.members.filter((x) => x.status && x.status.state === 'playing').length, 0),
         accounts: users.count(), sessions: Object.keys(sessions.map).length,
+        waitlist: waitlist.pendingCount(),
         desktop: roomList.reduce((s, r) => s + r.members.filter((x) => x.kind === 'desktop').length, 0),
       },
       agent: { online: tunnel.online, info: tunnel.info, streams: tunnel.streams.size },
@@ -312,6 +313,64 @@ async function handleAdmin(ctx, req, res, url, me) {
     try { users.revokeInvite(m[1]); } catch (e) { throw new HttpError(404, e.message); }
     audit('invite-revoke', { code: m[1].slice(0, 6) });
     return ok();
+  }
+
+  /* ---------------- Warteliste (Bewerbungen) ---------------- */
+
+  if (p === '/waitlist' && method === 'GET') {
+    return ok({ entries: waitlist.list(), pending: waitlist.pendingCount(), settings: { waitlistEnabled: groups.settings.waitlistEnabled } });
+  }
+  if ((m = p.match(/^\/waitlist\/([A-Za-z0-9_-]{4,20})\/accept$/)) && method === 'POST') {
+    const entry = waitlist.get(m[1]);
+    if (!entry) throw new HttpError(404, 'Bewerbung nicht gefunden');
+    if (entry.status === 'accepted' && entry.inviteCode && users.checkInvite(entry.inviteCode)) throw new HttpError(400, 'Diese Bewerbung hat schon einen gültigen Einladungslink');
+    const username = String(body.username || '').trim();
+    if (username && !users.validName(username)) throw new HttpError(400, 'Benutzername: 2–24 Zeichen, Buchstaben/Zahlen/._-');
+    if (username && users.find(username)) throw new HttpError(400, 'Benutzername ist schon vergeben');
+    if (body.group && !groups.get(body.group)) throw new HttpError(400, 'Gruppe nicht gefunden');
+    const days = Math.min(Math.max(Number(body.days) || 0, 0), 3650);
+    const code = users.createInvite(me.username, {
+      hours: Math.min(Math.max(Number(body.hours) || 72, 1), 24 * 90), uses: 1,
+      group: body.group || null, note: `Bewerbung: ${entry.name}${entry.contact ? ` (${entry.contact})` : ''}`, expiresDays: days || undefined,
+    });
+    waitlist.accept(m[1], { by: me.username, inviteCode: code, suggestedUser: username, days, note: body.note });
+    audit('waitlist-accept', { target: entry.name, days, group: body.group || null });
+    telemetry.event('admin', `${me.username} hat die Bewerbung von ${entry.name} angenommen${days ? ` (${days} Tage)` : ''}`, { user: me.username });
+    return ok({ code, path: `/invite/${code}`, days });
+  }
+  if ((m = p.match(/^\/waitlist\/([A-Za-z0-9_-]{4,20})\/reject$/)) && method === 'POST') {
+    try { waitlist.reject(m[1], { by: me.username, note: body.note }); } catch (e) { throw new HttpError(404, e.message); }
+    audit('waitlist-reject', { target: (waitlist.get(m[1]) || {}).name || m[1] });
+    return ok();
+  }
+  if ((m = p.match(/^\/waitlist\/([A-Za-z0-9_-]{4,20})$/)) && method === 'DELETE') {
+    if (!waitlist.remove(m[1])) throw new HttpError(404, 'Bewerbung nicht gefunden');
+    audit('waitlist-delete', { target: m[1] });
+    return ok();
+  }
+
+  /* ---------------- Förder-Heft (Laufzeiten, Zahlungen extern) ---------------- */
+
+  if (p === '/grants' && method === 'GET') {
+    const who = url.searchParams.get('user') || '';
+    return ok({ grants: grants.list(who || null).slice(0, 200) });
+  }
+  if ((m = p.match(/^\/users\/([^/]+)\/grant$/)) && method === 'POST') {
+    const name = decodeURIComponent(m[1]);
+    const u = users.find(name);
+    if (!u) throw new HttpError(404, 'Benutzer nicht gefunden');
+    if (u.admin && !me.owner) throw new HttpError(403, 'Andere Admins kann nur der Haupt-Admin ändern');
+    if (u.owner) throw new HttpError(400, 'Der Haupt-Admin läuft nicht ab');
+    const ext = grants.extend(u, body.days);
+    users.update(u.username, { expires: ext.to });
+    const g = grants.add({
+      user: u.username, by: me.username, days: ext.days, from: ext.from, to: ext.to,
+      method: body.method, amount: body.amount, ref: body.ref, note: body.note,
+    });
+    ctx.bumpAccess();
+    audit('user-grant', { target: u.username, days: ext.days, method: g.method, to: ext.to });
+    telemetry.event('admin', `${me.username} hat ${u.username} um ${ext.days} Tage verlängert`, { user: me.username });
+    return ok({ grant: g, user: users.view(users.find(u.username)) });
   }
 
   /* ---------------- Sicherheit ---------------- */

@@ -226,6 +226,28 @@ $('#register-form').addEventListener('submit', async (e) => {
   } catch (ex) { err.textContent = ex.message; err.hidden = false; }
 });
 
+$('#btn-apply').addEventListener('click', () => {
+  $('#apply-form').hidden = false;
+  $('#apply-done').hidden = true;
+  $('#apply-error').hidden = true;
+  showView('view-apply');
+  $('#apply-form').name.focus();
+});
+$('#btn-apply-back').addEventListener('click', () => showLogin());
+$('#btn-apply-done-back').addEventListener('click', () => showLogin());
+$('#apply-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const err = $('#apply-error');
+  err.hidden = true;
+  try {
+    await api('/api/waitlist', { method: 'POST', body: { name: f.name.value.trim(), contact: f.contact.value.trim(), message: f.message.value.trim() } });
+    f.reset();
+    f.hidden = true;
+    $('#apply-done').hidden = false;
+  } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+});
+
 $('#btn-invite-user').addEventListener('click', async () => {
   try {
     const r = await api('/api/invites', { method: 'POST' });

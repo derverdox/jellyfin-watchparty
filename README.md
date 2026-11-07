@@ -112,10 +112,11 @@ Admins finden in der Lobby **„⚙ Verwaltung öffnen“**, oder direkt unter `
 - **Räume:** Was läuft wo, mit Position und Status jedes Mitglieds (Browser, Desktop-Client oder Handy, Abweichung). Ansage an einen Raum oder an alle, Leute entfernen, Steuerung freigeben, Raum schließen.
 - **Benutzer:** Konten anlegen (optional mit Zufallspasswort), Gruppen zuweisen, sperren, Ablaufdatum, Notiz, Passwort zurücksetzen, aktive Sitzungen einzeln beenden, löschen. Sperren und Löschen trennt sofort alle Verbindungen.
 - **Gruppen:** Rechte (Räume erstellen, steuern, Filme auswählen, vorschlagen, chatten, einladen, Originalqualität), höchste Bitrate und **Inhaltszugriff**: alles, *nur* bestimmte Bibliotheken/Ordner/Serien oder *alles außer* bestimmten. Gilt überall: Bibliothek, Suche, Bilder, Streams und direkte Links. Wer im Raum keinen Zugriff auf den laufenden Titel hat, sieht einen Hinweis, und der Host bekommt Bescheid.
-- **Einladungen:** mit Zielgruppe, Gültigkeit (1–30 Tage) und Anzahl Nutzungen. Offene Einladungen lassen sich widerrufen.
+- **Einladungen:** mit Zielgruppe, Gültigkeit (1–30 Tage) und Anzahl Nutzungen. Offene Einladungen lassen sich widerrufen. Neu: Einladungen können eine **Konto-Laufzeit** tragen – das Konto läuft dann von allein ab.
+- **Bewerbungen:** Warteliste von der Login-Seite (siehe unten).
 - **Statistik:** Watchtime gesamt und pro Konto, meistgeschaute Titel, Tageswerte der letzten 30 Tage, Rekord an gleichzeitigen Zuschauern.
 - **Protokoll:** Anmeldungen, Fehlversuche und alle Admin-Aktionen (`data/audit.jsonl`).
-- **Einstellungen:** Standardgruppe für neue Konten, Einladungen an/aus, maximale Räume pro Konto, Begrüßungstext in der Lobby, **Wartungsmodus** (nur Admins kommen rein).
+- **Einstellungen:** Standardgruppe für neue Konten, Einladungen an/aus, **Bewerbungen an/aus**, maximale Räume pro Konto, Begrüßungstext in der Lobby, **Wartungsmodus** (nur Admins kommen rein).
 
 - **Sicherheit:** Fehlversuche bei der Anmeldung pro IP und pro Konto, automatisch gebremste und gesperrte IPs, manuelles Sperren und Entsperren.
 
@@ -134,6 +135,17 @@ docker compose exec relay node server.js user passwd lisa
 docker compose exec relay node server.js user del lisa
 docker compose exec -e DOMAIN=example.com relay node server.js invite 48   # Einladungslink, 48 h
 ```
+
+## Bewerbungen, Zugänge auf Zeit & Förder-Heft
+
+**Warteliste:** Auf der Login-Seite steht „📝 Noch kein Konto? Bewerben“. Interessenten ohne Konto tragen Name, Kontakt und ein paar Sätze ein – das landet in `data/waitlist.json`. Im Admin-Panel unter **Bewerbungen** sieht man die Liste (Zähler als Badge) und kann:
+- **Annehmen** → erzeugt einen einmaligen Einladungslink (optional mit vorzuschlagendem Benutzernamen, Zielgruppe und **Laufzeit in Tagen**). Den Link schickt man dem Bewerber privat – eine automatische Registrierung bleibt abgeschaltet.
+- **Ablehnen** (bleibt mit Notiz nachvollziehbar) oder löschen.
+- In den **Einstellungen** kann die Bewerbungsseite ganz abgeschaltet werden.
+
+**Zugang auf Zeit:** Jedes Konto (außer dem Haupt-Admin) kann ein Ablaufdatum tragen. Abgelaufene Konten können sich nicht anmelden; wer online ist, wird binnen fünf Minuten aktiv getrennt und abgemeldet.
+
+**Förder-Heft (`data/grants.json`):** Falls Beiträge anfallen, laufen sie **komplett extern** (Überweisung, PayPal an Freunde, bar, Gegenleistung). Im Konto-Panel verlängert man mit „+30/+90/+365 Tage“ die Laufzeit und notiert Betrag/Weg/Referenz dazu – das ist reine Buchhaltung, es wird nichts automatisiert abgebucht und keine Zahlungs-API angebunden. ⚠ Rechtlich bleibt der Dienst ein privater Kreis unter Freunden (§ 53 UrhG setzt „unentgeltlich“ voraus): Das Heft dokumentiert Absprachen, macht den Zugang aber nicht kommerziell. Wer Beiträge erheben will, sollte das juristisch prüfen lassen.
 
 ## Bibliothek, Merkliste & Qualität
 
