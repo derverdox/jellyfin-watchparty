@@ -137,7 +137,7 @@ class Tunnel extends EventEmitter {
      * Schickt eine Anfrage an Jellyfin (über den Agent).
      * Liefert { status, headers, body: Readable }.
      */
-    request({method = 'GET', path, headers = {}}, {signal, timeout = 90000} = {}) {
+    request({method = 'GET', path, headers = {}, low = false}, {signal, timeout = 90000} = {}) {
         return new Promise((resolve, reject) => {
             if (!this.online) return reject(new TunnelError(503, 'Der Heimserver ist gerade offline'));
             const id = this.nextId++;
@@ -190,13 +190,13 @@ class Tunnel extends EventEmitter {
                 signal.addEventListener('abort', onAbort, {once: true});
             }
             this.streams.set(id, entry);
-            this.send({t: 'req', id, method, path, headers});
+            this.send({t: 'req', id, method, path, headers, ...(low ? {low: true} : {})});
         });
     }
 
-    /** Anfrage komplett in einen Buffer lesen. */
-    async buffer(path, {headers, limit = 64 * 1024 * 1024, method, timeout} = {}) {
-        const r = await this.request({method, path, headers}, {timeout});
+    /** Anfrage komplett in einen Buffer lesen. low = Vorabruf (Hinterrang im Agent-Bucket). */
+    async buffer(path, {headers, limit = 64 * 1024 * 1024, method, timeout, low = false, signal} = {}) {
+        const r = await this.request({method, path, headers, low}, {timeout, signal});
         const chunks = [];
         let size = 0;
         for await (const c of r.body) {

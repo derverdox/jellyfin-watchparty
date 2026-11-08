@@ -28,6 +28,7 @@ const { Pairing } = require('./lib/pair');
 const { TwitchRelay, TwitchError, parseChannel } = require('./lib/twitch');
 const { parseYouTube, youtubeInfo } = require('./lib/youtube');
 const { parseExtUrl, extKey, extInfo } = require('./lib/ext');
+const { Readahead } = require('./lib/readahead');
 
 loadEnvFile(path.join(__dirname, '.env'));
 
@@ -41,6 +42,9 @@ const CONFIG = {
   trustProxy: process.env.TRUST_PROXY === 'true',
   streamMaxMbps: Math.max(0, Number(process.env.STREAM_MAX_MBPS) || 0),
   autoMaxMbps: Math.max(0.5, Number(process.env.AUTO_MAX_MBPS) || 10),
+  readaheadSegs: Math.max(0, Number(process.env.READAHEAD_SEGMENTS ?? 8)),
+  readaheadAhead: Math.max(0, Number(process.env.READAHEAD_AHEAD ?? 2)),
+  readaheadMax: Math.max(1, Number(process.env.READAHEAD_MAX ?? 3)),
   secureCookies: process.env.SECURE_COOKIES === 'true',
 };
 
@@ -58,6 +62,8 @@ const SESSION_TTL = 30 * 24 * 3600 * 1000;
 const sessions = new SessionStore(CONFIG.dataDir, SESSION_TTL);
 const tunnel = new Tunnel();
 const cache = new DiskCache(CONFIG.cacheDir, CONFIG.cacheBytes);
+// Idle-Readahead: Vorabrufe folgender Segmente in den Cache (low-Priorität im Agent)
+const readahead = new Readahead(cache, tunnel, { segments: CONFIG.readaheadSegs, ahead: CONFIG.readaheadAhead, max: CONFIG.readaheadMax });
 const groups = new GroupStore(CONFIG.dataDir);
 const telemetry = new Telemetry(CONFIG.dataDir);
 const library = new LibraryStore(CONFIG.dataDir);
@@ -640,7 +646,7 @@ function tunnelErr(e) {
 }
 
 /** Zwischengespeichertes Objekt (Segment, Bild, Untertitel) ausliefern. */
-async function serveCached(res, key, upstreamPath, { maxAge = 0, playlist = false, upstreamTimeout = 120000, who = null } = {}) {
+async function serveCached(res, key, upstreamPath, { maxAge = 0, playlist = false, upstreamTimeout = 120000, who = null, note = null } = {}) {
   let r;
   try {
     r = await cache.get(key, async () => {
@@ -652,6 +658,7 @@ async function serveCached(res, key, upstreamPath, { maxAge = 0, playlist = fals
   if (playlist && r.meta.status === 200) buf = Buffer.from(stripKeys(buf.toString('utf8')));
   telemetry.out(buf.length, !!r.hit);
   if (who) telemetry.clientOut(buf.length, who.session, who.stream);
+  if (note) { try { note(buf); } catch { /* Readahead ist best effort */ } }
   res.writeHead(r.meta.status, {
     'Content-Type': playlist ? 'application/vnd.apple.mpegurl' : r.meta.type,
     'Content-Length': buf.length,
@@ -1535,11 +1542,17 @@ async function handle(req, res) {
       const forced = { MediaSourceId: sourceId, MaxStreamingBitrate: String(br), VideoBitrate: String(Math.max(br - 320000, 100000)), AudioBitrate: '192000', MaxHeight: String(maxHeight), MaxWidth: String(maxWidth), VideoCodec: 'h264', AudioCodec: 'aac,mp3', AllowVideoStreamCopy: String(copy), AllowAudioStreamCopy: String(copy), EnableAutoStreamCopy: String(copy), Static: 'false' };
       for (const key of [...q.keys()]) if (Object.keys(forced).some((name) => name.toLowerCase() === key.toLowerCase())) q.delete(key);
       for (const [key, value] of Object.entries(forced)) q.set(key, value);
-      return serveCached(res, `pl|${ps}|${sub}|${q}`, `/Videos/${itemId}/${sub}?${q}`, { playlist: true, who: { session, stream: 'HLS-Playlist' } });
+      return serveCached(res, `pl|${ps}|${sub}|${q}`, `/Videos/${itemId}/${sub}?${q}`, {
+        playlist: true, who: { session, stream: 'HLS-Playlist' },
+        note: (buf) => { if (readahead.agentReady(tunnel.info)) readahead.notePlaylist(itemId, ps, sub, buf); },
+      });
     }
     if (/^hls1\/[A-Za-z0-9_]+\/-?\d+\.(ts|mp4|m4s|aac|vtt)$/.test(sub)) {
       // Segment-Schlüssel ohne wechselnde Parameter → geteilter Cache
-      return serveCached(res, `seg|${itemId}|${ps}|${sub}`, `/Videos/${itemId}/${sub}?${q}`, { maxAge: 3600, who: { session, stream: 'HLS-Segmente' } });
+      await serveCached(res, `seg|${itemId}|${ps}|${sub}`, `/Videos/${itemId}/${sub}?${q}`, { maxAge: 3600, who: { session, stream: 'HLS-Segmente' } });
+      // Nachlieferung anfordern: der Vorabruf im Agent läuft mit Hinterrang-Priorität.
+      if (readahead.agentReady(tunnel.info)) readahead.touch(itemId, ps, sub, q.toString());
+      return;
     }
     throw new HttpError(404, 'Nicht gefunden');
   }
@@ -2261,7 +2274,7 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 const adminCtx = {
-  users, sessions, groups, telemetry, rooms, tunnel, cache, waitlist, grants, jf, uid, readJson, sendJson, HttpError, guard,
+  users, sessions, groups, telemetry, rooms, tunnel, cache, waitlist, grants, readahead, jf, uid, readJson, sendJson, HttpError, guard,
   disconnectUser, closeRoom, bumpAccess, mapItem, getItemDetails, publicRoom, fmtTime, ID_RE, ITEM_FIELDS, clientIp,
 };
 

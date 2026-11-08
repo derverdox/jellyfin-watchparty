@@ -98,9 +98,22 @@ function start(port = 0) {
       res.writeHead(r ? 206 : 200, { 'Content-Type': 'video/mp4', 'Content-Length': e - s + 1, ...(r ? { 'Content-Range': `bytes ${s}-${e}/${VIDEO.length}` } : {}) });
       return res.end(VIDEO.subarray(s, e + 1));
     }
-    if ((m = p.match(/^\/Videos\/([a-f0-9]{32})\/(?:master|main)\.m3u8$/))) {
+    if ((m = p.match(/^\/Videos\/([a-f0-9]{32})\/master\.m3u8$/))) {
       res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
-      return res.end(`#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=${q.get('MaxStreamingBitrate')}\nmain.m3u8?br=${q.get('MaxStreamingBitrate')}\n`);
+      return res.end(`#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=${q.get('MaxStreamingBitrate')}\nmain.m3u8?MediaSourceId=${q.get('MediaSourceId')}&PlaySessionId=${q.get('PlaySessionId')}\n`);
+    }
+    if ((m = p.match(/^\/Videos\/([a-f0-9]{32})\/main\.m3u8$/))) {
+      // HLS-Medien-Playlist: sechs 6-s-Segmente, Dateinamen = Ticks (Jellyfin-Konvention)
+      const salt = 's4lt';
+      let body = '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n';
+      for (let i = 1; i <= 6; i++) body += `#EXTINF:6.0,\nhls1/${salt}/${i * 60000}.ts\n`;
+      body += '#EXT-X-ENDLIST\n';
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      return res.end(body);
+    }
+    if ((m = p.match(/^\/Videos\/([a-f0-9]{32})\/hls1\/[A-Za-z0-9_]+\/-?\d+\.ts$/))) {
+      res.writeHead(200, { 'Content-Type': 'video/mp2t' });
+      return res.end(Buffer.concat([Buffer.from('SEG:'), Buffer.from(m[0].split('/').pop()), Buffer.alloc(64 * 1024, 3)]));
     }
     res.writeHead(404); res.end();
   });
