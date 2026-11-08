@@ -19,7 +19,7 @@ const { DuplicateScanner } = require('./lib/duplicates');
 const selfDir = process.pkg ? path.dirname(process.execPath) : __dirname;
 loadEnvFile(path.join(selfDir, '.env'));
 
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 const CFG = {
   relayUrl: process.env.RELAY_URL || '',
   token: process.env.AGENT_TOKEN || '',
@@ -46,6 +46,10 @@ const LOW_WATER = 2 * 1024 * 1024;
 const RATE_BPS = CFG.maxUploadMbps > 0 ? Math.round(CFG.maxUploadMbps * 1e6 / 8) : 0;
 const BURST = Math.max(256 * 1024, Math.round(RATE_BPS * 0.25)); // kurze Bursts erlauben
 let bucket = BURST;
+// Vorabrufe (low, vom Relay als Readahead markiert) bekommen nur einen gedeckelten
+// Anteil: Wiedergabe-Streams haben immer Vorrang, die Leitung wird trotzdem gefüllt.
+const LOW_CAP = 0.5;
+let lowBucket = 0;
 if (RATE_BPS) console.log(`[agent] Upload zum Relay gedrosselt auf ${CFG.maxUploadMbps} Mbit/s`);
 
 function jfAuth() {
@@ -325,7 +329,7 @@ async function handleRequest(id, m) {
     }
   }
 
-  const st = { ac: new AbortController(), body: null, relayPaused: false, wsPaused: false, throttled: false, paused: false };
+  const st = { ac: new AbortController(), body: null, relayPaused: false, wsPaused: false, throttled: false, paused: false, low: !!m.low };
   streams.set(id, st);
   const headers = { Authorization: jfAuth(), 'Accept-Encoding': 'identity' };
   const h = m.headers || {};
@@ -367,7 +371,8 @@ async function handleRequest(id, m) {
     if (ws.bufferedAmount > HIGH_WATER) st.wsPaused = true;
     if (RATE_BPS) {
       bucket -= chunk.length;
-      if (bucket <= 0) st.throttled = true; // Eimer leer → nächster Chunk wartet
+      if (st.low) lowBucket -= chunk.length;
+      if (bucket <= 0 || (st.low && lowBucket <= 0)) st.throttled = true; // Eimer leer → nächster Chunk wartet
     }
     syncPaused(st);
   });
@@ -389,11 +394,17 @@ function syncPaused(st) {
 // Timer: Token-Eimer nachfüllen, Socket-Puffer und Drossel prüfen → Streams freilassen
 setInterval(() => {
   if (!ws) return;
-  if (RATE_BPS) bucket = Math.min(BURST, bucket + RATE_BPS * 0.025);
+  if (RATE_BPS) {
+    bucket = Math.min(BURST, bucket + RATE_BPS * 0.025);
+    // Ohne laufende Wiedergabe darf der Vorabruf die ganze Leitung füllen (z. B. Pause).
+    let hasFg = false;
+    for (const st of streams.values()) if (!st.low) { hasFg = true; break; }
+    lowBucket = Math.min(BURST, lowBucket + RATE_BPS * (hasFg ? LOW_CAP : 1) * 0.025);
+  }
   const canDrain = ws.bufferedAmount <= LOW_WATER;
   for (const st of streams.values()) {
     if (st.wsPaused && canDrain) st.wsPaused = false;
-    if (st.throttled && bucket > 0) st.throttled = false;
+    if (st.throttled && bucket > 0 && (!st.low || lowBucket > 0)) st.throttled = false;
     syncPaused(st);
   }
 }, 25);
