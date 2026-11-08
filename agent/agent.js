@@ -396,10 +396,12 @@ setInterval(() => {
   if (!ws) return;
   if (RATE_BPS) {
     bucket = Math.min(BURST, bucket + RATE_BPS * 0.025);
-    // Ohne laufende Wiedergabe darf der Vorabruf die ganze Leitung füllen (z. B. Pause).
-    let hasFg = false;
-    for (const st of streams.values()) if (!st.low) { hasFg = true; break; }
-    lowBucket = Math.min(BURST, lowBucket + RATE_BPS * (hasFg ? LOW_CAP : 1) * 0.025);
+    // Vorabrufe bekommen nur, was übrig ist: hongernde Wiedergabe-Streams drücken
+    // ihren Anteil deutlich, ganz ohne Wiedergabe dürfen sie die Leitung füllen (Pause).
+    let hasFg = false, fgHungry = false;
+    for (const st of streams.values()) if (!st.low) { hasFg = true; if (st.throttled) fgHungry = true; }
+    const lowShare = !hasFg ? 1 : fgHungry ? 0.15 : LOW_CAP;
+    lowBucket = Math.min(BURST, lowBucket + RATE_BPS * lowShare * 0.025);
   }
   const canDrain = ws.bufferedAmount <= LOW_WATER;
   for (const st of streams.values()) {
