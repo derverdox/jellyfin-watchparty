@@ -953,7 +953,10 @@ class Session extends EventEmitter {
       '--cache=yes',
       '--demuxer-max-bytes=1024MiB',
       '--demuxer-max-back-bytes=256MiB',
-      '--demuxer-readahead-secs=120',
+      // Nicht zu gierig vorladen: auf der geteilten Heim-Leitung (MAX_UPLOAD_MBPS)
+      // hungern sonst die anderen Clients, während dieser Puffer füllt.
+      // 45 s ≈ Web (hls.js 40 s) und TV (Exo 50 s).
+      '--demuxer-readahead-secs=45',
       '--cache-pause-wait=2',
       '--hr-seek=yes',
       '--network-timeout=60',
