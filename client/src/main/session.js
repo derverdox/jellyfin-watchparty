@@ -78,8 +78,16 @@ ESC set fullscreen no
 MBTN_LEFT_DBL cycle fullscreen
 `;
 
+// Eingebettet steuert der Hauptprozess (Electron) das Vollbild, nicht mpv selbst.
+const INPUT_CONF_EMBED = INPUT_CONF
+  .replace('f cycle fullscreen #! Vollbild', 'f script-message wp fullscreen #! Vollbild')
+  .replace('ESC set fullscreen no', 'ESC script-message wp fullscreen-exit')
+  .replace('MBTN_LEFT_DBL cycle fullscreen', 'MBTN_LEFT_DBL script-message wp fullscreen');
+
+const Embed = require('./embed');
+
 class Session extends EventEmitter {
-  constructor({ relay, settings, installer, framegen, configDir, logDir }) {
+  constructor({ relay, settings, installer, framegen, configDir, logDir, host = {} }) {
     super();
     this.relay = relay;
     this.settings = settings;
@@ -87,6 +95,8 @@ class Session extends EventEmitter {
     this.framegen = framegen;
     this.configDir = configDir;
     this.logDir = logDir;
+    this.host = host; // Fenster-Anbindung aus main.js (nativeHandle, scaleFactor, Fullscreen)
+    this.embed = { active: false, child: null, rect: null, parent: null };
     this.mpv = null;
     this.reset();
 
@@ -938,9 +948,10 @@ class Session extends EventEmitter {
     if (this.mpv && this.mpv.running) return this.mpv;
     const bin = this.mpvBinary();
     if (!bin) throw new Error('mpv ist noch nicht installiert. Richte den Player in der Lobby ein.');
+    const embed = this.embedAvailable();
     fs.mkdirSync(this.configDir, { recursive: true });
     installUi(this.configDir);
-    fs.writeFileSync(path.join(this.configDir, 'input.conf'), INPUT_CONF);
+    fs.writeFileSync(path.join(this.configDir, 'input.conf'), embed ? INPUT_CONF_EMBED : INPUT_CONF);
     fs.writeFileSync(path.join(this.configDir, 'mpv.conf'), MPV_CONF);
     const prefs = this.settings.prefs;
     const args = [
@@ -974,6 +985,12 @@ class Session extends EventEmitter {
     if (prefs.screen !== 'auto' && prefs.screen !== '' && prefs.screen != null) {
       args.push(`--screen=${prefs.screen}`, `--fs-screen=${prefs.screen}`);
     }
+    if (embed) {
+      this.embed.parent = Embed.hwndOf(this.host.nativeHandle());
+      args.push(`--wid=${this.embed.parent}`); // mpv zeichnet als randloses Kindfenster in unser Hauptfenster
+    }
+    this.embed.active = embed;
+    this.embed.child = null;
     fs.mkdirSync(this.logDir, { recursive: true });
     const mpv = new Mpv({
       binary: bin, args,
@@ -996,8 +1013,61 @@ class Session extends EventEmitter {
     this.lastButtons = {};
     // uosc lädt asynchron; was vorher geschickt wird, geht verloren
     for (const ms of [800, 2500]) setTimeout(() => { if (this.mpv === mpv) this.updateButtons(true); }, ms);
+    if (embed) this.findEmbedChild(mpv);
     this.ui('player:opened', {});
     return mpv;
+  }
+
+  /* ---------- Fenster-Einbettung (Windows) ---------- */
+
+  embedAvailable() {
+    return Embed.available && this.settings.prefs.embed !== false &&
+      !!(this.host.nativeHandle && this.host.scaleFactor);
+  }
+
+  // mpv baut sein Kindfenster (Klasse "mpv") kurz nach dem Start; wir holen es ab und
+  // schieben es auf die Buehne. Klappt es nicht, startet der Player beim naechsten Mal
+  // wieder als eigenes Fenster — der Nutzer verliert nichts.
+  findEmbedChild(mpv, deadline = Date.now() + 6000) {
+    const step = () => {
+      if (this.mpv !== mpv || !this.embed.active) return;
+      const child = Embed.findMpvChild(this.embed.parent);
+      if (child) { this.embed.child = child; this.applyStage(); this.ui('player:embed', true); return; }
+      if (Date.now() > deadline) {
+        this.embed.active = false;
+        this.ui('room:error', 'Konnte den Player nicht einbetten – er öffnet wieder als eigenes Fenster.');
+        this.stopPlayer();
+        return;
+      }
+      setTimeout(step, 150);
+    };
+    step();
+  }
+
+  setStage(rect) {
+    this.embed.rect = rect && Number.isFinite(rect.w) && Number.isFinite(rect.h) ? rect : null;
+    this.applyStage();
+  }
+
+  applyStage() {
+    if (!this.embed.child || !this.embed.rect || !Embed.alive(this.embed.child)) { this.embed.child = null; return; }
+    const s = (this.host.scaleFactor && this.host.scaleFactor()) || 1;
+    const r = this.embed.rect;
+    Embed.setChildRect(this.embed.child,
+      Math.round(r.x * s), Math.round(r.y * s),
+      Math.round(Math.max(0, r.w) * s), Math.round(Math.max(0, r.h) * s));
+  }
+
+  onHostMoved() { this.applyStage(); } // DPR kann sich beim Verschieben/aendern ändern
+
+  onHostFullscreen(state) {
+    if (!this.embed.active) return;
+    this.ui('player:fullscreen', !!state);
+  }
+
+  requestFullscreenToggle() {
+    if (this.embed.active && this.host.toggleFullscreen) this.host.toggleFullscreen();
+    else if (this.mpv) this.mpv.command('cycle', 'fullscreen').catch(() => {});
   }
 
   async showPlayer() {
@@ -1016,6 +1086,7 @@ class Session extends EventEmitter {
     this.mpv = null;
     this.fileReady = false;
     this.loadedKey = null;
+    this.embed.child = null;
     if (mpv) await mpv.quit();
   }
 
@@ -1036,7 +1107,11 @@ class Session extends EventEmitter {
     } else if (name === 'volume' && Number.isFinite(value)) {
       if (Math.round(value) !== Math.round(this.settings.prefs.volume)) this.settings.setPrefs({ volume: Math.round(value) });
     } else if (name === 'fullscreen') {
-      this.ui('player:fullscreen', !!value);
+      if (this.embed.active) {
+        // Eingebettet: mpv-Vollbild in Electron-Vollbild uebersetzen (uosc, f, Doppelklick …)
+        if (value) { this.mpv.command('set', 'fullscreen', 'no').catch(() => {}); if (this.host.enterFullscreen) this.host.enterFullscreen(); }
+        else if (this.host.exitFullscreen) this.host.exitFullscreen();
+      } else this.ui('player:fullscreen', !!value);
     }
   }
 
@@ -1083,6 +1158,11 @@ class Session extends EventEmitter {
       case 'seek': this.seekBy(Number(val) || 0); break;
       case 'close': this.stopPlayer(); break;
       case 'skip': this.skipSegment(); break;
+      case 'fullscreen': this.requestFullscreenToggle(); break;
+      case 'fullscreen-exit':
+        if (this.embed.active && this.host.exitFullscreen) this.host.exitFullscreen();
+        else if (this.mpv) this.mpv.command('set', 'fullscreen', 'no').catch(() => {});
+        break;
       case 'framegen': {
         const fg = this.settings.prefs.framegen;
         this.setPrefs({ framegen: { enabled: !fg.enabled } }).then((p) => {
