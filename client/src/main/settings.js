@@ -9,6 +9,7 @@ const DEFAULT_PREFS = {
   subLang: 'off', // '' (alte Einstellungen) zählt ebenfalls als aus
   volume: 100,
   fullscreen: true,
+  embed: true, // mpv als Kindfenster ins Hauptfenster einbetten (nur Windows)
   screen: 'auto',
   osdChat: true,
   framegen: { enabled: false, model: 'v4_26', target: 'display', scene: 0.12 },
