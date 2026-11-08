@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { bestSource, compareItems, deliveryPolicy } = require('../lib/playback-quality');
+const { bestSource, compareItems, deliveryPolicy, ladderBr } = require('../lib/playback-quality');
 const { recommended, lower, StallGuard } = require('../public/auto-quality');
 const access = { maxBitrate: 40000000, perms: { direct: true } };
 const source = (Id, width, height, Bitrate) => ({ Id, Bitrate, MediaStreams: [{ Type: 'Video', Width: width, Height: height }] });
@@ -44,7 +44,45 @@ test('Delivery caps combine group, server and agent upload with headroom', () =>
   assert.equal(policy.autoQuality, '800000');
   assert.ok(policy.qualities.every((q) => q.br <= 800000));
   assert.equal(deliveryPolicy(d, access, { uploadMbps: 0.3 }).autoQuality, null);
-  assert.equal(deliveryPolicy(d, access, { autoMbps: 0.8 }).autoQuality, '800000');
+  assert.equal(deliveryPolicy(d, access, { autoMbps: 0.8 }).autoQuality, '1500000', 'Auto snap auf unterste Stufen, keine 800k-Geisterstufe');
+});
+
+test('Hard ladder: caps filter rungs and never deform them', () => {
+  const d = { width: 3840, height: 2160, bitrate: 60000000 };
+  const policy = deliveryPolicy(d, { ...access, maxBitrate: 8000000 }, { maxMbps: 20, uploadMbps: 15 });
+  assert.deepEqual(policy.qualities.map((q) => q.id), ['6000000', '3000000', '1500000'], '8-Mbit-Deckel bietet 6M, nie eine ungestufte 8M');
+  assert.equal(policy.maxBitrate, 8000000, 'der Deckel selbst bleibt Direktschutz');
+  assert.equal(ladderBr(8000000), 6000000);
+  assert.equal(ladderBr(25000000), 20000000);
+  assert.equal(ladderBr(800000), 800000, 'unterhalb der untersten Stufe bleibt der Deckel als Notstufe');
+});
+
+test('Running variants become join hints and active badges', () => {
+  const d = { width: 1920, height: 1080, bitrate: 23000000 };
+  const active = [{ br: 10000000 }, { br: 6000000 }, { br: 23000000, direct: true }];
+  const policy = deliveryPolicy(d, access, { uploadMbps: 40 }, active);
+  assert.equal(policy.joinBitrate, '10000000', 'hoechste laufende Stufe, die ins Budget passt');
+  assert.ok(policy.qualities.find((q) => q.id === '10000000').active);
+  assert.ok(policy.qualities.find((q) => q.id === '6000000').active);
+  assert.ok(policy.qualities.find((q) => q.id === 'direct').active, 'Original-Seher zaehlen mit');
+  assert.equal(policy.directActive, true);
+  assert.equal(recommended({ ...d, ...policy }, policy.qualities), '10000000', 'Auto joint die laufende Transcode-Stufe');
+});
+
+test('Overbooking the agent upload is flagged without banning manual choice', () => {
+  const d = { width: 1920, height: 1080, bitrate: 23000000 };
+  const tight = deliveryPolicy(d, access, { uploadMbps: 15 }, [{ br: 10000000 }]);
+  assert.equal(tight.overbook, true, '10M laufend + 23M Original daneben uebersteigen 12M Budget');
+  assert.ok(tight.qualities.length, 'Auswahl bleibt frei, es ist nur ein Warner');
+  assert.equal(deliveryPolicy(d, access, { uploadMbps: 50 }, [{ br: 10000000 }]).overbook, false, '10M + 23M Original passen in 40M Budget');
+  assert.equal(deliveryPolicy(d, access, { uploadMbps: 15 }, []).overbook, false, 'ohne laufende Varianten kein Warner');
+});
+
+test('Auto prefers a running rung when lowering', () => {
+  const info = { bitrate: 23000000, autoMaxBitrate: 20000000, qualities: [{ id: '10000000' }, { id: '6000000', active: true }, { id: '3000000' }] };
+  assert.equal(lower(info, '10000000'), '6000000', 'StallGuard wechselt auf die aktive 6M statt auf 3M');
+  const plain = { ...info, qualities: [{ id: '10000000' }, { id: '6000000' }, { id: '3000000' }] };
+  assert.equal(lower(plain, '10000000'), '6000000', 'ohne aktive Varianten wie bisher');
 });
 
 test('Direct remains permission and bitrate limited; unknown source bitrate uses capped HLS', () => {

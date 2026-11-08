@@ -20,7 +20,7 @@ const { handleAdmin } = require('./lib/admin');
 const { Guard } = require('./lib/guard');
 const { LibraryStore, variants, parseQuery, score, fold } = require('./lib/library');
 const { groupMovies, movieTitle, qualities: movieQualities } = require('./lib/movie-versions');
-const { displayHeight, sourceHeight, bestSource, compareItems, tierAt, deliveryPolicy, resolutionName } = require('./lib/playback-quality');
+const { displayHeight, sourceHeight, bestSource, compareItems, tierAt, ladderBr, deliveryPolicy, resolutionName } = require('./lib/playback-quality');
 const { WishStore } = require('./lib/wishes');
 const { WaitlistStore, GrantStore } = require('./lib/waitlist');
 const { WishSearch } = require('./lib/wishsearch');
@@ -130,6 +130,29 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const REACTIONS = ['😂', '😮', '❤️', '👍', '🔥', '😱', '👏', '💀'];
 const ID_RE = /^[a-f0-9]{32}$|^[a-f0-9-]{36}$/i;
 const CHUNK = 4 * 1024 * 1024;
+// --- Laufende Varianten pro Titel (Basis fuer Join-Empfehlung "laeuft bereits") ---
+const VARIANT_TTL = 10 * 60 * 1000;
+const activeVariants = new Map(); // "item|ms" -> Map(hash32 -> {hash, br, direct, seen})
+function liveVariants(itemId, ms, now = Date.now()) {
+  const m = activeVariants.get(`${itemId}|${ms}`);
+  if (!m) return [];
+  for (const [k, v] of m) if (now - v.seen > VARIANT_TTL) m.delete(k);
+  if (!m.size) activeVariants.delete(`${itemId}|${ms}`);
+  return m ? [...m.values()] : [];
+}
+function noteVariant(itemId, ms, hash, br, direct, now = Date.now()) {
+  const key = `${itemId}|${ms}`;
+  if (!activeVariants.has(key)) activeVariants.set(key, new Map());
+  activeVariants.get(key).set(hash, { hash, br: br || 0, direct: !!direct, seen: now });
+}
+function touchVariant(itemId, ms, hash, now = Date.now()) {
+  const v = activeVariants.get(`${itemId}|${ms}`) && activeVariants.get(`${itemId}|${ms}`).get(hash);
+  if (v) v.seen = now;
+}
+function touchVariantByHash(hash, now = Date.now()) {
+  if (!hash) return;
+  for (const m of activeVariants.values()) if (m.has(hash)) { m.get(hash).seen = now; return; }
+}
 const APP_APK_URL = process.env.APP_APK_URL || 'https://github.com/derverdox/jellyfin-watchparty/releases/download/android-latest/watchparty.apk';
 // Eigene TV-App (Fire TV / Android TV), nativ mit ExoPlayer
 const TV_APK_URL = process.env.TV_APK_URL || 'https://github.com/derverdox/jellyfin-watchparty/releases/download/android-latest/watchparty-tv.apk';
@@ -754,7 +777,7 @@ async function serveDirect(req, res, itemId, ms) {
 function streamSettings() {
   return { maxMbps: CONFIG.streamMaxMbps, autoMbps: CONFIG.autoMaxMbps, uploadMbps: tunnel.info && tunnel.info.maxUploadMbps || 0 };
 }
-function playbackPolicy(d, access) { return deliveryPolicy(d, access, streamSettings()); }
+function playbackPolicy(d, access, active = []) { return deliveryPolicy(d, access, streamSettings(), active); }
 
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
@@ -1427,7 +1450,7 @@ async function handle(req, res) {
     if (requestedSource && !ID_RE.test(requestedSource)) throw new HttpError(400, 'Ungültige Quelle');
     const d = await getItemDetails(m[1], requestedSource);
     const a = accessOf(session);
-    const policy = playbackPolicy(d, a);
+    const policy = playbackPolicy(d, a, liveVariants(d.id, d.mediaSourceId));
     if (!policy.autoQuality) throw new HttpError(503, 'Upload-Budget zu klein für Videowiedergabe');
     return sendJson(res, 200, {
       ...d, ...policy, directPlayable: d.directPlayable && policy.allowDirect,
@@ -1469,7 +1492,8 @@ async function handle(req, res) {
       const policy = playbackPolicy(detail, acc);
       if (policy.maxBitrate < 500000) throw new HttpError(503, 'Upload-Budget zu klein für Videowiedergabe');
       const requestedBr = toInt(sp.get('br'), 10000000);
-      const br = Math.min(requestedBr >= 500000 ? requestedBr : 10000000, policy.maxBitrate, 40000000);
+      // Harte Strickleiter: Bruchbitraten aus alten Menues/Deckseln snapen auf die Staerke darunter
+      const br = ladderBr(Math.min(requestedBr >= 500000 ? requestedBr : 10000000, policy.maxBitrate, 40000000));
       const tier = tierAt(br);
       const maxH = detail.height ? Math.min(tier.height, detail.height) : tier.height;
       const audio = /^\d{1,3}$/.test(sp.get('audio') || '') ? sp.get('audio') : '';
@@ -1498,6 +1522,7 @@ async function handle(req, res) {
       });
       if (audio) q.set('AudioStreamIndex', audio);
       if (subIdx) { q.set('SubtitleStreamIndex', subIdx); q.set('SubtitleMethod', 'Encode'); }
+      noteVariant(itemId, ms, variant.slice(0, 32), br, false);
       return serveCached(res, `pl|${variant}|master`, `/Videos/${itemId}/master.m3u8?${q}`, { playlist: true });
     }
 
@@ -1507,6 +1532,8 @@ async function handle(req, res) {
       if (!ID_RE.test(ms || '')) throw new HttpError(400, 'Parameter fehlen');
       const detail = await getItemDetails(itemId, ms);
       if (!playbackPolicy(detail, acc).allowDirect) throw new HttpError(403, 'Original überschreitet das verfügbare Bitratenbudget');
+      // Original-Seher teilen sich die 4-MB-Block-Praesenz im Cache -> eine Quelle, ein Eintrag
+      noteVariant(itemId, ms, 'direct', detail.bitrate || 0, true);
       return serveDirect(req, res, itemId, ms);
     }
 
@@ -1523,7 +1550,7 @@ async function handle(req, res) {
       const cap = playbackPolicy(detail, acc).maxBitrate;
       if (cap < 500000) throw new HttpError(503, 'Upload-Budget zu klein für Videowiedergabe');
       const requested = Number(lower.get('maxstreamingbitrate')) || (Number(lower.get('videobitrate')) + 320000) || 10000000;
-      const br = Math.min(Math.max(500000, requested), cap, 40000000);
+      const br = ladderBr(Math.min(Math.max(500000, requested), cap, 40000000));
       // Keep Jellyfin's requested dimensions even if it chooses a lower video bitrate.
       // Only the hard budget may narrow them; rounding an encoder bitrate must not drop Full HD.
       const tier = tierAt(cap);
@@ -1533,10 +1560,12 @@ async function handle(req, res) {
       const forced = { MediaSourceId: sourceId, MaxStreamingBitrate: String(br), VideoBitrate: String(Math.max(br - 320000, 100000)), AudioBitrate: '192000', MaxHeight: String(maxHeight), MaxWidth: String(maxWidth), VideoCodec: 'h264', AudioCodec: 'aac,mp3', AllowVideoStreamCopy: String(copy), AllowAudioStreamCopy: String(copy), EnableAutoStreamCopy: String(copy), Static: 'false' };
       for (const key of [...q.keys()]) if (Object.keys(forced).some((name) => name.toLowerCase() === key.toLowerCase())) q.delete(key);
       for (const [key, value] of Object.entries(forced)) q.set(key, value);
+      touchVariant(itemId, sourceId, ps); touchVariantByHash(ps);
       return serveCached(res, `pl|${ps}|${sub}|${q}`, `/Videos/${itemId}/${sub}?${q}`, { playlist: true });
     }
     if (/^hls1\/[A-Za-z0-9_]+\/-?\d+\.(ts|mp4|m4s|aac|vtt)$/.test(sub)) {
       // Segment-Schlüssel ohne wechselnde Parameter → geteilter Cache
+      touchVariantByHash(ps);
       return serveCached(res, `seg|${itemId}|${ps}|${sub}`, `/Videos/${itemId}/${sub}?${q}`, { maxAge: 3600 });
     }
     throw new HttpError(404, 'Nicht gefunden');

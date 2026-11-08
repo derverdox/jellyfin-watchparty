@@ -67,7 +67,7 @@ test('Whole room selects best accessible source; all clients pin it and bandwidt
   const hlsPath = `/stream/${P.UHD}/master.m3u8?ms=${uhdInfo.mediaSourceId}&br=40000000`;
   assert.equal((await chef.req('GET', hlsPath)).status, 200);
   let request = fakeJf.requests.filter((r) => r.path === `/Videos/${P.UHD}/master.m3u8`).at(-1);
-  assert.equal(request.query.MaxStreamingBitrate, '12000000');
+  assert.equal(request.query.MaxStreamingBitrate, '10000000', 'harte Strickleiter: 12-Mbit-Deckel snap auf 10-Mbit-Stufe');
   assert.equal(request.query.AllowVideoStreamCopy, 'false');
   assert.equal(request.query.AllowAudioStreamCopy, 'false');
   assert.equal(request.query.MaxHeight, '1080');
@@ -75,7 +75,7 @@ test('Whole room selects best accessible source; all clients pin it and bandwidt
   const childPath = `/stream/${P.UHD}/main.m3u8?mediasourceid=${uhdInfo.mediaSourceId}&videobitrate=60000000&AllowVideoStreamCopy=true&MaxHeight=2160`;
   assert.equal((await chef.req('GET', childPath)).status, 200);
   request = fakeJf.requests.filter((r) => r.path === `/Videos/${P.UHD}/main.m3u8`).at(-1);
-  assert.equal(request.query.MaxStreamingBitrate, '12000000');
+  assert.equal(request.query.MaxStreamingBitrate, '10000000', 'harte Strickleiter auch bei direkter Child-Playlist');
   assert.equal(request.query.AllowVideoStreamCopy, 'false');
   assert.equal(request.query.AllowAudioStreamCopy, 'false');
   assert.equal(request.query.MaxHeight, '1080');

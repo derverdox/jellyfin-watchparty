@@ -34,32 +34,47 @@ function limits(access, { maxMbps = 0, autoMbps = 10, uploadMbps = 0 } = {}) {
   const maxBitrate = Math.floor(Math.min(access.maxBitrate, maxMbps > 0 ? maxMbps * 1e6 : Infinity, uploadMbps > 0 ? uploadMbps * 0.8e6 : Infinity));
   return { maxBitrate, autoMaxBitrate: Math.min(maxBitrate, autoMbps * 1e6) };
 }
-function deliveryPolicy(d, access, settings) {
+// Harte Strickleiter: Bitraten liegen immer exakt auf TIERS-Werten, damit Varianten
+// deckeluebergreifend identisch sind und sich Zuschauer dieselben Transcodes teilen.
+// Ein Deckel filtert Stufen — er verformt sie nie (Verformung erzeuge Geister-Varianten).
+// Unterhalb der untersten Stufe bleibt nur der Deckel selbst als Notstufe.
+function ladderBr(cap) {
+  const rung = TIERS.find((t) => t.br <= cap);
+  return rung ? rung.br : Math.floor(Math.min(cap, 40000000));
+}
+// active = bereits laufende Varianten desselben Titels: [{ br, direct }]
+function deliveryPolicy(d, access, settings, active = []) {
   const { maxBitrate, autoMaxBitrate } = limits(access, settings);
   const h = displayHeight(d.width, d.height) || d.sourceDisplayHeight || 0;
   const allowDirect = !!access.perms.direct && d.bitrate > 0 && d.bitrate <= maxBitrate;
+  const running = (br) => active.some((v) => !v.direct && v.br === br);
   const options = [];
-  if (allowDirect) options.push({ id: 'direct', label: `Original · ${[resolutionName(h), d.hdr ? 'HDR' : ''].filter(Boolean).join(' ')} · ${mbitLabel(d.bitrate)}`, height: h, br: d.bitrate, original: true });
+  if (allowDirect) options.push({ id: 'direct', label: `Original · ${[resolutionName(h), d.hdr ? 'HDR' : ''].filter(Boolean).join(' ')} · ${mbitLabel(d.bitrate)}`, height: h, br: d.bitrate, original: true, active: active.some((v) => v.direct) });
   // A tier is an output ceiling, not a minimum input bitrate. Compressed 1080p is still 1080p.
   for (const t of TIERS) {
     if (h && t.height > h * 1.05) continue;
-    const br = Math.min(t.br, maxBitrate);
-    if (br < 500000 || options.some((q) => q.id === String(br))) continue;
-    const actual = tierAt(br);
-    options.push({ id: String(br), label: `${actual.name} · bis ${mbitLabel(br)}`, height: Math.min(t.height, actual.height), br });
+    if (t.br > maxBitrate) continue;
+    const actual = tierAt(t.br);
+    options.push({ id: String(t.br), label: `${actual.name} · bis ${mbitLabel(t.br)}`, height: Math.min(t.height, actual.height), br: t.br, active: running(t.br) });
   }
   if (!options.some((q) => !q.original) && maxBitrate >= 500000) {
-    const br = Math.min(1500000, maxBitrate);
-    options.push({ id: String(br), label: `Mobil · bis ${mbitLabel(br)}`, height: 360, br });
-  }
-  if (autoMaxBitrate >= 500000 && !options.some((q) => !q.original && q.br <= autoMaxBitrate)) {
-    const br = Math.floor(autoMaxBitrate), tier = tierAt(br);
-    options.push({ id: String(br), label: `${tier.name} · bis ${mbitLabel(br)}`, height: tier.height, br });
+    const br = ladderBr(maxBitrate);
+    options.push({ id: String(br), label: `Mobil · bis ${mbitLabel(br)}`, height: 360, br, active: running(br) });
   }
   const transcodes = options.filter((q) => !q.original);
   const recommended = transcodes.find((q) => q.br <= autoMaxBitrate) || transcodes[transcodes.length - 1];
   const autoTranscodeQuality = recommended ? recommended.id : null;
+  // Join-Hinweise: laufende Varianten sind die Leitungs-sparende Wahl
+  const joined = transcodes.filter((q) => q.active);
+  const joinBitrate = joined.length ? String(Math.max(...joined.map((q) => q.br))) : null;
+  const directActive = allowDirect && active.some((v) => v.direct);
+  let overbook = false;
+  if (settings && settings.uploadMbps > 0 && active.length) {
+    const next = allowDirect && d.bitrate > 0 ? d.bitrate : recommended ? recommended.br : 0;
+    overbook = active.reduce((s, v) => s + (v.br || 0), 0) + next > 0.8 * settings.uploadMbps * 1e6;
+  }
   return { maxBitrate, autoMaxBitrate, allowDirect, qualities: options, autoTranscodeQuality,
-    autoQuality: allowDirect && d.bitrate <= autoMaxBitrate ? 'direct' : autoTranscodeQuality };
+    autoQuality: allowDirect && d.bitrate <= autoMaxBitrate ? 'direct' : autoTranscodeQuality,
+    joinBitrate, directActive, overbook };
 }
-module.exports = { TIERS, displayHeight, sourceHeight, compareItems, bestSource, tierAt, deliveryPolicy, resolutionName, limits };
+module.exports = { TIERS, displayHeight, sourceHeight, compareItems, bestSource, tierAt, ladderBr, deliveryPolicy, resolutionName, limits };
