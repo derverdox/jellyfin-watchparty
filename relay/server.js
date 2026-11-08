@@ -640,7 +640,7 @@ function tunnelErr(e) {
 }
 
 /** Zwischengespeichertes Objekt (Segment, Bild, Untertitel) ausliefern. */
-async function serveCached(res, key, upstreamPath, { maxAge = 0, playlist = false, upstreamTimeout = 120000 } = {}) {
+async function serveCached(res, key, upstreamPath, { maxAge = 0, playlist = false, upstreamTimeout = 120000, who = null } = {}) {
   let r;
   try {
     r = await cache.get(key, async () => {
@@ -651,6 +651,7 @@ async function serveCached(res, key, upstreamPath, { maxAge = 0, playlist = fals
   let buf = r.buf;
   if (playlist && r.meta.status === 200) buf = Buffer.from(stripKeys(buf.toString('utf8')));
   telemetry.out(buf.length, !!r.hit);
+  if (who) telemetry.clientOut(buf.length, who.session, who.stream);
   res.writeHead(r.meta.status, {
     'Content-Type': playlist ? 'application/vnd.apple.mpegurl' : r.meta.type,
     'Content-Length': buf.length,
@@ -697,7 +698,7 @@ function getChunk(itemId, ms, idx) {
   });
 }
 
-async function serveDirect(req, res, itemId, ms) {
+async function serveDirect(req, res, itemId, ms, session = null) {
   const fkey = `${itemId}|${ms}`;
   const rh = req.headers.range;
   const m = rh && /^bytes=(\d*)-(\d*)$/.exec(rh);
@@ -741,6 +742,7 @@ async function serveDirect(req, res, itemId, ms) {
       const b = Math.min(end, base + c.buf.length - 1) - base;
       if (b < a) break;
       telemetry.out(b + 1 - a, !!c.hit);
+      if (session) telemetry.clientOut(b + 1 - a, session, 'Direkt (Original)');
       if (!res.write(c.buf.subarray(a, b + 1))) {
         await new Promise((r) => { res.once('drain', r); res.once('close', r); });
       }
@@ -1443,7 +1445,7 @@ async function handle(req, res) {
     await assertAccess(session, m[1]);
     const type = ['Primary', 'Backdrop', 'Thumb'].includes(url.searchParams.get('type')) ? url.searchParams.get('type') : 'Primary';
     const w = Math.min(Math.max(Math.round(toInt(url.searchParams.get('w'), 300) / 80) * 80, 80), 1920);
-    return imgQueue.add(() => serveCached(res, `img|${m[1]}|${type}|${w}`, `/Items/${m[1]}/Images/${type}?maxWidth=${w}&quality=85`, { maxAge: 86400, upstreamTimeout: 15000 }));
+    return imgQueue.add(() => serveCached(res, `img|${m[1]}|${type}|${w}`, `/Items/${m[1]}/Images/${type}?maxWidth=${w}&quality=85`, { maxAge: 86400, upstreamTimeout: 15000, who: { session, stream: 'Bilder' } }));
   }
 
   // --- Untertitel als WebVTT ---
@@ -1451,7 +1453,7 @@ async function handle(req, res) {
     if (!ID_RE.test(m[1]) || !ID_RE.test(m[2])) throw new HttpError(400, 'Ungültige ID');
     await assertAccess(session, m[1]);
     await getItemDetails(m[1], m[2]);
-    return serveCached(res, `sub|${m[1]}|${m[2]}|${m[3]}`, `/Videos/${m[1]}/${m[2]}/Subtitles/${m[3]}/Stream.vtt`, { maxAge: 3600 });
+    return serveCached(res, `sub|${m[1]}|${m[2]}|${m[3]}`, `/Videos/${m[1]}/${m[2]}/Subtitles/${m[3]}/Stream.vtt`, { maxAge: 3600, who: { session, stream: 'Untertitel' } });
   }
 
   // --- Video-Streams ---
@@ -1498,7 +1500,7 @@ async function handle(req, res) {
       });
       if (audio) q.set('AudioStreamIndex', audio);
       if (subIdx) { q.set('SubtitleStreamIndex', subIdx); q.set('SubtitleMethod', 'Encode'); }
-      return serveCached(res, `pl|${variant}|master`, `/Videos/${itemId}/master.m3u8?${q}`, { playlist: true });
+      return serveCached(res, `pl|${variant}|master`, `/Videos/${itemId}/master.m3u8?${q}`, { playlist: true, who: { session, stream: `HLS-Start ${Math.round(br / 1e6)} Mbit` } });
     }
 
     if (sub === 'direct') {
@@ -1507,7 +1509,7 @@ async function handle(req, res) {
       if (!ID_RE.test(ms || '')) throw new HttpError(400, 'Parameter fehlen');
       const detail = await getItemDetails(itemId, ms);
       if (!playbackPolicy(detail, acc).allowDirect) throw new HttpError(403, 'Original überschreitet das verfügbare Bitratenbudget');
-      return serveDirect(req, res, itemId, ms);
+      return serveDirect(req, res, itemId, ms, session);
     }
 
     const ps = String(sp.get('PlaySessionId') || '').replace(/[^a-f0-9]/gi, '').slice(0, 64);
@@ -1533,11 +1535,11 @@ async function handle(req, res) {
       const forced = { MediaSourceId: sourceId, MaxStreamingBitrate: String(br), VideoBitrate: String(Math.max(br - 320000, 100000)), AudioBitrate: '192000', MaxHeight: String(maxHeight), MaxWidth: String(maxWidth), VideoCodec: 'h264', AudioCodec: 'aac,mp3', AllowVideoStreamCopy: String(copy), AllowAudioStreamCopy: String(copy), EnableAutoStreamCopy: String(copy), Static: 'false' };
       for (const key of [...q.keys()]) if (Object.keys(forced).some((name) => name.toLowerCase() === key.toLowerCase())) q.delete(key);
       for (const [key, value] of Object.entries(forced)) q.set(key, value);
-      return serveCached(res, `pl|${ps}|${sub}|${q}`, `/Videos/${itemId}/${sub}?${q}`, { playlist: true });
+      return serveCached(res, `pl|${ps}|${sub}|${q}`, `/Videos/${itemId}/${sub}?${q}`, { playlist: true, who: { session, stream: 'HLS-Playlist' } });
     }
     if (/^hls1\/[A-Za-z0-9_]+\/-?\d+\.(ts|mp4|m4s|aac|vtt)$/.test(sub)) {
       // Segment-Schlüssel ohne wechselnde Parameter → geteilter Cache
-      return serveCached(res, `seg|${itemId}|${ps}|${sub}`, `/Videos/${itemId}/${sub}?${q}`, { maxAge: 3600 });
+      return serveCached(res, `seg|${itemId}|${ps}|${sub}`, `/Videos/${itemId}/${sub}?${q}`, { maxAge: 3600, who: { session, stream: 'HLS-Segmente' } });
     }
     throw new HttpError(404, 'Nicht gefunden');
   }
@@ -1577,12 +1579,14 @@ async function handle(req, res) {
       const from = Number(url.searchParams.get('from'));
       const body = Buffer.from(v.playlist(`/live/twitch/${login}/${vid}`, from > 0 ? from : undefined));
       telemetry.out(body.length, true);
+      telemetry.clientOut(body.length, session, 'Twitch-Playlist');
       res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Content-Length': body.length, 'Cache-Control': 'no-store' });
       return res.end(body);
     }
     const r = mapId ? await v.init(mapId) : await v.segment(Number(seq));
     if (!r) throw new HttpError(404, 'Segment nicht (mehr) da');
     telemetry.out(r.buf.length, true);
+    telemetry.clientOut(r.buf.length, session, 'Twitch-Segmente');
     res.writeHead(200, { 'Content-Type': (r.meta && r.meta.type) || 'video/mp2t', 'Content-Length': r.buf.length, 'Cache-Control': 'private, max-age=3600' });
     return res.end(r.buf);
   }
