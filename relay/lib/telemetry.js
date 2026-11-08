@@ -40,6 +40,9 @@ class Telemetry {
     this.hour = [];
     this.week = [];
     this.feed = [];
+    // Live-Auslieferung pro Client-Verbindung (sid -> { name, kind, stream, bytes, at })
+    this.clientBytes = new Map();
+    this.clientsNow = [];
     this.loopRes = 10;
     this.loop = monitorEventLoopDelay({ resolution: this.loopRes });
     this.loop.enable();
@@ -93,6 +96,28 @@ class Telemetry {
     this.dirty = true;
   }
   in(n) { this.bytesIn += n; }
+
+  /**
+   * Auslieferung einer konkreten Client-Verbindung (für die Live-Tabelle im
+   * Dashboard). session = Relay-Session (wp_sid), stream = Kurzlabel der Art
+   * ('HLS-Segment', 'Direkt', 'Twitch', 'Bilder' …).
+   */
+  clientOut(n, session, stream) {
+    if (!session || !session.id || !(n > 0)) return;
+    let e = this.clientBytes.get(session.id);
+    if (!e) {
+      const ua = String(session.ua || '');
+      const kind = /watchparty-desktop/i.test(ua) ? 'desktop' : /WatchpartyTV|okhttp/i.test(ua) ? 'tv' : /Mobi|Android|iPhone|iPad/i.test(ua) ? 'mobile' : 'web';
+      e = { name: session.name || session.username, kind, stream: '', bytes: 0, rate: 0, at: 0 };
+      this.clientBytes.set(session.id, e);
+    }
+    e.bytes += n;
+    if (stream) e.stream = stream;
+    e.at = Date.now();
+  }
+
+  /** Aktuelle Auslieferungsraten (10-s-Fenster), sortiert — fürs Admin-Dashboard. */
+  clients() { return this.clientsNow; }
 
   login(username, ok, ip) {
     const d = this.day();
@@ -183,6 +208,17 @@ class Telemetry {
     this.rate.out = Math.max(0, (this.bytesOut - this.last.out) / dt);
     this.rate.in = Math.max(0, (this.bytesIn - this.last.in) / dt);
     this.last = { t: now, out: this.bytesOut, in: this.bytesIn };
+
+    // Auslieferungsraten pro Client (10-s-Fenster), Einträge ohne Verkehr laufen aus
+    const rates = [];
+    for (const [sid, e] of this.clientBytes) {
+      e.rate = e.bytes > 0 ? e.bytes / dt : 0;
+      e.bytes = 0;
+      if (now - e.at > 30000 && e.rate <= 0) { this.clientBytes.delete(sid); continue; }
+      rates.push({ sid: sid.slice(0, 12), name: e.name, kind: e.kind, stream: e.stream, bps: Math.round(e.rate * 8) });
+    }
+    rates.sort((a, b) => b.bps - a.bps);
+    this.clientsNow = rates.slice(0, 40);
 
     let viewers = 0, playing = 0;
     const users = new Set();
