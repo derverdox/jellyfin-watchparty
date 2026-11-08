@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -58,6 +59,7 @@ fun FolderScreen(app: AppState, screen: Screen.Folder) {
     var list by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     var total by remember { mutableStateOf(-1) }
     var loading by remember { mutableStateOf(false) }
+    var gridFocus by remember { mutableStateOf(-1) }
     val scope = rememberCoroutineScope()
     val first = remember { FocusRequester() }
     // Bibliothek auf oberster Ebene: Filme/Serien direkt (statt Ordnerstruktur)
@@ -76,7 +78,7 @@ fun FolderScreen(app: AppState, screen: Screen.Folder) {
             } catch (e: Exception) { app.toast(e.message ?: "Fehler", true) } finally { loading = false }
         }
     }
-    LaunchedEffect(sort) { loadMore(reset = true) }
+    LaunchedEffect(sort) { loadMore(reset = true); gridFocus = -1 }
     LaunchedEffect(list.isNotEmpty()) {
         if (list.isEmpty()) return@LaunchedEffect
         val k = mem.focusKey
@@ -96,17 +98,20 @@ fun FolderScreen(app: AppState, screen: Screen.Folder) {
         Spacer(Modifier.height(14.dp))
         if (list.isEmpty() && loading) T("Lädt …", color = C.muted)
         if (list.isEmpty() && !loading && total == 0) T("Hier ist nichts.", color = C.muted)
-        PivotScroll(0.15f) {
+        PivotOwn {
             LazyVerticalGrid(GridCells.Fixed(6), state = mem.grid, horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp),
                 contentPadding = PaddingValues(8.dp)) {
                 itemsIndexed(list, key = { _, it -> it.id }) { i, it ->
                     if (i >= list.size - 12) LaunchedEffect(list.size) { loadMore() } // nachladen, bevor das Ende sichtbar wird
-                    PosterCard(it, {
-                        if (it.isFolder && !it.isSeries) app.go(Screen.Folder(it)) else app.go(Screen.Details(it.id, it))
-                    }, width = 140.dp, requester = if (i == 0 && mem.focusKey == null) first else mem.requester(it.id), onFocus = { mem.focusKey = it.id })
+                    Box(Modifier.onFocusEvent { fs -> if (fs.hasFocus) { mem.focusKey = it.id; gridFocus = i } }) {
+                        PosterCard(it, {
+                            if (it.isFolder && !it.isSeries) app.go(Screen.Folder(it)) else app.go(Screen.Details(it.id, it))
+                        }, width = 140.dp, requester = if (i == 0 && mem.focusKey == null) first else mem.requester(it.id))
+                    }
                 }
             }
         }
+        PivotFollowGrid(mem.grid, gridFocus, 0.15f)
     }
 }
 

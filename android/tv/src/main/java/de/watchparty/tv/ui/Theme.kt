@@ -12,6 +12,9 @@ import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -222,21 +225,82 @@ val topShade = Brush.verticalGradient(listOf(Color(0xCC000000), Color.Transparen
 /**
  * TV-Scrollen: Die fokussierte Kachel bleibt an einer festen Stelle (wie bei Netflix),
  * statt am Rand „anzustoßen“. Gilt für alle Listen darunter.
+ *
+ * Hinweis: Die automatische Variante (bringIntoView) wirkt auf langsamen TV-Sticks
+ * spürbar verzögert und nachlässig (Seite folgt dem Fokus nicht). Bereiche, die manuell
+ * nachziehen (PivotOwn + PivotFollow/PivotFollowGrid), schalten sie dafür ab.
  */
+@OptIn(ExperimentalFoundationApi::class)
+private class PivotSpec(private val fraction: Float) : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        // Element größer als der Platz: vorne ausrichten
+        if (size >= containerSize) return offset
+        val initial = containerSize * fraction
+        // Kurz vor dem Listenende nicht über das letzte Element hinausrollen
+        val target = if (containerSize - initial < size) containerSize - size else initial
+        return offset - target
+    }
+}
+
+/** Bringen eigene Listen bei (Start, Bibliothek): bringIntoView der Bibliothek aus. */
+@OptIn(ExperimentalFoundationApi::class)
+private object NoAutoScrollSpec : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float) = 0f
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PivotScroll(fraction: Float = 0.12f, content: @Composable () -> Unit) {
-    val spec = remember(fraction) {
-        object : BringIntoViewSpec {
-            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
-                val target = containerSize * fraction
-                // Element größer als der Platz: vorne ausrichten
-                if (size >= containerSize) return offset
-                return offset - target
-            }
-        }
-    }
+    val spec = remember(fraction) { PivotSpec(fraction) }
     CompositionLocalProvider(LocalBringIntoViewSpec provides spec, content = content)
+}
+
+/** Wie PivotScroll, aber die Liste macht das Nachziehen selbst (PivotFollow/-Grid). */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun PivotOwn(content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalBringIntoViewSpec provides NoAutoScrollSpec, content = content)
+}
+
+/**
+ * Manuelles Pivot für LazyListState (senkrecht oder waagerecht): der fokussierte
+ * Eintrag wird auf die Pivot-Linie (fraction der Viewportlänge) gesetzt.
+ * scrollBy klammert von selbst an Anfang/Ende der Liste.
+ */
+@Composable
+fun PivotFollow(state: LazyListState, focusIndex: Int, fraction: Float = 0.12f, horizontal: Boolean = false) {
+    LaunchedEffect(focusIndex) {
+        if (focusIndex < 0) return@LaunchedEffect
+        val find = { state.layoutInfo.visibleItemsInfo.find { it.index == focusIndex } }
+        if (find() == null) runCatching { state.animateScrollToItem(focusIndex) }
+        val item = find() ?: return@LaunchedEffect
+        val info = state.layoutInfo
+        val cont = (if (horizontal) info.viewportSize.width else info.viewportSize.height).toFloat()
+        val pos = item.offset.toFloat()
+        if (item.size.toFloat() >= cont) { if (pos > 0f) state.scrollBy(pos); return@LaunchedEffect }
+        val d = pos - cont * fraction
+        if (d > 1f || d < -1f) state.scrollBy(d)
+    }
+}
+
+/** Manuelles Pivot fürs Raster: ganze Zeile der fokussierten Kachel auf die Pivot-Linie. */
+@Composable
+fun PivotFollowGrid(state: LazyGridState, focusIndex: Int, fraction: Float = 0.15f) {
+    LaunchedEffect(focusIndex) {
+        if (focusIndex < 0) return@LaunchedEffect
+        val find = { state.layoutInfo.visibleItemsInfo.find { it.index == focusIndex } }
+        if (find() == null) runCatching { state.animateScrollToItem(focusIndex) }
+        val item = find() ?: return@LaunchedEffect
+        val info = state.layoutInfo
+        if (item.row == androidx.compose.foundation.lazy.grid.LazyGridItemInfo.UnknownRow) return@LaunchedEffect
+        val inRow = info.visibleItemsInfo.filter { it.row == item.row }
+        val rowTop = inRow.minOf { it.offset.y }.toFloat()
+        val rowBottom = inRow.maxOf { it.offset.y + it.size.height }.toFloat()
+        val cont = info.viewportSize.height.toFloat()
+        if (rowBottom - rowTop >= cont) { if (rowTop > 0f) state.scrollBy(rowTop); return@LaunchedEffect }
+        val d = rowTop - cont * fraction
+        if (d > 1f || d < -1f) state.scrollBy(d)
+    }
 }
 
 /** QR-Code als Bild */

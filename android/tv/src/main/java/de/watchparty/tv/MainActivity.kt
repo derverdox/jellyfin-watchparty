@@ -78,9 +78,10 @@ class MainActivity : ComponentActivity() {
                         is Screen.Details -> DetailsScreen(app, top)
                         is Screen.Room -> RoomScreen(app)
                     }
-                    // Zurück: eine Ebene hoch; auf der Startseite zweimal drücken zum Beenden
+                    // Zurück: eine Ebene hoch; von einem anderen Tab erst zurück zu Start, dann zweimal drücken zum Beenden
                     BackHandler(top !is Screen.Room) {
                         if (!app.back()) {
+                            if (app.top is Screen.Home && app.homeTab != HomeTab.START) { app.homeTab = HomeTab.START; return@BackHandler }
                             val now = System.currentTimeMillis()
                             if (now - lastBack < 2500) finish() else { lastBack = now; app.toast("Nochmal „Zurück“ zum Beenden") }
                         }

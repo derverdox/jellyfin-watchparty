@@ -16,13 +16,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -97,17 +103,23 @@ fun WideCard(
     }
 }
 
-/** Eine Reihe mit Überschrift */
+/** Eine Reihe mit Überschrift. Zieht waagerecht manuell dem Fokus nach (flüssig auf schwacher Hardware). */
 @Composable
 fun <E> CardRow(
     title: String, list: List<E>, state: LazyListState, key: (E) -> String,
     content: @Composable (E) -> Unit,
 ) {
     if (list.isEmpty()) return
+    var focusIndex by remember { mutableStateOf(-1) }
     Column(Modifier.fillMaxWidth().padding(bottom = 18.dp)) {
         T(title, Modifier.padding(start = 4.dp, bottom = 10.dp), size = 19.sp, weight = FontWeight.Bold)
-        LazyRow(state = state, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp)) {
-            items(list, key = key) { content(it) }
+        PivotOwn {
+            LazyRow(state = state, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp)) {
+                itemsIndexed(list, key = { _, e2 -> key(e2) }) { i, e ->
+                    Box(Modifier.onFocusEvent { if (it.hasFocus) focusIndex = i }) { content(e) }
+                }
+            }
         }
     }
+    PivotFollow(state, focusIndex, 0.1f, horizontal = true)
 }

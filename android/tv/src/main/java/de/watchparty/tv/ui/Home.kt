@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,7 +54,7 @@ fun HomeScreen(app: AppState) {
     val mem = Screen.Home.memory
     val roomState by app.room.state.collectAsState()
     val tabFocus = remember { HomeTab.entries.associateWith { FocusRequester() } }
-    AutoFocus(tabFocus.getValue(app.homeTab), key = "home")
+    AutoFocus(tabFocus.getValue(app.homeTab), key = "home-${app.homeTab}")
 
     Row(Modifier.fillMaxSize().background(C.bg)) {
         // Navigation
@@ -123,7 +125,8 @@ private var startCache = StartData()
 @Composable
 private fun StartTab(app: AppState, mem: ScreenMemory) {
     var data by remember { mutableStateOf(startCache) }
-    var hero by remember { mutableStateOf<MediaItem?>(null) }
+    // hero nur als State-Objekt: Fokus auf eine Kachel muss nur das Hero neu bauen, nicht die ganze Seite
+    val hero = remember { mutableStateOf<MediaItem?>(null) }
     LaunchedEffect(Unit) {
         // Startseite: alles parallel laden, Fehler einzelner Reihen ignorieren
         try {
@@ -141,15 +144,16 @@ private fun StartTab(app: AppState, mem: ScreenMemory) {
         } catch (e: Exception) { data = data.copy(loaded = true, error = e.message) }
     }
     // Gerade fokussiertes Element oben groß zeigen
-    val h = hero ?: data.history.firstOrNull() ?: data.latest.firstOrNull()?.second?.firstOrNull()
+    var rowFocus by remember { mutableStateOf(-1) }
+    val head = (if (data.error != null) 1 else 0) + (if (!data.loaded && data.history.isEmpty()) 1 else 0)
     Box(Modifier.fillMaxSize()) {
-        Hero(app, h)
-        PivotScroll(0.08f) {
+        Hero(app, hero, data.history.firstOrNull() ?: data.latest.firstOrNull()?.second?.firstOrNull())
+        PivotOwn {
             LazyColumn(state = mem.list, contentPadding = PaddingValues(start = 36.dp, end = 24.dp, top = 250.dp, bottom = 40.dp)) {
                 if (data.error != null) item("err") { T(data.error!!, Modifier.padding(bottom = 16.dp), color = C.muted) }
                 if (!data.loaded && data.history.isEmpty()) item("load") { T("Lädt …", color = C.muted) }
                 val watching = data.friends.filter { it.roomCode != null && it.item != null }
-                item("friends") {
+                item("friends") { Box(Modifier.onFocusEvent { if (it.hasFocus) rowFocus = head }) {
                     CardRow("Läuft gerade bei Freunden", watching, mem.row("friends"), { it.username }) { f ->
                         val fi = f.item
                         val ext = fi?.optJSONObject("ext")
@@ -164,31 +168,35 @@ private fun StartTab(app: AppState, mem: ScreenMemory) {
                             badgeColor = if (ext != null) C.twitch else C.accent, requester = mem.requester("f:${f.username}"),
                             onFocus = { mem.focusKey = "f:${f.username}" })
                     }
-                }
-                item("history") {
+                } }
+                item("history") { Box(Modifier.onFocusEvent { if (it.hasFocus) rowFocus = head + 1 }) {
                     CardRow("Weiterschauen", data.history, mem.row("history"), { it.id }) { it2 ->
                         WideCard(it2.name, it2.subtitle ?: fmtRuntime(it2.runtime?.minus(it2.pos)), app.api.img(if (it2.isEpisode) it2.id else it2.backdropId, 480, if (it2.isEpisode) "Primary" else "Backdrop"),
                             { app.play(it2.id, it2.pos) }, progress = it2.progress, requester = mem.requester("h:${it2.id}"),
-                            onFocus = { hero = it2; mem.focusKey = "h:${it2.id}" })
+                            onFocus = { hero.value = it2; mem.focusKey = "h:${it2.id}" })
                     }
-                }
-                item("watchlist") {
+                } }
+                item("watchlist") { Box(Modifier.onFocusEvent { if (it.hasFocus) rowFocus = head + 2 }) {
                     CardRow("Meine Liste", data.watchlist, mem.row("watchlist"), { it.id }) { it2 ->
-                        PosterCard(it2, { app.go(Screen.Details(it2.id, it2)) }, requester = mem.requester("w:${it2.id}"), onFocus = { hero = it2; mem.focusKey = "w:${it2.id}" })
+                        PosterCard(it2, { app.go(Screen.Details(it2.id, it2)) }, requester = mem.requester("w:${it2.id}"), onFocus = { hero.value = it2; mem.focusKey = "w:${it2.id}" })
                     }
-                }
-                items(data.latest, key = { "lib:" + it.first.id }) { (lib, list) ->
+                } }
+                itemsIndexed(data.latest, key = { j, l -> "lib:" + l.first.id }) { j, pair ->
+                    val (lib, list) = pair
+                    Box(Modifier.onFocusEvent { if (it.hasFocus) rowFocus = head + 3 + j }) {
                     CardRow("Neu in ${lib.name}", list, mem.row("lib:${lib.id}"), { it.id }) { it2 ->
-                        PosterCard(it2, { openItem(app, it2) }, requester = mem.requester("l:${lib.id}:${it2.id}"), onFocus = { hero = it2; mem.focusKey = "l:${lib.id}:${it2.id}" })
+                        PosterCard(it2, { openItem(app, it2) }, requester = mem.requester("l:${lib.id}:${it2.id}"), onFocus = { hero.value = it2; mem.focusKey = "l:${lib.id}:${it2.id}" })
+                    }
                     }
                 }
-                item("top") {
+                item("top") { Box(Modifier.onFocusEvent { if (it.hasFocus) rowFocus = head + 3 + data.latest.size }) {
                     CardRow("★ Top bei euch", data.top, mem.row("top"), { it.id }) { it2 ->
-                        PosterCard(it2, { openItem(app, it2) }, requester = mem.requester("t:${it2.id}"), onFocus = { hero = it2; mem.focusKey = "t:${it2.id}" })
+                        PosterCard(it2, { openItem(app, it2) }, requester = mem.requester("t:${it2.id}"), onFocus = { hero.value = it2; mem.focusKey = "t:${it2.id}" })
                     }
-                }
+                } }
             }
         }
+        PivotFollow(mem.list, rowFocus, 0.08f)
     }
     // Zurück auf die Startseite: zuletzt fokussierte Kachel wieder fokussieren
     LaunchedEffect(data.loaded) {
@@ -207,7 +215,8 @@ fun openItem(app: AppState, it: MediaItem) {
 
 /** Großes Bild oben mit Titel und Beschreibung des fokussierten Titels */
 @Composable
-private fun Hero(app: AppState, it: MediaItem?) {
+private fun Hero(app: AppState, hero: androidx.compose.runtime.MutableState<MediaItem?>, fallback: MediaItem?) {
+    val it = hero.value ?: fallback
     Box(Modifier.fillMaxWidth().height(330.dp)) {
         if (it != null) {
             Img(app.api.img(it.backdropId, 1280, if (it.hasBackdrop || it.isEpisode) "Backdrop" else "Primary"), Modifier.fillMaxSize(), widthPx = 1280)
