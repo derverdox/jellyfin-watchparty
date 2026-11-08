@@ -18,7 +18,7 @@ const SEG_PATH = /^hls1\/[A-Za-z0-9_]+\/-?\d+\.(?:ts|mp4|m4s|aac)$/;
 function parsePlaylist(body) {
   const segs = [];
   for (const line of String(body).split(/\r?\n/)) {
-    const uri = line.trim();
+    const uri = line.trim().split(/[?#]/)[0];
     if (!SEG_PATH.test(uri)) continue;
     const m = /\/(-?\d+)\.(?:ts|mp4|m4s|aac)$/.exec(uri);
     if (m) segs.push({ sub: uri, ticks: Number(m[1]) });
