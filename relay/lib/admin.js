@@ -21,7 +21,7 @@ function sessionView(s, onlineSids) {
 }
 
 async function handleAdmin(ctx, req, res, url, me) {
-  const { users, sessions, groups, telemetry, rooms, tunnel, cache, waitlist, grants, readJson, sendJson, HttpError } = ctx;
+  const { users, sessions, groups, telemetry, rooms, tunnel, cache, waitlist, grants, readahead, readJson, sendJson, HttpError } = ctx;
   const p = url.pathname.slice('/api/admin'.length);
   const method = req.method;
   const ok = (data = { ok: true }) => sendJson(res, 200, data);
@@ -72,7 +72,9 @@ async function handleAdmin(ctx, req, res, url, me) {
         desktop: roomList.reduce((s, r) => s + r.members.filter((x) => x.kind === 'desktop').length, 0),
       },
       agent: { online: tunnel.online, info: tunnel.info, streams: tunnel.streams.size },
+      clients: telemetry.clients(),
       cache: cache.stats(),
+      readahead: readahead && readahead.snapshot(),
       traffic: telemetry.traffic(),
       health: telemetry.health(),
       peak: telemetry.persist.peak,

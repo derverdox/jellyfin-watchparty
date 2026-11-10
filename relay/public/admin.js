@@ -379,7 +379,16 @@ function renderOverview() {
       metric('Trefferquote', `${num(hit, 1)} %`, hit, false, true),
       metric('Einträge', num(ca.entries)),
       metric('Insgesamt ausgeliefert', bytes(o.traffic.totalOut)),
-      metric('Davon aus dem Cache', bytes(o.traffic.totalFromCache))));
+      metric('Davon aus dem Cache', bytes(o.traffic.totalFromCache)),
+      metric('Readahead-Vorabrufe', o.readahead ? (o.readahead.enabled ? `${num(o.readahead.done)} Segmente · ${bytes(o.readahead.bytes)} vorgeladen${o.readahead.active ? ` · ${o.readahead.active} aktiv` : ''}` : 'deaktiviert') : 'Agent zu alt')));
+
+  const cl = o.clients || [];
+  const maxBps = cl.length ? cl[0].bps : 0;
+  $('#card-clients').replaceChildren(
+    el('div', { class: 'card-head' }, el('h3', {}, 'Auslieferung pro Client'), el('span', { class: 'tiny muted' }, 'Mbit/s der letzten 10 s pro Sitzung — ein Konto mit mehreren Geräten zählt mehrfach')),
+    cl.length ? el('div', { class: 'metric-list' }, ...cl.map((c) =>
+      metric(`${(KIND[c.kind] || c.kind).split(' ')[0]} ${c.name}`, `${mbit(c.bps)}${c.stream ? ` · ${c.stream}` : ''}`, maxBps ? (c.bps / maxBps) * 100 : 0, c.bps > 25e6)))
+      : el('div', { class: 'empty' }, 'Gerade geht kein Datenverkehr zu Clients.'));
 
   const box = $('#ov-rooms');
   box.innerHTML = '';
