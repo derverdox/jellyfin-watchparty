@@ -72,6 +72,7 @@ async function handleAdmin(ctx, req, res, url, me) {
         desktop: roomList.reduce((s, r) => s + r.members.filter((x) => x.kind === 'desktop').length, 0),
       },
       agent: { online: tunnel.online, info: tunnel.info, streams: tunnel.streams.size },
+      clients: telemetry.clients(),
       cache: cache.stats(),
       traffic: telemetry.traffic(),
       health: telemetry.health(),

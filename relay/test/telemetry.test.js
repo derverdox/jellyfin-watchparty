@@ -6,6 +6,33 @@ const os = require('os');
 const path = require('path');
 const { Telemetry } = require('../lib/telemetry');
 
+test('Auslieferung pro Client: Raten, Beschriftung, Auslaufen', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-tel2-'));
+  const t = new Telemetry(dir);
+  t.clientOut(5_000_000, { id: 'sid-desktop', name: 'Lukas', username: 'lukas', ua: 'watchparty-desktop/1.0' }, 'HLS-Segmente');
+  t.clientOut(1_000_000, { id: 'sid-web', name: 'Lea', username: 'lea', ua: 'Mozilla/5.0 (Macintosh)' }, 'Direkt (Original)');
+  t.clientOut(100, { id: 'sid-web', name: 'Lea', username: 'lea', ua: 'Mozilla/5.0 (Macintosh)' }, 'Bilder');
+  t.last.t = Date.now() - 10000;
+  t.tick(new Map(), { hits: 0, misses: 0 });
+  const cl = t.clients();
+  assert.strictEqual(cl.length, 2);
+  assert.strictEqual(cl[0].name, 'Lukas', 'sortiert nach Rate');
+  assert.strictEqual(cl[0].kind, 'desktop');
+  assert.strictEqual(cl[0].stream, 'HLS-Segmente');
+  assert.ok(Math.abs(cl[0].bps - 4e6) < 1e5, `4 Mbit/s im 10-s-Fenster, war ${cl[0].bps}`);
+  assert.strictEqual(cl[1].kind, 'web');
+  assert.strictEqual(cl[1].stream, 'Bilder', 'letztes Label gewinnt');
+  // Kein Verkehr mehr → nach 30 s fliegt der Eintrag raus
+  t.last.t = Date.now();
+  t.tick(new Map(), { hits: 0, misses: 0 });
+  assert.strictEqual(t.clients().length, 2, 'eine Periode Gnade bei rate 0');
+  for (const e of t.clientBytes.values()) e.at = Date.now() - 31000;
+  t.last.t = Date.now();
+  t.tick(new Map(), { hits: 0, misses: 0 });
+  assert.strictEqual(t.clients().length, 0, 'stillgelegte Verbindungen verschwinden');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('Watchtime, Rekorde, Zeitreihen und Speicherung', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-tel-'));
   const t = new Telemetry(dir);
