@@ -544,6 +544,7 @@ async function loadItem(id, mediaSourceId = null) {
     if (S.loadedId !== id || S.loadedMediaSourceId !== mediaSourceId) return;
     S.info = info;
     S.autoQuality = WPQuality.recommended(info, qualityList(info));
+    if (info.overbook) toast('Der Raum überbucht die heimische Leitung – eine bereits laufende Qualität zu wählen schont sie.');
     chooseTracks();
     fillSettings();
     buildSource();
@@ -588,7 +589,7 @@ function fillSettings() {
   qs.innerHTML = '';
   const autoLabel = qualityList(info).find((q) => q.id === S.autoQuality)?.label;
   qs.append(el('option', { value: 'auto', selected: S.sel.quality === 'auto' }, `Automatisch${autoLabel ? ` · ${autoLabel}` : ''}`));
-  for (const q of qualityList(info)) qs.append(el('option', { value: q.id, selected: q.id === S.sel.quality }, q.label));
+  for (const q of qualityList(info)) qs.append(el('option', { value: q.id, selected: q.id === S.sel.quality }, q.label + (q.active ? ' · läuft bereits' : '')));
   const as = $('#sel-audio');
   as.innerHTML = '';
   for (const a of info.audio) as.append(el('option', { value: a.index, selected: a.index === S.sel.audio }, a.label));

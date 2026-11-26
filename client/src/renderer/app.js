@@ -717,7 +717,7 @@ function renderQuality() {
   const list = [{ id: 'auto', label: `Automatisch${autoLabel ? ` · ${autoLabel}` : ''}` }, ...available];
   const active = S.prefs?.quality === 'auto' ? 'auto' : (S.player && S.player.quality) || (S.prefs && String(S.prefs.quality)) || 'auto';
   sel.innerHTML = '';
-  for (const q of list) sel.append(el('option', { value: q.id }, q.label));
+  for (const q of list) sel.append(el('option', { value: q.id }, q.label + (q.active ? ' · läuft bereits' : '')));
   sel.value = list.some((q) => q.id === active) ? active : list[0].id;
 }
 $('#opt-fullscreen').addEventListener('change', (e) => setPrefs({ fullscreen: e.target.checked }));
