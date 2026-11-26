@@ -634,8 +634,12 @@ function buildSource() {
     if (!direct && window.Hls && Hls.isSupported()) {
       const hls = new Hls({
         startPosition: start,
-        maxBufferLength: 40,
+        // Polster gegen Nachladen durch den Tunnel: 60 s Ziel, bei niedriger Bitrate bis 120 s
+        // (wenige MB). Der Desktop-Client puffert mit mpv ebenfalls weit mehr als 30 s.
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
         backBufferLength: 60,
+        startFragPrefetch: true, // erstes Segment schon holen, bevor der Player startet
         fragLoadPolicy: { default: { maxTimeToFirstByteMs: 60000, maxLoadTimeMs: 120000, timeoutRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 4000 }, errorRetry: { maxNumRetry: 6, retryDelayMs: 1000, maxRetryDelayMs: 8000 } } },
         manifestLoadPolicy: { default: { maxTimeToFirstByteMs: 30000, maxLoadTimeMs: 60000, timeoutRetry: { maxNumRetry: 3, retryDelayMs: 1000, maxRetryDelayMs: 4000 }, errorRetry: { maxNumRetry: 3, retryDelayMs: 1000, maxRetryDelayMs: 4000 } } },
       });
