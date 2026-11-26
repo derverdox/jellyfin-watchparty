@@ -56,6 +56,10 @@ Die Leiste im Player kommt von [uosc](https://github.com/tomasklaen/uosc) (5.9.2
 
 **Untertitel** sind standardmäßig aus, auch wenn die Datei eine Spur als „Standard“ markiert. Wer einmal eine Sprache auswählt (im Fenster oder im uosc-Menü), bekommt sie ab dann automatisch.
 
+## Player im Fenster
+
+mpv öffnet sich nicht mehr als zweites Fenster, sondern sitzt als **echtes Kindfenster auf der „Jetzt läuft“-Fläche** im Hauptfenster: ein Fenster, das mitwandert, und kein zweites Icon in der Taskleiste. Vollbild (F, Doppelklick, uosc-Knopf) füllt dann das ganze Fenster, ESC wirft dich zurück. Falls das Einbetten auf einem Rechner nicht klappt, startet mpv automatisch wieder als eigenes Fenster und die Meldung im Raum sagt Bescheid. Abschaltbar unter **Einstellungen → „Player ins Fenster einbetten“** (gilt ab dem nächsten Player-Start).
+
 ## Tasten im Player
 
 | Taste | Aktion |
