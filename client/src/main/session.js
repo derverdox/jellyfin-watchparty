@@ -96,7 +96,8 @@ class Session extends EventEmitter {
     this.configDir = configDir;
     this.logDir = logDir;
     this.host = host; // Fenster-Anbindung aus main.js (nativeHandle, scaleFactor, Fullscreen)
-    this.embed = { active: false, child: null, rect: null, parent: null };
+    this.embed = { active: false, child: null, rect: null, parent: null, suppressFs: false };
+    this.embedFailed = false; // Einbettung schon mal fehlgeschlagen -> Rest der Sitzung ohne Embed-Pfad
     this.mpv = null;
     this.reset();
 
@@ -727,6 +728,7 @@ class Session extends EventEmitter {
     if (patch.quality && patch.quality !== before.quality && this.info && !this.info.source) { this.autoQuality = AutoQuality.recommended(this.info); this.autoGuard = new AutoQuality.StallGuard(); this.loadedKey = null; await this.openSource(); }
     if (patch.volume != null && this.mpv) this.mpv.set('volume', Number(patch.volume)).catch(() => {});
     if (patch.framegen || patch.vsr) { this.updateButtons(); this.applyFilters(); }
+    if ('embed' in patch) this.embedFailed = false; // Nutzer schaltet um -> Einbettung wieder versuchen
     return prefs;
   }
 
@@ -1021,7 +1023,7 @@ class Session extends EventEmitter {
   /* ---------- Fenster-Einbettung (Windows) ---------- */
 
   embedAvailable() {
-    return Embed.available && this.settings.prefs.embed !== false &&
+    return Embed.available && !this.embedFailed && this.settings.prefs.embed !== false &&
       !!(this.host.nativeHandle && this.host.scaleFactor);
   }
 
@@ -1035,6 +1037,7 @@ class Session extends EventEmitter {
       if (child) { this.embed.child = child; this.applyStage(); this.ui('player:embed', true); return; }
       if (Date.now() > deadline) {
         this.embed.active = false;
+        this.embedFailed = true; // nicht weiter probieren: ab jetzt startet der Player als eigenes Fenster
         this.ui('room:error', 'Konnte den Player nicht einbetten – er öffnet wieder als eigenes Fenster.');
         this.stopPlayer();
         return;
@@ -1109,8 +1112,13 @@ class Session extends EventEmitter {
     } else if (name === 'fullscreen') {
       if (this.embed.active) {
         // Eingebettet: mpv-Vollbild in Electron-Vollbild uebersetzen (uosc, f, Doppelklick …)
-        if (value) { this.mpv.command('set', 'fullscreen', 'no').catch(() => {}); if (this.host.enterFullscreen) this.host.enterFullscreen(); }
-        else if (this.host.exitFullscreen) this.host.exitFullscreen();
+        if (value) {
+          this.embed.suppressFs = true; // das "no" gleich unten darf das frische Electron-Vollbild nicht wieder beenden
+          this.mpv.command('set', 'fullscreen', 'no').catch(() => {});
+          if (this.host.enterFullscreen) this.host.enterFullscreen();
+        } else if (this.embed.suppressFs) {
+          this.embed.suppressFs = false; // eigener mpv-Reset, kein echter Vollbild-Ausstieg
+        } else if (this.host.exitFullscreen) this.host.exitFullscreen();
       } else this.ui('player:fullscreen', !!value);
     }
   }
