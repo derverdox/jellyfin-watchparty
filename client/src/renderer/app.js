@@ -10,6 +10,7 @@ const REACTIONS_DEFAULT = ['😂', '😮', '❤️', '👍', '🔥', '😱', '�
 const S = {
   me: null,
   server: '',
+  embed: false,
   code: null,
   you: null,
   room: null,
@@ -82,6 +83,8 @@ function canLoad() { return canControl() && (isHost() || perm('load')); }
 
 async function init() {
   window.wp.on(onEvent);
+  try { S.embed = !!(await call('player:embed-info')).embedded; } catch { S.embed = false; }
+  if (S.embed) startStageTracking();
   try {
     const st = await call('auth:state');
     S.server = st.server || '';
@@ -470,11 +473,39 @@ function onEvent(ch, p) {
     case 'player:filters': S.filters = p; renderPicture(); renderNow(); break;
     case 'player:opened': $('#btn-player').textContent = '⛶ Vollbild'; break;
     case 'player:closed': $('#btn-player').textContent = '⛶ Player öffnen'; S.tracks = { audio: [], sub: [] }; renderTracks(); break;
+    case 'player:embed': if (!S.embed) { S.embed = true; startStageTracking(); } reportStage(); break;
+    case 'player:fullscreen':
+      if (S.embed) { document.body.classList.toggle('mpv-fs', !!p); reportStage(); }
+      break;
     case 'fg:engine': S.engine = p; renderPicture(); break;
     case 'prefs': S.prefs = p; renderPrefs(); break;
     case 'update:state': renderUpdate(p); break;
     default: break;
   }
+}
+
+/* ---------- Player-Einbettung: "Jetzt läuft"-Fläche an den Hauptprozess melden ---------- */
+
+document.addEventListener('keydown', (e) => {
+  // Im eingebetteten Vollbild hat oft das Electron-Fenster Fokus: ESC beendet es.
+  if (e.key === 'Escape' && document.body.classList.contains('mpv-fs')) { e.preventDefault(); call('player:fullscreen').catch(() => {}); }
+}, true);
+
+let stageFrame = 0;
+function reportStage() {
+  if (!S.embed || stageFrame) return;
+  stageFrame = requestAnimationFrame(() => {
+    stageFrame = 0;
+    const b = $('#now').getBoundingClientRect(); // Viewport == Fenster-Innenfläche
+    call('player:stage', { x: b.left, y: b.top, w: b.width, h: b.height }).catch(() => {});
+  });
+}
+function startStageTracking() {
+  if (S.stageTracked) return;
+  S.stageTracked = true;
+  new ResizeObserver(reportStage).observe($('#now'));
+  window.addEventListener('resize', reportStage);
+  reportStage();
 }
 
 /* ---------- Jetzt läuft ---------- */
@@ -660,6 +691,7 @@ function renderPrefs() {
   renderQuality();
   $('#volume').value = p.volume;
   $('#opt-fullscreen').checked = !!p.fullscreen;
+  if ($('#opt-embed')) { $('#opt-embed').checked = p.embed !== false; $('#row-embed').hidden = window.wp.platform !== 'win32'; }
   $('#opt-osdchat').checked = !!p.osdChat;
   const onWin = !S.setup || S.setup.platform === 'win32';
   $('#vsr-enabled').disabled = !onWin;
@@ -721,6 +753,12 @@ function renderQuality() {
   sel.value = list.some((q) => q.id === active) ? active : list[0].id;
 }
 $('#opt-fullscreen').addEventListener('change', (e) => setPrefs({ fullscreen: e.target.checked }));
+$('#opt-embed').addEventListener('change', async (e) => {
+  await setPrefs({ embed: e.target.checked });
+  S.embed = !!(await call('player:embed-info')).embedded;
+  if (S.embed) startStageTracking(); else document.body.classList.remove('mpv-fs');
+  toast('Gilt ab dem nächsten Player-Start.');
+});
 $('#opt-osdchat').addEventListener('change', (e) => setPrefs({ osdChat: e.target.checked }));
 let volTimer;
 $('#volume').addEventListener('input', (e) => { clearTimeout(volTimer); volTimer = setTimeout(() => setPrefs({ volume: Number(e.target.value) }), 120); });

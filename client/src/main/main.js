@@ -70,6 +70,13 @@ app.whenReady().then(async () => {
     relay, settings, installer, framegen,
     configDir: path.join(userData, 'mpv-config'),
     logDir: path.join(userData, 'logs'),
+    host: {
+      nativeHandle: () => (win && !win.isDestroyed() ? win.getNativeWindowHandle() : null),
+      scaleFactor: () => (win && !win.isDestroyed() && screen.getDisplayMatching(win.getBounds()).scaleFactor) || 1,
+      enterFullscreen: () => { if (win && !win.isDestroyed() && !win.isFullScreen()) win.setFullScreen(true); },
+      exitFullscreen: () => { if (win && !win.isDestroyed() && win.isFullScreen()) win.setFullScreen(false); },
+      toggleFullscreen: () => { if (win && !win.isDestroyed()) win.setFullScreen(!win.isFullScreen()); },
+    },
   });
   installer.syncScripts();
   installer.updateYtDlp(); // YouTube ändert oft etwas → yt-dlp aktuell halten
@@ -78,6 +85,13 @@ app.whenReady().then(async () => {
   relay.setSession(settings.getSession());
   relay.on('session', (sid) => settings.setSession(sid));
   session.on('ui', (ch, payload) => send(ch, payload));
+  if (process.platform === 'win32') {
+    win.on('enter-full-screen', () => session.onHostFullscreen(true));
+    win.on('leave-full-screen', () => session.onHostFullscreen(false));
+    let movedTimer = 0;
+    win.on('move', () => { clearTimeout(movedTimer); movedTimer = setTimeout(() => session.onHostMoved(), 120); }); // Monitorwechsel: anderer Scale-Faktor
+    win.on('resize', () => session.onHostMoved());
+  }
   installer.on('progress', (p) => send('setup:progress', p));
 
   // Bilder vom Relay (brauchen das Sitzungs-Cookie) → wpimg://img/<id>?w=300
@@ -273,7 +287,10 @@ app.whenReady().then(async () => {
   handle('player:close', () => session.stopPlayer());
   handle('player:tracks', () => session.tracks());
   handle('player:setTrack', ({ type, id }) => session.setTrack(type, id));
-  handle('player:fullscreen', () => session.mpv && session.mpv.command('cycle', 'fullscreen'));
+  handle('player:fullscreen', () => session.requestFullscreenToggle());
+  // Fenster-Einbettung: Renderer meldet das Buehnen-Rechteck (CSS-px), main skaliert auf physische Pixel
+  handle('player:stage', (rect) => { session.setStage(rect); return true; });
+  handle('player:embed-info', () => ({ embedded: session.embedAvailable() }));
 
   /* ---------- Einstellungen & Einrichtung ---------- */
   handle('prefs:get', () => settings.prefs);
