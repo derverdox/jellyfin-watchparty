@@ -74,7 +74,7 @@ test('Suche, Merkliste, Verlauf, Qualität', { timeout: 60000 }, async (t) => {
   const searchVersions = (await req('GET', '/api/search?q=versionsfilm')).data.movies;
   assert.strictEqual(searchVersions.length, 1);
   assert.deepStrictEqual(searchVersions[0].availableQualities, ['SD', 'Full HD', '4K']);
-  const browsePath = `/api/items?parentId=${I.LIB_M}&collectionType=movies`;
+  const browsePath = `/api/items?parentId=${I.LIB_M}&collectionType=movies&sort=year`;
   const browse = (await req('GET', `${browsePath}&limit=200`)).data;
   assert.strictEqual(browse.items.filter((x) => x.name === 'Versionsfilm').length, 1, 'group before pagination');
   const firstPage = (await req('GET', `${browsePath}&limit=1`)).data;
@@ -83,6 +83,12 @@ test('Suche, Merkliste, Verlauf, Qualität', { timeout: 60000 }, async (t) => {
   const lastPage = (await req('GET', `${browsePath}&limit=200&start=1200`)).data;
   assert.ok(!lastPage.items.some((x) => x.name === 'Versionsfilm'));
   assert.strictEqual(browse.total, 1239);
+  const added = (await req('GET', `/api/items?parentId=${I.LIB_M}&collectionType=movies&sort=added&limit=5`)).data;
+  assert.strictEqual(added.items[0].name, 'Neuer Film', 'sort=added: neuestes Datum zuerst (lokal sortiert)');
+  const itemsReqsBefore = fakeJf.requests.filter((r) => r.path === `/Users/${jf.USER}/Items`).length;
+  const rated = (await req('GET', `/api/items?parentId=${I.LIB_M}&collectionType=movies&sort=rating&limit=10`)).data;
+  assert.ok(rated.items.length >= 2 && rated.items[0].rating, 'sort=rating: bewertete Titel zuerst');
+  assert.strictEqual(fakeJf.requests.filter((r) => r.path === `/Users/${jf.USER}/Items`).length, itemsReqsBefore, 'weitere Sortierungen nutzen den geteilten Katalog – kein zweiter Komplettdownload');
   assert.ok(cat.etag);
   const same = (await req('GET', `/api/catalog?libs=${I.LIB_M},${I.LIB_K}&etag=${cat.etag}`)).data;
   assert.strictEqual(same.unchanged, true, 'unverändert → keine Liste');

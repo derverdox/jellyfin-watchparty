@@ -17,6 +17,7 @@
     tab: 'start', libs: null, cache: new Map(), friendsTimer: null, search: '', searchTimer: null,
     hero: null, gridState: null,
   };
+  let startToken = 0; // verwirft Nachzügler-Updates einer alten renderStart()-Runde
   const body = () => q('#nf-body');
   const isTv = () => document.documentElement.classList.contains('tv');
   const env = window.WPX;
@@ -90,12 +91,28 @@
 
   function row(title, items, opts = {}) {
     if (!items || !items.length) return null;
+    const sec = el('section', { class: `nf-row${opts.ranked ? ' top10' : ''}` });
+    fillRow(sec, title, items, opts);
+    return sec;
+  }
+
+  function fillRow(sec, title, items, opts = {}) {
     const scroller = el('div', { class: 'nf-scroller' }, items.map((it, i) => card(it, { ...opts, rank: opts.ranked ? i + 1 : null, sub: opts.subOf ? opts.subOf(it) : null, progress: opts.progressOf ? opts.progressOf(it) : null })));
     const prev = el('button', { class: 'nf-arrow l', tabindex: -1, 'aria-label': 'Zurück', onclick: () => scroller.scrollBy({ left: -scroller.clientWidth * 0.85, behavior: 'smooth' }) }, '‹');
     const next = el('button', { class: 'nf-arrow r', tabindex: -1, 'aria-label': 'Weiter', onclick: () => scroller.scrollBy({ left: scroller.clientWidth * 0.85, behavior: 'smooth' }) }, '›');
-    return el('section', { class: `nf-row${opts.ranked ? ' top10' : ''}` },
+    sec.replaceChildren(
       el('h3', {}, title, opts.more ? el('button', { class: 'nf-more', onclick: opts.more }, 'Alle ›') : null),
       el('div', { class: 'nf-rowwrap' }, prev, scroller, next));
+  }
+
+  /** Leere Reihe mit Spinner; wird gefüllt oder entfernt, sobald die Daten da sind. */
+  function rowSlot(title) {
+    return el('section', { class: 'nf-row' }, el('h3', {}, title), el('div', { class: 'nf-loading' }, el('div', { class: 'spinner' })));
+  }
+  function fillSlot(sec, title, items, opts = {}) {
+    if (!items || !items.length) { sec.remove(); return false; }
+    fillRow(sec, title, items, opts);
+    return true;
   }
 
   function grid(title, items, more) {
@@ -223,36 +240,69 @@
 
   async function renderStart() {
     // Heimserver offline: trotzdem Freunde, Weiterschauen usw. zeigen (YouTube/Twitch gehen ja weiter)
-    const libs = await libraries().catch(() => []);
-    const [hist, list, top] = await Promise.all([loadHistory().catch(() => []), watchlist().catch(() => []), topRated()]);
-    const newest = await Promise.all([...movieLibs(libs), ...showLibs(libs)].map((l) => libItems(l, 'added', 20).then((r) => ({ lib: l, items: r.items || [] })).catch(() => ({ lib: l, items: [] }))));
-    const out = [];
-    // Titelbild: zufällig aus den Neuesten mit Hintergrundbild
-    const pool = newest.flatMap((n) => n.items.slice(0, 8)).filter((it) => it.hasBackdrop);
-    if (!H.hero || !pool.some((p) => p.id === H.hero.id)) H.hero = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
-    if (H.hero) out.push(hero(H.hero, list.some((x) => x.id === H.hero.id)));
-    else out.push(el('div', { class: 'nf-hero-spacer' }));
-
+    // Progressiv: erst Freunde + persönliche Reihen, Bibliotheksreihen füllen sich, sobald Daten da sind.
+    const token = ++startToken;
+    const alive = () => token === startToken;
+    const bodyEl = body();
+    const libsP = libraries().catch(() => []);
+    const histP = loadHistory().catch(() => []);
+    const listP = watchlist().catch(() => []);
+    const topP = topRated().catch(() => []);
+    const heroBox = el('div', { class: 'nf-hero-spacer' });
     const friends = el('section', { class: 'nf-row nf-friends-row' });
-    out.push(friends);
+    bodyEl.replaceChildren(heroBox, friends);
+    startFriends(friends);
+    const add = (sec) => { if (sec && alive()) bodyEl.append(sec); return sec; };
 
+    const [hist, list, top] = await Promise.all([histP, listP, topP]);
+    if (!alive()) return;
     const cont = hist.filter((h) => !h.finished && h.progress > 1);
-    out.push(row('Weiterschauen', cont.map((h) => ({ id: h.id, name: h.title, type: h.type, seriesId: h.seriesId, runtime: h.runtime, pos: h.pos, progress: h.progress, subtitle: h.subtitle })), {
+    add(row('Weiterschauen', cont.map((h) => ({ id: h.id, name: h.title, type: h.type, seriesId: h.seriesId, runtime: h.runtime, pos: h.pos, progress: h.progress, subtitle: h.subtitle })), {
       wide: true,
       subOf: (h) => h.subtitle || (h.runtime ? `noch ${Math.max(1, Math.round((h.runtime - (h.pos || 0)) / 60))} Min.` : null),
       progressOf: (h) => h.progress,
       onOpen: (h) => playSolo(h.id, h.pos || 0),
     }));
-    out.push(row('Meine Liste', list, { more: () => setTab('list') }));
-    if (top.length >= 3) out.push(row('Top 10 bei euch', top.slice(0, 10), { ranked: true }));
-    for (const n of newest) out.push(row(`Neu in ${n.lib.name}`, n.items, { more: () => setTab(n.lib.collectionType === 'tvshows' ? 'series' : 'movies') }));
-    const best = await Promise.all(movieLibs(libs).map((l) => libItems(l, 'rating', 20).then((r) => ({ lib: l, items: (r.items || []).filter((x) => x.rating) })).catch(() => null)));
-    for (const b of best) if (b && b.items.length >= 4) out.push(row(`Hoch bewertet in ${b.lib.name}`, b.items));
+    add(row('Meine Liste', list, { more: () => setTab('list') }));
+    if (top.length >= 3) add(row('Top 10 bei euch', top.slice(0, 10), { ranked: true }));
+
+    const libs = await libsP;
+    if (!alive()) return;
+    // Bibliotheksreihen: jede erscheint, sobald ihre Daten da sind (Katalog teilt sich serverseitig die Abrufe)
+    const newestP = [...movieLibs(libs), ...showLibs(libs)].map((l) => {
+      const sec = add(rowSlot(`Neu in ${l.name}`));
+      return libItems(l, 'added', 20)
+        .then((r) => {
+          const items = r.items || [];
+          if (alive()) fillSlot(sec, `Neu in ${l.name}`, items, { more: () => setTab(l.collectionType === 'tvshows' ? 'series' : 'movies') });
+          return { lib: l, items };
+        })
+        .catch(() => { if (alive()) sec.remove(); return { lib: l, items: [] }; });
+    });
+    const newest = await Promise.all(newestP);
+    if (!alive()) return;
+    // Titelbild: zufällig aus den Neuesten mit Hintergrundbild
+    const pool = newest.flatMap((n) => n.items.slice(0, 8)).filter((it) => it.hasBackdrop);
+    if (!H.hero || !pool.some((p) => p.id === H.hero.id)) H.hero = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+    if (H.hero) heroBox.replaceWith(hero(H.hero, list.some((x) => x.id === H.hero.id)));
+    else heroBox.remove();
+
+    const bestP = movieLibs(libs).map((l) => {
+      const sec = add(rowSlot(`Hoch bewertet in ${l.name}`));
+      return libItems(l, 'rating', 20)
+        .then((r) => {
+          const items = (r.items || []).filter((x) => x.rating);
+          if (!alive()) return;
+          if (items.length >= 4) fillRow(sec, `Hoch bewertet in ${l.name}`, items);
+          else sec.remove();
+        })
+        .catch(() => { if (alive()) sec.remove(); });
+    });
     const rest = libs.filter((l) => l.collectionType !== 'movies' && l.collectionType !== 'tvshows');
-    if (rest.length) out.push(row('Weitere Bibliotheken', rest));
-    if (out.filter(Boolean).length <= 2) out.push(el('p', { class: 'muted nf-empty' }, S.me && S.me.agentOnline ? 'Hier ist noch nichts. Schau in die Bibliothek oder frag den Admin nach Freigaben.' : 'Der Heimserver ist gerade offline. Sobald er wieder da ist, erscheinen hier die Filme und Serien.'));
-    body().replaceChildren(...out.filter(Boolean));
-    startFriends(friends);
+    if (rest.length) add(row('Weitere Bibliotheken', rest));
+    await Promise.all(bestP);
+    if (alive() && !bodyEl.querySelector('.nf-scroller') && !H.hero)
+      bodyEl.append(el('p', { class: 'muted nf-empty' }, S.me && S.me.agentOnline ? 'Hier ist noch nichts. Schau in die Bibliothek oder frag den Admin nach Freigaben.' : 'Der Heimserver ist gerade offline. Sobald er wieder da ist, erscheinen hier die Filme und Serien.'));
   }
 
   async function renderKind(kind) {
@@ -416,6 +466,7 @@
   /* ---------------- Steuerung ---------------- */
 
   async function render() {
+    startToken++; // laufende renderStart()-Runde stoppen
     stopFriends();
     for (const b of document.querySelectorAll('#nf-tabs button')) b.classList.toggle('on', b.dataset.tab === H.tab && !H.search);
     loading();

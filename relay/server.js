@@ -91,8 +91,9 @@ const guard = new Guard(CONFIG.dataDir, (ip, b) => {
 }
 const jsonCache = new TtlCache(60 * 1000);
 
-/* Komplette Titellisten je Bibliothek (für „Alle A–Z“), 10 Minuten im Relay gehalten,
-   damit Jellyfin/der Heimanschluss nicht für jeden Zuschauer einzeln gefragt werden. */
+/* Komplette Titellisten je Bibliothek — Datenquelle für „Alle A–Z“ UND die Reihen der
+   Startseite (/api/items). 10 Minuten im Relay gehalten, damit Jellyfin/der Heimanschluss
+   nicht für jeden Zuschauer und jede Sortierung einzeln gefragt werden. */
 const CATALOG_TTL = 10 * 60 * 1000;
 const catalogs = new Map(); // Bibliothek → { t, promise }
 function libCatalog(libId, collectionType) {
@@ -100,23 +101,83 @@ function libCatalog(libId, collectionType) {
   const hit = catalogs.get(key);
   if (hit && Date.now() - hit.t < CATALOG_TTL) return hit.promise;
   const promise = (async () => {
+    const base = new URLSearchParams({ ParentId: libId, Fields: ITEM_FIELDS, EnableImageTypes: 'Primary', ImageTypeLimit: '1', SortBy: 'SortName', Limit: '500' });
+    if (collectionType === 'movies') { base.set('Recursive', 'true'); base.set('IncludeItemTypes', 'Movie'); }
+    if (collectionType === 'tvshows') { base.set('Recursive', 'true'); base.set('IncludeItemTypes', 'Series'); }
+    const page = async (start) => {
+      const q = new URLSearchParams(base);
+      q.set('StartIndex', String(start));
+      return jf(`/Users/${uid()}/Items?${q}`);
+    };
     const out = [];
-    for (let start = 0; ;) {
-      const q = new URLSearchParams({ ParentId: libId, Fields: ITEM_FIELDS, EnableImageTypes: 'Primary', ImageTypeLimit: '1', SortBy: 'SortName', Limit: '500', StartIndex: String(start) });
-      if (collectionType === 'movies') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Movie'); }
-      if (collectionType === 'tvshows') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Series'); }
-      const data = await jf(`/Users/${uid()}/Items?${q}`);
-      const items = data.Items || [];
-      out.push(...items);
-      start += items.length;
-      // Bis eine leere Seite kommt: ältere Agents melden als Gesamtzahl nur die Größe der Seite
-      if (!items.length || start > 50000) break;
+    const seen = new Set();
+    const add = (items) => { for (const it of items) { const k = norm(it.Id); if (!seen.has(k)) { seen.add(k); out.push(it); } } };
+    const first = await page(0);
+    add(first.Items || []);
+    // Restliche Seiten parallel nachladen (Jellyfin meldet die Gesamtzahl).
+    // Ältere Agents melden als Gesamtzahl nur die Seitengröße → sequentieller Fallback.
+    const total = Number(first.TotalRecordCount) || 0;
+    if (total > (first.Items || []).length && total <= 50000) {
+      const starts = [];
+      for (let s = 500; s < total; s += 500) starts.push(s);
+      for (let i = 0; i < starts.length; i += 4) {
+        const pages = await Promise.all(starts.slice(i, i + 4).map(page));
+        for (const pg of pages) add(pg.Items || []);
+      }
+    } else {
+      for (let start = (first.Items || []).length; ;) {
+        const data = await page(start);
+        const items = data.Items || [];
+        if (!items.length) break;
+        add(items);
+        start += items.length;
+        if (start > 50000) break;
+      }
     }
     return out;
   })();
   catalogs.set(key, { t: Date.now(), promise });
   promise.catch(() => catalogs.delete(key));
   return promise;
+}
+
+/** Vollständige Jellyfin-Liste (alle Seiten) holen — für Gruppierung vor der Pagination. */
+async function fetchAllItems(fullQuery) {
+  const out = [];
+  for (let offset = 0; ;) {
+    const page = new URLSearchParams(fullQuery);
+    page.set('StartIndex', String(offset));
+    page.set('Limit', '500');
+    const data = await jf(`/Users/${uid()}/Items?${page}`);
+    const items = data.Items || [];
+    out.push(...items);
+    offset += items.length;
+    if (!items.length) break;
+    if (offset > 50000) throw new HttpError(502, 'Bibliothek zu groß für vollständige Gruppierung');
+  }
+  return out;
+}
+
+/**
+ * Gruppierte Titel lokal sortieren (die Bibliotheksliste liegt schon komplett im Speicher).
+ * Nutzt Jellyfins SortName (ohne Artikel), sofern vom Agent geliefert.
+ */
+function sortGroups(groups, sort, rawById) {
+  const nameKey = (g) => {
+    const raw = rawById.get(norm(g.id));
+    return fold((raw && raw.SortName) || g.name || '');
+  };
+  const cmpName = (a, b) => nameKey(a).localeCompare(nameKey(b), 'de', { numeric: true });
+  if (sort === 'added') {
+    const when = (g) => Math.max(0, ...(g.versions || []).map((v) => Date.parse((rawById.get(norm(v.id)) || {}).DateCreated || '') || 0), Date.parse((rawById.get(norm(g.id)) || {}).DateCreated || '') || 0);
+    groups.sort((a, b) => when(b) - when(a) || cmpName(a, b));
+  } else if (sort === 'rating') {
+    groups.sort((a, b) => ((b.rating || 0) - (a.rating || 0)) || cmpName(a, b));
+  } else if (sort === 'year') {
+    groups.sort((a, b) => ((b.year || 0) - (a.year || 0)) || cmpName(a, b));
+  } else {
+    groups.sort(cmpName);
+  }
 }
 const CATALOG_FIELDS = ['id', 'name', 'type', 'year', 'rating', 'played', 'isFolder', 'playable', 'seriesId', 'hasBackdrop', 'runtime', 'collectionType', 'officialRating', 'availableQualities'];
 function slimItem(it) {
@@ -200,7 +261,7 @@ function mapItem(it) {
   };
 }
 
-const ITEM_FIELDS = 'PrimaryImageAspectRatio,ProductionYear,Overview,OriginalTitle,ProviderIds,MediaSources,MediaStreams';
+const ITEM_FIELDS = 'PrimaryImageAspectRatio,ProductionYear,Overview,OriginalTitle,ProviderIds,MediaSources,MediaStreams,DateCreated,SortName';
 const DETAIL_FIELDS = `${ITEM_FIELDS},Genres,OfficialRating,ChildCount,RecursiveItemCount`;
 
 /** Leichtgewichtige Item-Daten (ohne Mediendetails), gecacht. */
@@ -339,8 +400,10 @@ function accessOf(session) {
 
 /* ---------- Inhaltszugriff ---------- */
 let accessVersion = 0;
-const ancestorCache = new TtlCache(10 * 60 * 1000, 20000);
-const decisionCache = new TtlCache(5 * 60 * 1000, 20000);
+// Lange TTLs sind sicher: decisionCache hängt am accessVersion (bumpAccess leert ihn,
+// sobald Admins Freigaben ändern), ancestorCache an unveränderlichen Parent-Ketten.
+const ancestorCache = new TtlCache(30 * 60 * 1000, 20000);
+const decisionCache = new TtlCache(30 * 60 * 1000, 20000);
 function bumpAccess() { accessVersion++; decisionCache.clear(); }
 
 /** Kette [Element, Eltern, …, Bibliothek] über ParentId. */
@@ -1047,55 +1110,44 @@ async function handle(req, res) {
   }
 
   if (p === '/api/items') {
-    const q = new URLSearchParams();
-    q.set('Fields', ITEM_FIELDS);
-    q.set('EnableImageTypes', 'Primary');
-    q.set('ImageTypeLimit', '1');
-    q.set('Limit', String(Math.max(1, Math.min(toInt(url.searchParams.get('limit'), 60), 200))));
-    q.set('StartIndex', String(Math.max(toInt(url.searchParams.get('start'), 0), 0)));
+    const limit = Math.max(1, Math.min(toInt(url.searchParams.get('limit'), 60), 200));
+    const start = Math.max(toInt(url.searchParams.get('start'), 0), 0);
     const search = (url.searchParams.get('search') || '').trim().slice(0, 100);
     const parentId = url.searchParams.get('parentId');
+    const sort = url.searchParams.get('sort');
+    let all;
+    let localSort = false;
     if (search) {
-      q.set('SearchTerm', search);
-      q.set('Recursive', 'true');
-      q.set('IncludeItemTypes', 'Movie,Series,Episode,Video');
-      q.set('SortBy', 'SortName');
+      // Group before pagination: copies can sit on different Jellyfin pages.
+      const fullQuery = new URLSearchParams({
+        Fields: ITEM_FIELDS, EnableImageTypes: 'Primary', ImageTypeLimit: '1',
+        SearchTerm: search, Recursive: 'true', IncludeItemTypes: 'Movie,Series,Episode,Video', SortBy: 'SortName',
+      });
+      all = await jsonCache.get(`all-items|${fullQuery}`, () => fetchAllItems(fullQuery));
     } else {
       if (!parentId || !ID_RE.test(parentId)) throw new HttpError(400, 'parentId fehlt');
-      q.set('ParentId', parentId);
-      const sort = url.searchParams.get('sort');
-      if (sort === 'index') q.set('SortBy', 'ParentIndexNumber,IndexNumber,SortName');
-      else if (sort === 'added') { q.set('SortBy', 'DateCreated,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
-      else if (sort === 'year') { q.set('SortBy', 'ProductionYear,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
-      else if (sort === 'rating') { q.set('SortBy', 'CommunityRating,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
-      else q.set('SortBy', 'SortName');
-      const ct = url.searchParams.get('collectionType');
-      if (ct === 'movies') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Movie'); }
-      if (ct === 'tvshows') { q.set('Recursive', 'true'); q.set('IncludeItemTypes', 'Series'); }
-    }
-    if (parentId && !search) await assertAccess(session, parentId);
-    // Group before pagination: copies can sit on different Jellyfin pages.
-    const start = Number(q.get('StartIndex')), limit = Number(q.get('Limit'));
-    const fullQuery = new URLSearchParams(q);
-    fullQuery.delete('StartIndex');
-    fullQuery.delete('Limit');
-    const all = await jsonCache.get(`all-items|${fullQuery}`, async () => {
-      const out = [];
-      for (let offset = 0; ; ) {
-        const page = new URLSearchParams(fullQuery);
-        page.set('StartIndex', String(offset));
-        page.set('Limit', '500');
-        const data = await jf(`/Users/${uid()}/Items?${page}`);
-        const items = data.Items || [];
-        out.push(...items);
-        offset += items.length;
-        if (!items.length) break;
-        if (offset > 50000) throw new HttpError(502, 'Bibliothek zu groß für vollständige Gruppierung');
+      await assertAccess(session, parentId);
+      const views = ((await jsonCache.get('views', () => jf(`/Users/${uid()}/Views`))).Items) || [];
+      const view = views.find((x) => norm(x.Id) === norm(parentId));
+      if (view) {
+        // Bibliothek: geteilter 10-Minuten-Katalog (dieselbe Quelle wie A–Z) →
+        // ein Abruf pro Bibliothek statt pro Sortierung, Sortierung passiert lokal.
+        all = await libCatalog(view.Id, String(view.CollectionType || '').toLowerCase());
+        localSort = true;
+      } else {
+        const q = new URLSearchParams({ Fields: ITEM_FIELDS, EnableImageTypes: 'Primary', ImageTypeLimit: '1', ParentId: parentId });
+        if (sort === 'index') q.set('SortBy', 'ParentIndexNumber,IndexNumber,SortName');
+        else if (sort === 'added') { q.set('SortBy', 'DateCreated,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
+        else if (sort === 'year') { q.set('SortBy', 'ProductionYear,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
+        else if (sort === 'rating') { q.set('SortBy', 'CommunityRating,SortName'); q.set('SortOrder', 'Descending,Ascending'); }
+        else q.set('SortBy', 'SortName');
+        const fullQuery = new URLSearchParams(q);
+        all = await jsonCache.get(`all-items|${fullQuery}`, () => fetchAllItems(fullQuery));
       }
-      return out;
-    });
+    }
     const kept = await filterAllowed(session, all);
     const grouped = groupMovies(kept, mapItem);
+    if (localSort) sortGroups(grouped, sort, new Map(kept.map((it) => [norm(it.Id), it])));
     return sendJson(res, 200, { items: grouped.slice(start, start + limit), total: grouped.length });
   }
 
@@ -1388,12 +1440,23 @@ async function handle(req, res) {
 
   // --- Merkliste & Verlauf ---
   if (p === '/api/watchlist' && req.method === 'GET') {
-    const out = [];
-    for (const e of library.list(session.username).slice(0, 200)) {
+    const entries = library.list(session.username).slice(0, 200);
+    // Alle Titel gebündelt holen (ein Request pro 100 IDs) statt einen pro Titel —
+    // sonst blockiert die Merkliste die Startseite mit bis zu 200 Einzelabrufen.
+    const byId = new Map();
+    const ids = entries.map((e) => e.id).filter((id) => ID_RE.test(id));
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids.slice(i, i + 100);
       try {
-        const it = await jsonCache.get(`li|${e.id}`, () => jf(`/Users/${uid()}/Items/${e.id}?Fields=${ITEM_FIELDS}`));
-        if (await canAccess(session, e.id)) out.push({ ...mapItem(it), added: e.added });
-      } catch { /* gelöscht oder offline */ }
+        const data = await jsonCache.get(`wl-ids|${chunk.join(',')}`, () => jf(`/Users/${uid()}/Items?Ids=${chunk.join(',')}&Limit=${chunk.length}&Fields=${ITEM_FIELDS}`));
+        for (const it of (data && data.Items) || []) byId.set(norm(it.Id), it);
+      } catch { /* Heimserver offline: so viel zeigen wie möglich */ }
+    }
+    const out = [];
+    for (const e of entries) {
+      const it = byId.get(norm(e.id));
+      if (!it) continue; // gelöscht oder extern (Twitch/YouTube)
+      if (await canAccess(session, e.id)) out.push({ ...mapItem(it), added: e.added });
     }
     return sendJson(res, 200, { items: out });
   }
