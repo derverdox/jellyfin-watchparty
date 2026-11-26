@@ -20,8 +20,8 @@ const I = {
 };
 const MS = id('mediasource');
 
-function movie(Id, Name, ParentId, { year = 2026, height = 1080, bitrate = 8000000, hdr = false } = {}) {
-  return { Id, Name, Type: 'Movie', ParentId, ProductionYear: year, Genres: ['Abenteuer', 'Drama'], CommunityRating: 7.4, RunTimeTicks: 60 * 1e7, ImageTags: { Primary: 'x' },
+function movie(Id, Name, ParentId, { year = 2026, height = 1080, bitrate = 8000000, hdr = false, created = '2020-01-01T00:00:00Z' } = {}) {
+  return { Id, Name, Type: 'Movie', ParentId, ProductionYear: year, DateCreated: created, SortName: Name, Genres: ['Abenteuer', 'Drama'], CommunityRating: 7.4, RunTimeTicks: 60 * 1e7, ImageTags: { Primary: 'x' },
     MediaSources: [{ Id: MS, Container: 'mp4', Bitrate: bitrate, DefaultAudioStreamIndex: 1, MediaStreams: [
       { Index: 0, Type: 'Video', Codec: 'h264', Width: Math.round(height * 16 / 9), Height: height, VideoRange: hdr ? 'HDR' : 'SDR' },
       { Index: 1, Type: 'Audio', Codec: 'aac', Language: 'deu', IsDefault: true }] }] };
@@ -33,7 +33,7 @@ const ITEMS = {
   [I.LIB_K]: { Id: I.LIB_K, Name: 'Kinder', Type: 'CollectionFolder', CollectionType: 'movies', IsFolder: true, ParentId: I.ROOT },
   [I.F_KLASSIK]: { Id: I.F_KLASSIK, Name: 'Klassiker', Type: 'Folder', IsFolder: true, ParentId: I.LIB_M },
   [I.M_METRO]: movie(I.M_METRO, 'Metropolis', I.F_KLASSIK),
-  [I.M_NEU]: movie(I.M_NEU, 'Neuer Film', I.LIB_M),
+  [I.M_NEU]: movie(I.M_NEU, 'Neuer Film', I.LIB_M, { created: '2026-06-01T00:00:00Z' }),
   [I.SERIES]: { Id: I.SERIES, Name: 'Testserie', Type: 'Series', IsFolder: true, ParentId: I.LIB_S },
   [I.SEASON]: { Id: I.SEASON, Name: 'Staffel 1', Type: 'Season', IsFolder: true, ParentId: I.SERIES, SeriesId: I.SERIES, IndexNumber: 1 },
   [I.EP1]: { ...movie(I.EP1, 'Folge 1', I.SEASON), Type: 'Episode', SeriesId: I.SERIES, SeasonId: I.SEASON, SeriesName: 'Testserie', IndexNumber: 1, ParentIndexNumber: 1 },
@@ -67,7 +67,11 @@ function start(port = 0) {
     if (p === `/Users/${USER}/Views`) return json({ Items: [ITEMS[I.LIB_M], ITEMS[I.LIB_S], ITEMS[I.LIB_K]] });
     if (p === `/Users/${USER}/Items`) {
       let list;
-      if (q.get('SearchTerm')) list = Object.values(ITEMS).filter((x) => !x.IsFolder || x.Type === 'Series').filter((x) => x.Name.toLowerCase().includes(q.get('SearchTerm').toLowerCase()));
+      if (q.get('Ids')) {
+        const ids = new Set(String(q.get('Ids')).split(',').map((x) => x.toLowerCase().replace(/-/g, '')));
+        list = Object.values(ITEMS).filter((x) => ids.has(String(x.Id).toLowerCase()));
+      }
+      else if (q.get('SearchTerm')) list = Object.values(ITEMS).filter((x) => !x.IsFolder || x.Type === 'Series').filter((x) => x.Name.toLowerCase().includes(q.get('SearchTerm').toLowerCase()));
       else if (q.get('Years')) list = Object.values(ITEMS).filter((x) => x.Type === 'Movie' || x.Type === 'Series');
       else if (q.get('Recursive') === 'true') {
         const types = (q.get('IncludeItemTypes') || '').split(',');
@@ -112,7 +116,7 @@ function addMovies(n) {
   const crypto = require('crypto');
   for (let i = 0; i < n; i++) {
     const id = crypto.createHash('md5').update(`masse-${i}`).digest('hex');
-    ITEMS[id] = { Id: id, Name: `Massenfilm ${String(i).padStart(4, '0')}`, Type: 'Movie', ParentId: I.LIB_M, ProductionYear: 1950, RunTimeTicks: 5400e7, ImageTags: {} };
+    ITEMS[id] = { Id: id, Name: `Massenfilm ${String(i).padStart(4, '0')}`, Type: 'Movie', ParentId: I.LIB_M, ProductionYear: 1950, DateCreated: `2019-${String((i % 12) + 1).padStart(2, '0')}-01T00:00:00Z`, SortName: `Massenfilm ${String(i).padStart(4, '0')}`, RunTimeTicks: 5400e7, ImageTags: {} };
   }
 }
 

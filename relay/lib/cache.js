@@ -101,18 +101,28 @@ class DiskCache {
   }
 }
 
-/** Kleiner Speicher-Cache mit Ablaufzeit (für JSON-Antworten). */
+/**
+ * Kleiner Speicher-Cache mit Ablaufzeit (für JSON-Antworten).
+ * Gleichzeitige Anfragen an denselben Schlüssel teilen sich einen Abruf —
+ * sonst lädt jeder Zuschauer die Bibliothek doppelt vom Heimserver.
+ */
 class TtlCache {
-  constructor(ttlMs, max = 500) { this.ttl = ttlMs; this.max = max; this.map = new Map(); }
+  constructor(ttlMs, max = 500) { this.ttl = ttlMs; this.max = max; this.map = new Map(); this.inflight = new Map(); }
   async get(key, fn) {
     const e = this.map.get(key);
     if (e && Date.now() - e.t < this.ttl) return e.v;
-    const v = await fn();
-    this.map.set(key, { v, t: Date.now() });
-    if (this.map.size > this.max) this.map.delete(this.map.keys().next().value);
-    return v;
+    const running = this.inflight.get(key);
+    if (running) return running;
+    const p = (async () => {
+      const v = await fn();
+      this.map.set(key, { v, t: Date.now() });
+      if (this.map.size > this.max) this.map.delete(this.map.keys().next().value);
+      return v;
+    })();
+    this.inflight.set(key, p);
+    try { return await p; } finally { this.inflight.delete(key); }
   }
-  clear() { this.map.clear(); }
+  clear() { this.map.clear(); this.inflight.clear(); }
 }
 
 module.exports = { DiskCache, TtlCache };
